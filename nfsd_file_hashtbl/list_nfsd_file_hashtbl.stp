@@ -1,0 +1,189 @@
+/* slabs:
+	stateowner_slab - nfsd4_stateowners
+		nfs4_stateowner.so_ref points to xdr_netobj
+	file_slab	- nfsd4_files
+	stateid_slab	- nfsd4_stateids
+	deleg_slab	- nfs4_delegations
+
+*/
+
+global files_stat = 0 /* global stats--not fs-specific */
+
+global nfsd4_lease = 0
+global file_hashtbl = 0 /* list of nfs4_file linked by fl_hash */
+global ownerid_hashtbl = 0
+global ownerstr_hashtbl = 0
+
+global client_mutex = 0
+global recall_lock = 0
+
+global roworw
+
+%{
+/* hash tables for nfs4_stateowner */
+#define OWNER_HASH_BITS              8
+#define OWNER_HASH_SIZE             (1 << OWNER_HASH_BITS)
+#define OWNER_HASH_MASK             (OWNER_HASH_SIZE - 1)
+
+/* hash table for nfs4_file */
+#define FILE_HASH_BITS                   8
+#define FILE_HASH_SIZE                  (1 << FILE_HASH_BITS)
+#define FILE_HASH_MASK                  (FILE_HASH_SIZE - 1)
+/* hash table for (open)nfs4_stateid */
+#define STATEID_HASH_BITS              10
+#define STATEID_HASH_SIZE              (1 << STATEID_HASH_BITS)
+#define STATEID_HASH_MASK              (STATEID_HASH_SIZE - 1)
+%}
+
+/* these should be available from systemtap already */
+#@define module_container_of(ptr, module, type, member) %(
+#	 @cast(@ptr - @module_offsetof(@module, @type, @member), @type, @module)
+#%)
+#@define container_of(ptr, type, member) %( @cast(@ptr - @offsetof(@type, @member), @type) %)
+
+
+@define list_for_each(entry, head) %( /* alt implementation */
+	for (@entry = @cast(@head, "struct list_head")->next ;
+		@entry != @head ;
+		@entry = @cast(@entry, "struct list_head")->next)
+%)
+/* specify the kernel module from which the type is taken */
+@define list_for_each_module_entry(entry, head, module, type, field) %(
+	for (@entry = ((@cast(@head, "struct list_head")->next) - (&@cast(0, @type, @module)->@field)) ;
+		&@cast(@entry, @type, @module)->@field != @head ; 
+		@entry = (&@cast(@entry, @type, @module)->@field)->next - (&@cast(0, @type, @module)->@field))
+%)
+@define list_for_each_entry(entry, head, type, field) %( /* module is actually 'kernel' */
+	@list_for_each_module_entry(@entry, @head, "kernel", @type, @field)
+%)
+@define list_entry(addr, type, member) %( @defined(& @cast(0, @type) -> @member) ? @addr - (& @cast(0, @type) -> @member) : 0 %)
+@define module_list_entry(addr, type, module, member) %( @defined(& @cast(0, @type, @module) -> @member) ? @addr - (& @cast(0, @type, @module) -> @member) : 0 %)
+
+function stp_spin_lock(addr:long) %{
+	spinlock_t *lk = (spinlock_t *)(void *)STAP_ARG_addr;
+	spin_lock(lk);
+%}
+function stp_spin_unlock(addr:long) %{
+	spinlock_t *lk = (spinlock_t *)STAP_ARG_addr;
+	spin_unlock(lk);
+%}
+function stp_mutex_lock(addr:long) %{
+	struct mutex *lk = (struct mutex *)STAP_ARG_addr;
+	mutex_lock(lk);
+%}
+function stp_mutex_unlock(addr:long) %{
+	struct mutex *lk = (struct mutex *)STAP_ARG_addr;
+	mutex_unlock(lk);
+%}
+
+@define filp_get_dentry(filp) %( @choose_defined(@cast(@filp, "struct file")->f_path->dentry, @cast(@filp, "struct file")->dentry) %)
+@define filp_get_vfsmount(filp) %( @choose_defined(@cast(filp, "struct file")->f_path->mnt, @cast(filp, "struct file")->mnt) %)
+
+function filp_get_path:string(filp:long) {
+	ret = ""
+
+	if (!filp)
+		return ""
+//      root_mount = get_current_nsmount()
+	vfsmount = @filp_get_vfsmount(filp)
+	dentry = @filp_get_dentry(filp)
+
+	if (vfsmount && dentry)
+		ret = sprintf(" %s", task_dentry_path(task_current(), dentry, vfsmount))
+	return ret
+}
+
+/* dumps all dentry aliases of the inode */
+function dump_inode_i_dentry_list(inode:long) {
+	head = &@cast(inode, "struct inode")->i_dentry
+
+	@list_for_each_entry(dentry, head, "struct dentry", d_alias) {
+		path = reverse_path_walk(dentry)
+		printf("\t\t%s\n", path)
+	}
+}
+
+function dump_nfs4_stateid(nfs4_stateid) {
+	n4sowner = @cast(nfs4_stateid, "nfs4_stateid", "nfsd")->st_stateowner
+	soclient = @cast(n4sowner, "nfs4_stateowner", "nfsd")->so_client
+
+	soname_addr = @cast(soclient, "nfs4_client", "nfsd")->cl_name->data
+	soname_len = @cast(soclient, "nfs4_client", "nfsd")->cl_name->len
+
+	printf("\t\tnfs4_client: %s\n", kernel_string_n(soname_addr, soname_len))
+}
+
+function dump_nfs4_file(nfs4_file) {
+	ino = @cast(nfs4_file, "struct nfs4_file", "nfsd")->fi_inode
+
+	printf("\tnfs4_file=%p, inode=%p, dev/inode=%s/%lu\n",
+		nfs4_file, ino,
+		kernel_string(@cast(ino, "struct inode")->i_sb->s_id),
+		@cast(ino, "struct inode")->i_ino)
+
+	/* isn't there a way to set multiple key->value pairs in a single definition? */
+	roworw[0] = "RDONLY"
+	roworw[1] = "WRONLY"
+	roworw[2] = "RDWR"
+	for (fd_i = 0 ; fd_i < 3 ; fd_i++) {
+		f = @cast(nfs4_file, "struct nfs4_file", "nfsd")->fi_fds[fd_i]
+		if (f)
+			printf("\t\t%s: %s\n", roworw[fd_i], filp_get_path(f))
+	}
+#	dump_inode_i_dentry_list(ino)
+
+	state_ids = &@cast(nfs4_file, "struct nfs4_file", "nfsd")->fi_stateids
+	@list_for_each_module_entry(nfs4_stateid, state_ids, "nfsd", "nfs4_stateid", st_perfile)
+		dump_nfs4_stateid(nfs4_stateid)
+}
+
+function dump_ownerstr_hashtbl() { /* TODO */
+}
+
+function dump_file_hashtbl() {
+#	stp_spin_lock(recall_lock) /* TODO: re-add appropriate locking */
+	for (i = 0 ; i < %{ FILE_HASH_SIZE %} ; i ++) {
+		head = &@cast(file_hashtbl, "struct list_head")[i]
+		hash_i = 0
+
+		@list_for_each_module_entry(entry, head, "nfsd", "struct nfs4_file", fi_hash) {
+#			if (hash_i == 0)
+#				printf("&file_hashtbl[%d] = %p\n", i, head)
+
+			dump_nfs4_file(entry)
+
+			hash_i ++
+		}
+#		/* the original patch from Jeff Layton would drop the lock */
+#		/*   and reacquire if it was contended */
+#		/* though I think he reversed the lock & unlock */
+#		/*   from what they should be */
+#		if (spin_is_contended(&recall_lock)) {
+#			spin_lock(&recall_lock)
+#			spin_unlock(&recall_lock)
+#		}
+	}
+#	stp_spin_unlock(recall_lock)
+}
+
+function do_init() {
+	files_stat = &@var("files_stat@fs/file_table.c")
+	/* could output stats such as max_files with files_stat->max_files */
+
+	recall_lock = &@var("recall_lock@fs/nfsd/nfs4state.c", "nfsd")
+
+	file_hashtbl = &@var("file_hashtbl@fs/nfsd/nfs4state.c", "nfsd")
+	ownerstr_hashtbl = &@var("ownerstr_hashtbl@fs/nfsd/nfs4state.c", "nfsd")
+
+	nfsd4_lease = @var("nfsd4_lease@fs/nfsd/nfs4state.c", "nfsd")
+}
+
+probe begin {
+	do_init()
+
+	dump_file_hashtbl()
+	dump_ownerstr_hashtbl() /* TODO */
+
+	exit()
+}
+
