@@ -230,7 +230,13 @@ int main(int argc, char *argv[]) {
 
 //	do_acl_checks(path);
 
-	list_len = listxattr(path, NULL, 0);
+	if ((list_len = listxattr(path, NULL, 0)) == -1) {
+		printf("an error occurred trying to call listxattr(%s): %m\n", path);
+		return EXIT_FAILURE;
+	} else if (list_len == 0) {
+		printf("No xattrs for %s\n", path);
+		return EXIT_SUCCESS;
+	}
 #if DEBUG
 	printf("got %d bytes\n", list_len);
 #endif /* DEBUG */
