@@ -21,7 +21,6 @@
 #include <acl/libacl.h>
 #include <sys/queue.h>
 
-#define DEBUG 0
 
 #define DEBUG 0
 
