@@ -171,6 +171,10 @@ void do_acl_checks(char *path) {
 }
 
 
+void read_decode_ioctl_flags(char *path, __fsword_t fstype) {
+	int result;
+	int fd;
+	int ret;
 
 #define ACL_NFS4_XATTR		"system.nfs4_acl"
 #define ACL_SELINUX_XATTR	"security.selinux"
@@ -183,8 +187,13 @@ void do_acl_checks(char *path) {
 	ret = ioctl(fd, FS_IOC_GETFLAGS, &result);
 	close(fd);
 
+	printf("ioctl returned %d, result: 0x%08x\n", ret, result);
+	printf("flags: 0x%08x\n", result);
 
+	printf("fstype: 0x%08lx\n", fstype);
 
+	if (fstype == 0x1234)
+		decode_ioctl_flags_ext(result);
 }
 
 
@@ -201,6 +210,8 @@ int main(int argc, char *argv[]) {
 	int attr_len;
 	char *path = argv[1];
 	int is_dir = 0;
+	struct statvfs stvfs;
+	struct statfs stfs;
 	struct stat st;
 
 	ret = stat(path, &st);
@@ -210,7 +221,10 @@ int main(int argc, char *argv[]) {
 	}
 	if (st.st_mode & S_IFDIR)
 		is_dir = 1;
+	statfs(path, &stfs);
+	statvfs(path, &stvfs);
 
+	read_decode_ioctl_flags(path, stfs.f_type);
 
 	attr = malloc(attr_buf_len);
 
