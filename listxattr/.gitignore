@@ -1,0 +1,6 @@
+ext.o
+foo
+lib.o
+listxattr
+listxattr.o
+nfs4.o
