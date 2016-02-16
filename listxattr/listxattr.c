@@ -28,6 +28,10 @@
 
 
 
+#define ACL_NFS4_XATTR          "system.nfs4_acl"
+#define ACL_SELINUX_XATTR       "security.selinux"
+#define ACL_POSIX_ACCESS        "system.posix_acl_access"
+#define ACL_POSIX_DEFAULT       "system.posix_acl_default"
 
 #define P_ACL_TYPE_DEFAULT	(0x4000)
 #define P_ACL_TYPE_ACCESS	(0x8000)
@@ -176,10 +180,6 @@ void read_decode_ioctl_flags(char *path, __fsword_t fstype) {
 	int fd;
 	int ret;
 
-#define ACL_NFS4_XATTR		"system.nfs4_acl"
-#define ACL_SELINUX_XATTR	"security.selinux"
-#define ACL_POSIX_ACCESS	"system.posix_acl_access"
-#define ACL_POSIX_DEFAULT	"system.posix_acl_default"
 
 
 
