@@ -20,11 +20,19 @@
 #include <arpa/inet.h>
 #include <acl/libacl.h>
 #include <sys/queue.h>
+#include <fcntl.h>
+#include <sys/ioctl.h>
+#include <sys/statvfs.h>
+#include <linux/fs.h>
+#include <sys/vfs.h>
 
 
 #define DEBUG 0
 
+#include "listxattr.h"
 
+#include "ext.h"
+#include "nfs4.h"
 
 
 #define ACL_NFS4_XATTR          "system.nfs4_acl"
