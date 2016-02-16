@@ -80,7 +80,6 @@ void parse_posix_acl(char *acl_buf, int len) {
 
 }
 
-
 void show_acl(const char *path, acl_type_t type) {
 #if DEBUG
 	printf("size of 'acl_t' = %ld\n", sizeof(acl_t));
@@ -179,9 +178,6 @@ void read_decode_ioctl_flags(char *path, __fsword_t fstype) {
 	int result;
 	int fd;
 	int ret;
-
-
-
 
 	fd = open(path, O_RDONLY|O_NONBLOCK);
 	ret = ioctl(fd, FS_IOC_GETFLAGS, &result);
