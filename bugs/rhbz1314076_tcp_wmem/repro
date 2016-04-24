@@ -1,0 +1,19 @@
+#!/bin/bash
+
+mount_path=/mnt/vm1
+file_count=10
+
+echo "setting up test files"
+for f in $(seq 1 $file_count) ; do dd if=/dev/zero of=$mount_path/test_file_$f bs=1M count=100 ; done 2>/dev/null
+
+echo "initial write speed"
+dd if=/dev/zero of=$mount_path/test_file_$((file_count + 1)) bs=1M count=100
+
+rm -f $mount_path/$test_file_$((file_count + 1))
+sync ; echo 3 > /proc/sys/vm/drop_caches
+
+echo "doing parallel reads"
+for f in $(seq 1 $file_count) ; do dd if=$mount_path/test_file_$f of=/dev/null bs=100K count=1000 & done 2>/dev/null ; wait
+
+echo "ending write speed"
+dd if=/dev/zero of=$mount_path/test_file_$((file_count + 1)) bs=1M count=100
