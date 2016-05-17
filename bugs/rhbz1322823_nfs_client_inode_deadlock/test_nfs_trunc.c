@@ -1,3 +1,16 @@
+/*
+	Frank Sorenson <sorenson@redhat.com>, 2016
+
+	reproducer for bugzilla 1322823 - deadlock
+
+	usually able to reproduce the issue within 20 seconds
+	with 2-3 threads (but is sometimes more stubborn to
+	reproduce).  Number of threads and map size may need
+	adjustment.
+
+	# gcc test_nfs_trunc.c -o test_fs_trunc
+	# ./test_nfs_trunc [ </path/to/file> [ </path/to/file [ ... ]]]
+*/
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
