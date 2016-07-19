@@ -11,11 +11,12 @@
 #include <numa.h>
 
 int main(int argc, char *argv[]) {
+	char *err_string = "%s: numa error occurred while '%s': %m";
+	char *err_action = "";
 	int pid1 = 0;
 	int pid2 = 0;
 	struct bitmask *node0, *node1;
 	int ret;
-	char *foo_string = "somewhere over the rainbow";
 
 	if (argc < 2) {
 		printf("Usage: %s <pid1> [<pid2>]\n",
@@ -33,21 +34,29 @@ int main(int argc, char *argv[]) {
 	numa_bitmask_setbit(node0, 0);
 	numa_bitmask_setbit(node1, 1);
 	while (1) {
-		if ((ret = numa_migrate_pages(pid1, node1, node0)) != 0)
+		if ((ret = numa_migrate_pages(pid1, node1, node0)) != 0) {
+			err_action = "migrate_pages pid1: node1->node0";
 			break;
+		}
 		if (pid2) {
-			if ((ret = numa_migrate_pages(pid2, node0, node1)) != 0)
+			if ((ret = numa_migrate_pages(pid2, node0, node1)) != 0) {
+				err_action = "migrate_pages pid2: node0->node1";
 				break;
+			}
 		}
 
-		if ((ret = numa_migrate_pages(pid1, node0, node1)) != 0)
+		if ((ret = numa_migrate_pages(pid1, node0, node1)) != 0) {
+			err_action = "migrate_pages pid1: node0->node1";
 			break;
+		}
 		if (pid2) {
-			if ((ret = numa_migrate_pages(pid2, node1, node0)) != 0)
+			if ((ret = numa_migrate_pages(pid2, node1, node0)) != 0) {
+				err_action = "migrate_pages pid2: node1->node0";
 				break;
+			}
 		}
 	}
-	numa_warn(ret, foo_string);
+	numa_warn(ret, err_string, argv[0], err_action);
 
 	numa_free_nodemask(node0);
 	numa_free_nodemask(node1);
