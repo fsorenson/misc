@@ -28,6 +28,11 @@ int main(int argc, char *argv[]) {
 	if (argc == 3)
 		pid2 = strtol(argv[2], NULL, 10);
 
+	if (numa_available() == -1) {
+		printf("NUMA is not available\n");
+		exit(EXIT_FAILURE);
+	}
+
 	node0 = numa_allocate_nodemask();
 	node1 = numa_allocate_nodemask();
 
