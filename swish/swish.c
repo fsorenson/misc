@@ -11,11 +11,11 @@
 #include <numa.h>
 
 int main(int argc, char *argv[]) {
+	struct bitmask *node0, *node1;
 	char *err_string = "%s: numa error occurred while '%s': %m";
 	char *err_action = "";
 	int pid1 = 0;
 	int pid2 = 0;
-	struct bitmask *node0, *node1;
 	int ret;
 
 	if (argc < 2) {
@@ -66,5 +66,5 @@ int main(int argc, char *argv[]) {
 	numa_free_nodemask(node0);
 	numa_free_nodemask(node1);
 
-	return 0;
+	return EXIT_SUCCESS;
 }
