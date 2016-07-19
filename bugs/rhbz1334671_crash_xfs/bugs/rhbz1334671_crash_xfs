@@ -1,0 +1,89 @@
+#!/bin/bash
+
+# Frank Sorenson <sorenson@redhat.com>
+# Red Hat, 2016
+
+# script to reproduce the xfs multi-block buffer logging bug
+# Red Hat bugzilla bz1334671
+
+image=/var/tmp/test_xfs.img
+mountpoint=/mnt/tmp
+max_files=5000
+crash_attempts=30
+
+play_cowbell() {
+	dd if=/dev/zero of=$1 bs=$2 count=1 2>/dev/null
+}
+more_cowbell() {
+	bmap_lines=$(xfs_bmap $mountpoint/testdir_1 | wc -l)
+	[[ $bmap_lines -lt 6 ]]
+}
+
+echo "creating filesystem image $image and filesystem"
+mkdir -p $mountpoint
+dd if=/dev/zero of=$image bs=1M count=16 2>/dev/null
+mkfs.xfs -b size=4k -n size=16k $image -f || exit
+mount -oloop,sync,attr2,inode64,noquota $image $mountpoint || exit
+
+echo "mounting image and creating files in $mountpoint"
+# create 8KiB testfile_$n
+# truncate testfile_$(n-1) to 4KiB
+for f in $(seq 1 $max_files) ; do
+	play_cowbell $mountpoint/testfile_$f 8k || break
+	[[ $f -gt 1 ]] && truncate -s 4k $mountpoint/testfile_$((f - 1))
+done
+[[ -f $mountpoint/testfile_$f ]] || f=$((f - 1))
+lastf=$f
+
+# make some space
+strt=$(( $lastf - 30 ))
+[[ $strt -lt 1 ]] && strt=1
+for f in $(seq $strt $lastf) ; do
+	rm -f $mountpoint/testfile_$f
+done
+
+echo "creating files in $mountpoint/testdir_1"
+mkdir $mountpoint/testdir_1
+for f in $(seq 1 $max_files) ; do
+	play_cowbell $mountpoint/testdir_1/testfile_$f 4k
+done
+
+rm -f $mountpoint/testfile_*
+
+for f in $(seq 1 $max_files) ; do
+	play_cowbell $mountpoint/testdir_1/testfile_$f 4k || break
+	more_cowbell || break
+done
+rm -f $mountpoint/testdir_1/testfile_$f
+file_count=$((f - 1))
+echo "created $file_count files in $mountpoint/testdir_1"
+
+bmap=$(xfs_bmap $mountpoint/testdir_1)
+bmap_lines=$(echo -e "$bmap" | wc -l)
+echo -e "$bmap"
+
+if [[ $bmap_lines -eq 5 ]] ; then
+	echo "successfully created directory in $image mounted at $mountpoint"
+else
+	echo "insert coin to play again"
+	exit
+fi
+
+sync
+sleep 2
+sync
+
+echo "goodbye, cruel world!"
+for i in $(seq 1 $crash_attempts) ; do
+	target_file=$(( ($RANDOM % ($file_count / 2)) + ($file_count / 2) ))
+
+	echo "$i: trying to crash by unlinking $mountpoint/testdir_1/testfile_$target_file"
+	if [[ -f $mountpoint/testdir_1/testfile_$target_file ]] ; then
+		unlink $mountpoint/testdir_1/testfile_$target_file
+		sync
+		sleep 10
+	fi
+done
+
+echo "the agony of defeat"
+umount $mountpoint
