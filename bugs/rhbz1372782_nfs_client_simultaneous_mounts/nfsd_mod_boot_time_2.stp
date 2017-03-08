@@ -1,0 +1,69 @@
+%{
+#include <net/net_namespace.h>
+#include <net/netns/generic.h>
+%}
+
+function net_generic(net, id) %{
+	STAP_RETVALUE = (long)net_generic((struct net *)STAP_ARG_net, (int)STAP_ARG_id);
+%}
+probe module("nfs").function("nfs_clients_init").return {
+	nfs_net_id = @var("nfs_net_id@fs/nfs/inode.c")
+	nn = net_generic($net, nfs_net_id)
+	bt = &@cast(nn, "struct nfs_net")->boot_time
+	p_tv_sec = &@cast(bt, "struct timespec")->tv_sec
+	p_tv_nsec = &@cast(bt, "struct timespec")->tv_nsec
+
+	orig_sec = kernel_long(p_tv_sec)
+	sec = orig_sec & 0xfffffffffffffffc
+	orig_nsec = kernel_long(p_tv_nsec)
+	nsec = 123123123
+
+	set_kernel_long(p_tv_sec, sec)
+	set_kernel_long(p_tv_nsec, nsec)
+
+	printf("%s: changed nfs_net boot_time from %d.%09d to %d.%09d\n",
+		ppfunc(), orig_sec, orig_nsec, sec, nsec)
+}
+
+
+function ts() {
+	t = gettimeofday_ms()
+	return sprintf("%d.%d", t / 1000 , t % 1000)
+}
+
+function kernel_hex_str:string(s, len) {
+	ret = ""
+	for (i = 0 ; i < len ; i++)
+		ret .= sprintf("%02x", 0xff & kernel_char(s + i))
+	return ret
+}
+
+function get_ip_from_clnt(clnt) {
+	addr = &@cast(clnt, "nfs4_client", "kernel:nfsd")->cl_addr
+	return ip_ntop(@cast(addr, "sockaddr_in")->sin_addr->s_addr)
+}
+
+
+probe module("nfsd").function("gen_confirm"){
+	printf("%s: %s(%d) - %s.return: clp=0x%016x cl_clientid.cl_boot=0x%08x cl_clientid.cl_id=0x%08x\n",
+		ts(), execname(), tid(), ppfunc(), $clp, $clp->cl_clientid->cl_boot, $clp->cl_clientid->cl_id)
+}
+
+probe module("nfsd").function("add_to_unconfirmed") {
+	printf("%s: %s(%d) - %s: clp=0x%016x, cl_ip=%s, cl_clientid.cl_boot=0x%08x, cl_clientid.cl_id=0x%08x, cl_confirm.data=%s\n",
+		ts(), execname(), tid(), ppfunc(), $clp, get_ip_from_clnt($clp),
+		$clp->cl_clientid->cl_boot, $clp->cl_clientid->cl_id,
+		kernel_hex_str($clp->cl_confirm->data, 8))
+}
+
+probe module("nfsd").function("nfsd4_setclientid") {
+	printf("%s: %s(%d) - %s(%s)\n",
+		ts(), execname(), tid(), ppfunc(), $$parms$)
+#		$clp->cl_clientid->cl_boot, $clp->cl_clientid->cl_id,
+}
+
+
+probe module("nfsd").function("gen_callback") {
+	printf("%s: %s(%d) - %s(%s)\n",
+		ts(), execname(), tid(), ppfunc(), $$parms$)
+}

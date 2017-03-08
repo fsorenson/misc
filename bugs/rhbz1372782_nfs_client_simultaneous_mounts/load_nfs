@@ -1,0 +1,12 @@
+#!/bin/bash
+
+if [[ $(basename $0) == "load_nfs" ]] ; then
+	modprobe nfs
+	systemctl start nfs-server.service
+else
+	umount -a -t nfs4 nfs
+	exportfs -au
+	systemctl stop nfs-server.service
+	umount -a -t nfsd
+	rmmod nfsv4 nfsv3 nfs nfsd
+fi
