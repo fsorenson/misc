@@ -1,0 +1,80 @@
+#!/bin/bash
+
+test_mount="/mnt/lotsa_files"
+#test_dir="/mnt/lotsa_files/1.8M_23byte"
+test_dir="/mnt/lotsa_files3/400k_23byte/"
+test_count=10
+cmdline="/tmp/test_rdirplus-2 $test_dir"
+outfile="/tmp/rdirplus_test_result.out"
+
+DELAY=2
+
+alias tstamp="awk '{print strftime(\"%F %T:\"), $0 }'"
+
+
+do_nfsiostat() {
+#	nfsiostat -dap 2 $test_mount | IFS=\\n tstamp > /tmp/nfsios.out
+	nfsiostat -dap 2 $test_mount | tstamp > /tmp/nfsios.out
+}
+do_nfsstat() {
+#	nfsstat -3c -Z2 | IFS=\\n tstamp > /tmp/nfss.out
+	nfsstat -3c -Z2 | tstamp > /tmp/nfss.out
+}
+
+do_test() {
+	local testnum=$1
+	outfile=/tmp/rdirplus_test_$testnum.out
+	exec >$outfile 2>&1
+
+	echo "Test thread $testnum starting @ $(date --rfc-3339=ns)"
+	exec $cmdline
+}
+
+nfsios=
+nfs=
+test_pids=
+
+trap exit_cleanup EXIT
+trap exit_cleanup SIGCHLD
+exit_cleanup () {
+	[[ -n $test_pids ]] && kill $test_pids && wait $test_pids
+	[[ -n $nfsios ]] && kill $nfsios && wait $nfsios
+	[[ -n $nfss ]] && kill $nfss && wait $nfss
+}
+
+sync
+echo 3 > /proc/sys/vm/drop_caches
+
+if [[ ! -d $test_dir ]] ; then
+	echo "test dir '$test_dir' does not exist"
+	exit
+fi
+
+exec &> >(tee -a $outfile)
+
+echo "Beginning test"
+start_time=$(date +"%s.%N")
+
+#do_nfsiostat &
+#nfsios=$!
+
+#do_nfsstat &
+#nfss=$!
+
+for i in $(seq 1 $test_count) ; do
+	do_test $i &
+	test_pids="$test_pids $!"
+	echo -e "\tstarted $i: pid $!"
+	[[ $i -lt $test_count ]] && sleep $DELAY
+done
+
+echo "test pids started: $test_pids"
+
+wait $test_pids
+test_pids=
+echo "test pids completed"
+
+end_time=$(date +"%s.%N")
+
+echo "elapsed time:" $(echo "scale=9 ; $end_time - $start_time" | bc)
+
