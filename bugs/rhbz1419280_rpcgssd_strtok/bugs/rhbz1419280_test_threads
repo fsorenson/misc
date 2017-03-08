@@ -1,0 +1,19 @@
+#!/bin/bash
+
+check_success() {
+	count=$(pidof stat_as | wc -w)
+	if [[ $count -gt 0 ]] ; then
+		return 0
+	fi
+	return 1
+}
+
+iter=0
+
+while ! check_success ; do
+	iter=$((iter + 1))
+	./stat_as /mnt/test_krb5/foo 9995 10005
+	sleep 1
+done
+
+echo "reproduced the bug after $iter iterations"

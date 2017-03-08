@@ -1,0 +1,86 @@
+commit fae681fa84f328cf601f34452b5a97f5d54ca2e2
+Author: Frank Sorenson <sorenson@redhat.com>
+Date:   2017-02-04 14:05:48 -0600
+
+    gssd: replace non-thread-safe strtok
+    
+    gssd uses the non-thread-safe strtok() function, which
+    can lead to incorrect program behavior.  In addition,
+    strtok() modifies the input string, so error messages
+    may be incomplete.
+    
+    Replace strtok() with the thread-safe strtok_r() and a
+    per-thread state variable.  Also duplicate the input
+    string for use when outputting error messages.
+    
+    Signed-off-by: Frank Sorenson <sorenson@redhat.com>
+
+diff --git a/utils/gssd/gssd_proc.c b/utils/gssd/gssd_proc.c
+index d74d372..ba6ec29 100644
+--- a/utils/gssd/gssd_proc.c
++++ b/utils/gssd/gssd_proc.c
+@@ -729,10 +729,18 @@ handle_gssd_upcall(struct clnt_upcall_info *info)
+ 	char			*target = NULL;
+ 	char			*service = NULL;
+ 	char			*enctypes = NULL;
++	char			*saveptr;
++	char			*upcall_str;
+ 
+ 	printerr(2, "\n%s: '%s' (%s)\n", __func__, info->lbuf, clp->relpath);
+ 
+-	for (p = strtok(info->lbuf, " "); p; p = strtok(NULL, " ")) {
++	upcall_str = strdup(info->lbuf);
++	if (upcall_str == NULL) {
++		printerr(0, "ERROR: malloc failure\n");
++		goto out_nomem;
++        }
++
++	for (p = strtok_r(info->lbuf, " ", &saveptr); p; p = strtok_r(NULL, " ", &saveptr)) {
+ 		if (!strncmp(p, "mech=", strlen("mech=")))
+ 			mech = p + strlen("mech=");
+ 		else if (!strncmp(p, "uid=", strlen("uid=")))
+@@ -748,7 +756,7 @@ handle_gssd_upcall(struct clnt_upcall_info *info)
+ 	if (!mech || strlen(mech) < 1) {
+ 		printerr(0, "WARNING: handle_gssd_upcall: "
+ 			    "failed to find gss mechanism name "
+-			    "in upcall string '%s'\n", info->lbuf);
++			    "in upcall string '%s'\n", upcall_str);
+ 		goto out;
+ 	}
+ 
+@@ -761,7 +769,7 @@ handle_gssd_upcall(struct clnt_upcall_info *info)
+ 	if (!uidstr) {
+ 		printerr(0, "WARNING: handle_gssd_upcall: "
+ 			    "failed to find uid "
+-			    "in upcall string '%s'\n", info->lbuf);
++			    "in upcall string '%s'\n", upcall_str);
+ 		goto out;
+ 	}
+ 
+@@ -774,7 +782,7 @@ handle_gssd_upcall(struct clnt_upcall_info *info)
+ 	if (target && strlen(target) < 1) {
+ 		printerr(0, "WARNING: handle_gssd_upcall: "
+ 			 "failed to parse target name "
+-			 "in upcall string '%s'\n", info->lbuf);
++			 "in upcall string '%s'\n", upcall_str);
+ 		goto out;
+ 	}
+ 
+@@ -789,7 +797,7 @@ handle_gssd_upcall(struct clnt_upcall_info *info)
+ 	if (service && strlen(service) < 1) {
+ 		printerr(0, "WARNING: handle_gssd_upcall: "
+ 			 "failed to parse service type "
+-			 "in upcall string '%s'\n", info->lbuf);
++			 "in upcall string '%s'\n", upcall_str);
+ 		goto out;
+ 	}
+ 
+@@ -802,6 +810,8 @@ handle_gssd_upcall(struct clnt_upcall_info *info)
+ 		do_error_downcall(clp->gssd_fd, uid, -EACCES);
+ 	}
+ out:
++	free(upcall_str);
++out_nomem:
+ 	free(info);
+ 	return;
+ }

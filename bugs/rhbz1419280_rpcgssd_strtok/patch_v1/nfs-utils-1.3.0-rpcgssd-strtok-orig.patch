@@ -1,0 +1,67 @@
+--- a/utils/gssd/gssd_proc.c	2017-02-03 14:52:54.577603342 -0600
++++ b/utils/gssd/gssd_proc.c	2017-02-03 14:57:30.478871639 -0600
+@@ -735,10 +735,18 @@
+ 	char			*target = NULL;
+ 	char			*service = NULL;
+ 	char			*enctypes = NULL;
++	char			*saveptr;
++	char			*upcall_str;
+ 
+ 	printerr(2, "\n%s: '%s' (%s)\n", __func__, info->lbuf, clp->relpath);
+ 
+-	for (p = strtok(info->lbuf, " "); p; p = strtok(NULL, " ")) {
++	upcall_str = strdup(info->lbuf);
++	if (upcall_str == NULL) {
++		printerr(0, "ERROR: malloc failure\n");
++		goto out_nomem;
++        }
++
++	for (p = strtok_r(info->lbuf, " ", &saveptr); p; p = strtok_r(NULL, " ", &saveptr)) {
+ 		if (!strncmp(p, "mech=", strlen("mech=")))
+ 			mech = p + strlen("mech=");
+ 		else if (!strncmp(p, "uid=", strlen("uid=")))
+@@ -754,7 +762,7 @@
+ 	if (!mech || strlen(mech) < 1) {
+ 		printerr(0, "WARNING: handle_gssd_upcall: "
+ 			    "failed to find gss mechanism name "
+-			    "in upcall string '%s'\n", info->lbuf);
++			    "in upcall string '%s'\n", upcall_str);
+ 		goto out;
+ 	}
+ 
+@@ -767,7 +775,7 @@
+ 	if (!uidstr) {
+ 		printerr(0, "WARNING: handle_gssd_upcall: "
+ 			    "failed to find uid "
+-			    "in upcall string '%s'\n", info->lbuf);
++			    "in upcall string '%s'\n", upcall_str);
+ 		goto out;
+ 	}
+ 
+@@ -780,7 +788,7 @@
+ 	if (target && strlen(target) < 1) {
+ 		printerr(0, "WARNING: handle_gssd_upcall: "
+ 			 "failed to parse target name "
+-			 "in upcall string '%s'\n", info->lbuf);
++			 "in upcall string '%s'\n", upcall_str);
+ 		goto out;
+ 	}
+ 
+@@ -795,7 +803,7 @@
+ 	if (service && strlen(service) < 1) {
+ 		printerr(0, "WARNING: handle_gssd_upcall: "
+ 			 "failed to parse service type "
+-			 "in upcall string '%s'\n", info->lbuf);
++			 "in upcall string '%s'\n", upcall_str);
+ 		goto out;
+ 	}
+ 
+@@ -808,6 +816,8 @@
+ 		do_error_downcall(clp->gssd_fd, uid, -EACCES);
+ 	}
+ out:
++	free(upcall_str);
++out_nomem:
+ 	free(info);
+ 	return;
+ }

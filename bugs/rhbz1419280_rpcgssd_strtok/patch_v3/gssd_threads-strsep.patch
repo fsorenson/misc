@@ -1,0 +1,15 @@
+--- nfs-utils-1.3.0/utils/gssd/gssd_proc.c	2017-02-09 12:48:52.294763231 -0600
++++ nfs-utils-1.3.0/utils/gssd/gssd_proc.c-new	2017-02-09 12:49:45.164389642 -0600
+@@ -735,10 +735,11 @@
+ 	char			*target = NULL;
+ 	char			*service = NULL;
+ 	char			*enctypes = NULL;
++	char			*pbuf = info->lbuf;
+ 
+ 	printerr(2, "\n%s: '%s' (%s)\n", __func__, info->lbuf, clp->relpath);
+ 
+-	for (p = strtok(info->lbuf, " "); p; p = strtok(NULL, " ")) {
++	while ((p = strsep(&pbuf, " "))) {
+ 		if (!strncmp(p, "mech=", strlen("mech=")))
+ 			mech = p + strlen("mech=");
+ 		else if (!strncmp(p, "uid=", strlen("uid=")))
