@@ -1,0 +1,30 @@
+From 663c2ba55b01edd053271663d6566e6eab0980f0 Mon Sep 17 00:00:00 2001
+From: Frank Sorenson <sorenson@redhat.com>
+Date: Wed, 28 Sep 2016 13:43:31 -0500
+Subject: [PATCH 5/5] sunrpc: replace generic auth_cred hash with auth-specific
+ function
+
+Replace the generic code to hash the auth_cred with the call to
+the auth-specific hash function in the rpc_authops struct.
+
+Signed-off-by: Frank Sorenson <sorenson@redhat.com>
+---
+ net/sunrpc/auth.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/net/sunrpc/auth.c b/net/sunrpc/auth.c
+index a7e42f9..2bff63a 100644
+--- a/net/sunrpc/auth.c
++++ b/net/sunrpc/auth.c
+@@ -551,7 +551,7 @@ rpcauth_lookup_credcache(struct rpc_auth *auth, struct auth_cred * acred,
+ 			*entry, *new;
+ 	unsigned int nr;
+ 
+-	nr = hash_long(from_kuid(&init_user_ns, acred->uid), cache->hashbits);
++	nr = auth->au_ops->hash_cred(acred, cache->hashbits);
+ 
+ 	rcu_read_lock();
+ 	hlist_for_each_entry_rcu(entry, &cache->hashtable[nr], cr_hash) {
+-- 
+2.5.5
+

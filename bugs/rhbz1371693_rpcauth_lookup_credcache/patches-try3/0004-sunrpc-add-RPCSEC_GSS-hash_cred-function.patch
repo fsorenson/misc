@@ -1,0 +1,41 @@
+From 7994a1754c671e5e816312a4069d0d98bf068559 Mon Sep 17 00:00:00 2001
+From: Frank Sorenson <sorenson@redhat.com>
+Date: Wed, 28 Sep 2016 13:42:54 -0500
+Subject: [PATCH 4/5] sunrpc: add RPCSEC_GSS hash_cred() function
+
+Add a hash_cred() function for RPCSEC_GSS, using only the
+uid from the auth_cred.
+
+Signed-off-by: Frank Sorenson <sorenson@redhat.com>
+---
+ net/sunrpc/auth_gss/auth_gss.c | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/net/sunrpc/auth_gss/auth_gss.c b/net/sunrpc/auth_gss/auth_gss.c
+index 976c781..d8bd97a 100644
+--- a/net/sunrpc/auth_gss/auth_gss.c
++++ b/net/sunrpc/auth_gss/auth_gss.c
+@@ -1298,6 +1298,12 @@ gss_destroy_cred(struct rpc_cred *cred)
+ 	gss_destroy_nullcred(cred);
+ }
+ 
++static int
++gss_hash_cred(struct auth_cred *acred, unsigned int hashbits)
++{
++	return hash_64(from_kuid(&init_user_ns, acred->uid), hashbits);
++}
++
+ /*
+  * Lookup RPCSEC_GSS cred for the current process
+  */
+@@ -1982,6 +1988,7 @@ static const struct rpc_authops authgss_ops = {
+ 	.au_name	= "RPCSEC_GSS",
+ 	.create		= gss_create,
+ 	.destroy	= gss_destroy,
++	.hash_cred	= gss_hash_cred,
+ 	.lookup_cred	= gss_lookup_cred,
+ 	.crcreate	= gss_create_cred,
+ 	.list_pseudoflavors = gss_mech_list_pseudoflavors,
+-- 
+2.5.5
+

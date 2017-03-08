@@ -1,0 +1,45 @@
+commit 4620f95ca42a0330878ce18eb5cdd29f5b48695a
+Author: Frank Sorenson <sorenson@redhat.com>
+Date:   2016-09-28 12:49:27 -0500
+
+    sunrpc: add hash_cred() function to rpc_authops struct
+    
+    The current rpc_cred_cache hashtable uses only the uid in the hash
+    computation for all auth flavors.
+    
+    For AUTH_SYS, rpc_creds created with the same uid but different
+    gids will all go on the same hash chain.  In certain usage patterns,
+    such as the following, this can lead to extremely long hash chains
+    and slow performance for certain uids
+    
+        for (i = 0 ; i < 100000 ; i++) {
+            setregid(-1, i);
+            stat(path, &st);
+        }
+    
+    With AUTH_SYS, in order to distribute the rpc_creds more evenly
+    throughout the cache, we will include the gid in the hash.
+    
+    However, since the gid is not relevant or appropriate for all
+    auth flavors, we add a 'hash_cred' function to rpc_authops, which
+    allows a hash function specific to each auth flavor.
+    
+    This patch adds the function to the rpc_authops struct.  Further
+    patches will add the auth-specific hash functions and make them
+    active.
+    
+    
+    Signed-off-by: Frank Sorenson <sorenson@redhat.com>
+
+diff --git a/include/linux/sunrpc/auth.h b/include/linux/sunrpc/auth.h
+index 4ccf184..b1bc62b 100644
+--- a/include/linux/sunrpc/auth.h
++++ b/include/linux/sunrpc/auth.h
+@@ -131,6 +131,7 @@ struct rpc_authops {
+ 	struct rpc_auth *	(*create)(struct rpc_auth_create_args *, struct rpc_clnt *);
+ 	void			(*destroy)(struct rpc_auth *);
+ 
++	int			(*hash_cred)(struct auth_cred *, unsigned int);
+ 	struct rpc_cred *	(*lookup_cred)(struct rpc_auth *, struct auth_cred *, int);
+ 	struct rpc_cred *	(*crcreate)(struct rpc_auth*, struct auth_cred *, int, gfp_t);
+ 	int			(*list_pseudoflavors)(rpc_authflavor_t *, int);

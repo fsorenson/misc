@@ -1,0 +1,38 @@
+commit 99c738643eba8d05dc6a4fcecfb811f46f01fbe9
+Author: Frank Sorenson <sorenson@redhat.com>
+Date:   2016-09-28 13:41:15 -0500
+
+    sunrpc: add auth_unix hash_cred() function
+    
+    Add a hash_cred() function for auth_unix, using both the
+    uid and gid from the auth_cred.
+    
+    Signed-off-by: Frank Sorenson <sorenson@redhat.com>
+
+diff --git a/net/sunrpc/auth_unix.c b/net/sunrpc/auth_unix.c
+index a99278c..4c0c572 100644
+--- a/net/sunrpc/auth_unix.c
++++ b/net/sunrpc/auth_unix.c
+@@ -46,6 +46,14 @@ unx_destroy(struct rpc_auth *auth)
+ 	rpcauth_clear_credcache(auth->au_credcache);
+ }
+ 
++static int
++unx_hash_cred(struct auth_cred *acred, unsigned int hashbits)
++{
++	return hash_64(from_kgid(&init_user_ns, acred->gid) |
++		((u64)from_kuid(&init_user_ns, acred->uid) <<
++			(sizeof(gid_t) * 8)), hashbits);
++}
++
+ /*
+  * Lookup AUTH_UNIX creds for current process
+  */
+@@ -220,6 +228,7 @@ const struct rpc_authops authunix_ops = {
+ 	.au_name	= "UNIX",
+ 	.create		= unx_create,
+ 	.destroy	= unx_destroy,
++	.hash_cred	= unx_hash_cred,
+ 	.lookup_cred	= unx_lookup_cred,
+ 	.crcreate	= unx_create_cred,
+ };

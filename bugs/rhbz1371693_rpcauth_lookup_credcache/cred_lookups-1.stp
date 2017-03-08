@@ -1,0 +1,58 @@
+global lookup_count[100]
+global generic_match[100]
+global unx_match[100]
+global return_errors[100]
+
+function timestamp:string() { return sprintf("%s: ", tz_ctime(gettimeofday_s())) }
+
+probe module("sunrpc").function("rpcauth_lookup_credcache") {
+#	if (lookup_count[execname()] < 2) {
+#		printf("%s(%s)\n", ppfunc(), $$parms$$)
+
+#uct rpc_auth *auth, struct auth_cred * acred,
+#^1da177e (Linus Torvalds         2005-04-16 15:20:36 -0700 539)         struct rpc_cred_cache *cache = auth->au_credcache;
+#31be5bf1 (Trond Myklebust        2007-06-24 15:55:26 -0400 540)         struct rpc_cred *cred = NULL,
+#25337fdc (Trond Myklebust        2008-03-12 14:40:14 -0400 542)         unsigned int nr;
+#	}
+
+	lookup_count[execname()]++
+
+}
+
+
+
+
+probe module("sunrpc").function("generic_match") {
+#	if ((generic_match[execname()] >= 10000) && (generic_match[execname()] < 10002))
+#		printf("%s(%s)\n", ppfunc(), $$parms$$)
+       	generic_match[execname()]++
+	
+}
+
+function _IS_ERR:long(ptr:long) %{ /* pure */
+	STAP_RETVALUE = IS_ERR((const void *)(long)STAP_ARG_ptr);
+%}
+
+
+
+probe module("sunrpc").function("unx_match") { unx_match[execname()]++ }
+probe module("sunrpc").function("rpcauth_lookup_credcache").return {
+        if (@defined($return)) {
+          if (_IS_ERR($return))
+                return_errors[execname()]++
+        }
+}
+
+probe timer.s(10) {
+        printf("%s\n", timestamp())
+        foreach (ex in lookup_count-) {
+                printf("\t%s: lookups: %d (generic_match: %d, unx_match: %d, errors: %d)\n",
+                        ex, lookup_count[ex], generic_match[ex], unx_match[ex], return_errors[ex])
+        }
+        delete lookup_count
+        delete generic_match
+        delete unx_match
+        delete return_errors
+}
+
+
