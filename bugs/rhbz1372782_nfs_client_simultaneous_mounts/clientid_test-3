@@ -1,0 +1,141 @@
+#!/bin/bash
+
+# Frank Sorenson <sorenson@redhat.com>, 2016
+#
+# Script to reproduce the bug whereby an nfs v4 client which mounts
+# filesystems in quick succession from two nfs servers started
+# nearly simultaneously may receive identical clientid/verifier
+# pair from both servers (returned from SETCLIENTID), resulting in
+# SETCLIENTID_CONFIRM twice to the same server, and duplicate mounts.
+
+# HOST name/IP, SOURCE dir, TARGET mount directory
+H1="vm1"
+S1="$H1:/exports"
+T1="/mnt/$H1"
+
+H2="vm2"
+S2="$H2:/exports"
+T2="/mnt/$H2"
+
+
+# pick one of these
+#MIG=""
+#MIG=${MIG:-",nomigration"}
+MIG=${MIG:-",migration"}
+
+
+MOUNT_OPTS="vers=4.0,sec=sys$MIG"
+MOUNT_ATTEMPTS=5
+MOUNT_RETRY_DELAY=0.10
+RELOAD_ATTEMPTS=10
+RELOAD_RETRY_DELAY=0.25
+
+LOG_OVER_NET=1
+# whether to log by sending to udp/514 (syslog) on HOST1 (either
+#  enable remote syslog, or just add 'or udp port 514' to the packet
+#  capture filter.  Goes to /dev/null, if set to 0.
+
+LOAD_NFSD="modprobe nfs ; systemctl start nfs-server.service"
+UNLOAD_NFSD="umount -a -t nfs4 nfs ; exportfs -au ; systemctl stop nfs-server.service ; umount -a -t nfsd ; rmmod nfsv4 nfsv3 nfs nfsd"
+reload_nfsd() { # unload and reload the initial state on the nfs servers
+	ssh root@$H1 "$UNLOAD_NFSD" 2>&1 | sed s/^/\\t\\t/g
+	ssh root@$H2 "$UNLOAD_NFSD" 2>&1 | sed s/^/\\t\\t/g
+
+	ssh root@$H1 "$LOAD_NFSD" 2>&1 | sed s/^/\\t\\t/g
+	ssh root@$H2 "$LOAD_NFSD" 2>&1 | sed s/^/\\t\\t/g
+}
+output() {
+	echo -en "$*"
+	echo -en "$0: $*" | tr -d '\n\t' >&6
+}
+
+check_mp() {
+	local targ=$1
+
+	[[ -e $targ ]] || mkdir -p $targ >/dev/null 2>&1
+	[[ -d $targ ]] || { echo "'$targ' is not a directory" ; exit 1 ; }
+
+	umount $targ >/dev/null 2>&1 # okay to fail if it's not mounted
+	[[ $(stat --printf="%m" $targ) == $targ ]] && { echo "'$targ' appears to already be a mount, and unmounting failed" ; exit 1 ; }
+}
+do_mount1() {
+	mount $S1 $T1 -t nfs -o $MOUNT_OPTS$MIG
+}
+do_mount2() {
+	mount $S2 $T2 -t nfs -o $MOUNT_OPTS$MIG
+}
+check_success() {
+	dev1=$(stat --printf='%D' $T1)
+	dev2=$(stat --printf='%D' $T2)
+
+	output " devices: $dev1 and $dev2 - "
+
+	[[ $dev1 == $T1_dev ]] && return 1
+	[[ $dev2 == $T2_dev ]] && return 1
+	[[ $dev1 == $dev2 ]] || return 1
+
+	return 0
+}
+attempt_mounts() {
+	for attempt in $(seq 1 $MOUNT_ATTEMPTS) ; do
+		output "\tattempt $attempt: "
+
+		do_mount1 &
+		do_mount2
+		wait $!
+
+		if check_success ; then
+			output "SUCCESS\n"
+			output "\tSuccessfully reproduced the bug on attempt $attempt\n"
+			return 0
+		fi
+
+		output "FAIL\n"
+		umount $T1 $T2
+		sleep $MOUNT_RETRY_DELAY
+	done
+
+	output "\tFailed to reproduce the bug after $attempt attempts\n"
+	return 1
+}
+
+if [[ $LOG_OVER_NET -ne 0 ]] ; then
+# probably best to be the network address of some real network, but not a real host address
+	exec 6<>/dev/udp/10.0.0.0/514
+else
+	exec 6<>/dev/null
+fi
+trap exit_cleanup EXIT
+exit_cleanup() {
+	exec 6>&-
+}
+
+check_mp $T1
+check_mp $T2
+
+T1_dev=$(stat --printf='%D' $T1)
+T2_dev=$(stat --printf='%D' $T2)
+
+echo "mount1:"
+echo -e "\tsource: $S1"
+echo -e "\ttarget directory: $T1"
+echo -e "\ttarget device: $T1_dev"
+echo "mount2:"
+echo -e "\tsource: $S2"
+echo -e "\ttarget directory: $T2"
+echo -e "\ttarget device: $T2_dev"
+echo
+
+for reload_attempt in $(seq 1 $RELOAD_ATTEMPTS) ; do
+	output "$reload_attempt: Reloading nfsd on servers\n"
+	reload_nfsd
+
+	if attempt_mounts ; then
+		output "Successfully reproduced the bug after reloading nfsd on servers $reload_attempt times\n"
+		exit 0
+	fi
+	sleep $RELOAD_RETRY_DELAY
+done
+
+output "Failed to reproduce the bug after reloading nfsd $RELOAD_ATTEMPTS times, mounting $MOUNT_ATTEMPTS times each\n"
+exit 1

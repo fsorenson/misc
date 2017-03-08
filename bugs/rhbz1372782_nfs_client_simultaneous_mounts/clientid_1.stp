@@ -1,0 +1,327 @@
+function kernel_hex_str:string(s, len) {
+	ret = ""
+	for (i = 0 ; i < len ; i++) {
+		ret .= sprintf("%02x", 0xff & kernel_char(s + i))
+	}
+	return ret
+}
+
+global thread_indent_lvls%[20]
+function my_indent(i) {
+	ename = execname()
+	tid = tid()
+	ppfunc = ppfunc()
+	ret = is_return()
+	if (i > 0)
+		thread_indent_lvls[tid] += i
+
+	istr = sprintf("%*s", thread_indent_lvls[tid], "")
+	if (i < 0)
+		thread_indent_lvls[tid] += i
+
+	if (thread_indent_lvls[tid] <= 0)
+		delete thread_indent_lvls[tid]
+	return sprintf("%s%s(%d) - %s%s",
+		istr, ename, tid, ppfunc, ret ? ".return" : "")
+}
+
+function get_port_from_client(nfsc) {
+	rpc_clnt = @cast(nfsc, "struct nfs_client", "kernel:nfs")->cl_rpcclient
+	cl_xprt = @cast(rpc_clnt, "rpc_clnt", "kernel:sunrpc")->cl_xprt
+	addr = &@cast(cl_xprt, "rpc_xprt", "kernel:sunrpc")->addr
+
+	/* In reality, 'cl_xprt->addr' is of 'sockaddr_storage' type
+	 *          * (since 2.6.19). But when used, you cast it to what is
+	 *                   * inside that buffer. */
+	if (@cast(addr, "sockaddr_in")->sin_family != %{ /* pure */ /* unprivileged */ AF_INET %}) {
+		return 0
+	}
+	return ntohs(@cast(addr, "sockaddr_in")->sin_port)
+}
+
+function get_sv_port_from_client(nfsc) {
+	cl_addr = &@cast(nfsc, "nfs_client", "kernel:nfs")->cl_addr
+	return ntohs(@cast(cl_addr, "sockaddr_in")->sin_port)
+}
+function get_sv_ip_from_client:long(nfsc:long) {
+	cl_addr = &@cast(nfsc, "nfs_client", "kernel:nfs")->cl_addr
+	return @cast(cl_addr, "sockaddr_in")->sin_addr->s_addr
+}
+
+
+# 3.10.327
+#module("nfsv4").function("nfs4_proc_setclientid@fs/nfs/nfs4proc.c:5004") $clp:struct nfs_client* $program:u32 $port:short unsigned int $cred:struct rpc_cred* $res:struct nfs4_setclientid_res* $sc_verifier:nfs4_verifier $setclientid:struct nfs4_setclientid $msg:struct rpc_message $task_setup_data:struct rpc_task_setup
+
+# 4.8
+#module("nfsv4").function("nfs4_proc_setclientid@fs/nfs/nfs4proc.c:5214") $clp:struct nfs_client* $program:u32 $port:short unsigned int $cred:struct rpc_cred* $res:struct nfs4_setclientid_res* $sc_verifier:nfs4_verifier $setclientid:struct nfs4_setclientid $msg:struct rpc_message $task_setup_data:struct rpc_task_setup
+
+function get_nfs_client_data(nfs_client) {
+	cl_ip = kernel_string(@cast(nfs_client, "struct nfs_client", "kernel:nfs")->cl_ipaddr)
+	cl_port = get_port_from_client(nfs_client)
+	cl_owner_id = kernel_string(@cast(nfs_client, "struct nfs_client", "kernel:nfs")->cl_owner_id)
+
+	sv_ip = ip_ntop(get_sv_ip_from_client(nfs_client))
+	sv_port = get_sv_port_from_client(nfs_client)
+	sv_host = kernel_string(@cast(nfs_client, "struct nfs_client", "kernel:nfs")->cl_hostname)
+
+	cl_string = sprintf("%s:%d", cl_ip, cl_port)
+	sv_string = sprintf("%s:%d (%s)", sv_ip, sv_port, sv_host)
+
+	cl_count = atomic_read(&@cast(nfs_client, "struct nfs_client", "kernel:nfs")->cl_count)
+
+	return sprintf("%p: client: %s => server: %s  (%s), count=%d", nfs_client, cl_string, sv_string, cl_owner_id, cl_count)
+}
+
+
+probe module("nfsv4").function("nfs4_proc_setclientid").call {
+	ind = my_indent(1)
+	printf("%s: %s\n", ind, get_nfs_client_data($clp))
+
+	cl_ip = kernel_string($clp->cl_ipaddr)
+	sv_ip = ip_ntop(get_sv_ip_from_client($clp))
+	sv_host = kernel_string($clp->cl_hostname)
+	cl_owner_id = kernel_string($clp->cl_owner_id)
+
+	printf("%s (port=%d, clp=0x%016x, cl_ip=%s, host=%s, sv_ip=%s, cl_owner_id='%s')\n",
+		ind, $port, $clp, cl_ip, sv_host, sv_ip, cl_owner_id)
+
+//	print_backtrace()
+}
+
+probe module("nfsv4").function("nfs4_proc_setclientid").return {
+	my_indent(-1)
+}
+
+
+/*
+#module("nfsv4").function("nfs4_proc_setclientid@fs/nfs/nfs4proc.c:5004").return $return:int $clp:struct nfs_client* $program:u32 $port:short unsigned int $cred:struct rpc_cred* $res:struct nfs4_setclientid_res* $sc_verifier:nfs4_verifier $setclientid:struct nfs4_setclientid $msg:struct rpc_message $task_setup_data:struct rpc_task_setup
+probe module("nfsv4").function("nfs4_proc_setclientid").return {
+	printf("%s(%d) - %s(port=%d, clp=0x%016x, cl_ip=%s).return clid=0x%016x\n",
+		execname(), tid(), ppfunc(), $port, $clp, kernel_string($clp->cl_ipaddr), $clp->cl_clientid)
+}
+
+probe module("nfsv4").function("nfs4_setclientid_done") {
+	printf("%s(%d) - %s(%s)\n",
+		execname(), tid(), ppfunc(), $$parms$)
+}
+*/
+
+
+probe module("nfsv4").function("nfs4_proc_setclientid_confirm") {
+	printf("%s (clp=0x%016x, cl_ip=%s, nfs4_setclientid_res='%s')\n",
+		my_indent(1), $clp, kernel_string($clp->cl_ipaddr), $arg$$)
+
+//	print_backtrace()
+}
+probe module("nfsv4").function("nfs4_proc_setclientid_confirm").return {
+	printf("%s (clp=0x%016x, cl_ip=%s).return clid=0x%016x\n",
+		my_indent(-1), $clp, kernel_string($clp->cl_ipaddr), $clp->cl_clientid)
+}
+
+
+probe module("nfsv4").function("nfs4_init_boot_verifier") {
+	rpc_clnt = $clp->cl_rpcclient
+
+	str = ""
+	ipa = ip_ntop(get_ip_from_client(rpc_clnt))
+	str .= sprintf("ip_addr=%s", ipa)
+
+	cl_ip = kernel_string($clp->cl_ipaddr)
+	str .= sprintf(", cl_ip=%s", cl_ip)
+
+//	sv_ip = ip_ntop($clp->cl_addr->__data)
+	sv_ip = ip_ntop(get_sv_ip_from_client($clp))
+	str .= sprintf(", sv_ip=%s", sv_ip)
+
+	sv_host = kernel_string($clp->cl_hostname)
+	str .= sprintf(", sv_host=%s", sv_host)
+
+	cl_owner_id = "???"
+	str .= sprintf(", cl_owner_id=%s", cl_owner_id)
+#	cl_owner_id = $clp->cl_owner_id
+//	cl_owner_id = kernel_string($clp->cl_owner_id)
+
+	printf("%s (clp=0x%016x, %s)\n",
+		my_indent(1), $clp, str)
+//	printf("%s(%d) - %s(port=%d, clp=0x%016x, cl_ip=%s, host=%s, sv_ip=%s, cl_owner_id='%s')\n",
+//		execname(), tid(), ppfunc(), $port, $clp, cl_ip, sv_host, sv_ip, cl_owner_id)
+
+//	print_backtrace()
+}
+probe module("nfsv4").function("nfs4_init_boot_verifier").return {
+	printf("%s (clp=0x%016x, cl_ipaddr=%s) bootverf=%s\n",
+		my_indent(-1), $clp, kernel_string($clp->cl_ipaddr), kernel_hex_str($bootverf->data, 8))
+#		execname(), tid(), ppfunc(), $clp, kernel_string($clp->cl_ipaddr), ntohll($bootverf->data[0]))
+}
+
+probe module("nfsv4").function("nfs4_destroy_clientid") {
+	printf("%s (clp=0x%016x, cl_ipaddr=%s)\n",
+		my_indent(1), $clp, kernel_string($clp->cl_ipaddr))
+	
+}
+probe module("nfsv4").function("nfs4_destroy_clientid").return {
+	printf("%s (clp=0x%016x, cl_ipaddr=%s) return=%s\n",
+		my_indent(-1), $clp, kernel_string($clp->cl_ipaddr), $return$$)
+}
+
+
+
+# rhel
+# module("nfsv4").function("nfs40_discover_server_trunking@fs/nfs/nfs4state.c:116") $clp:struct nfs_client* $result:struct nfs_client** $cred:struct rpc_cred* $clid:struct nfs4_setclientid_res $nn:struct nfs_net*
+# 4.7
+# module("nfsv4").function("nfs40_discover_server_trunking@fs/nfs/nfs4state.c:119") $clp:struct nfs_client* $result:struct nfs_client** $cred:struct rpc_cred* $clid:struct nfs4_setclientid_res $port:short unsigned int
+probe module("nfsv4").function("nfs40_discover_server_trunking") {
+	clid = 0xffff
+//	clid = $clid->clientid
+	conf_data = "???"
+//	conf_data_8 = $clid->confirm->data
+//	conf_data = sprintf("%p", conf_data_8)
+//	conf_data = kernel_hex_str(conf_data_8, 8)
+
+	printf("%s (clp=0x%016x, clid->clientid=%p, confirm='%s', clid='%s')\n",
+		my_indent(1), $clp, clid, conf_data, "$clid$$")
+#   mntem(5905) - nfs40_discover_server_trunking (clp=0xffff880044eb2000, clid='{.clientid=18446744071585371662, .confirm={.data="\320\371\266\240\377\377\377\377\020"}}')
+
+}
+probe module("nfsv4").function("nfs40_discover_server_trunking").return {
+	clid = "????"
+	conf_data = "???"
+//	clid = $clid->clientid
+//	conf_data_8 = $clid->confirm->data
+//	conf_data = sprintf("%p", conf_data_8)
+//	conf_data = kernel_hex_str(conf_data_8, 8)
+	printf("%s (clp=0x%016x, clid='%p', clientid=%s, confirm=%s)\n",
+		my_indent(-1), $clp, 0xffff, clid, conf_data)
+}
+
+probe module("nfsv4").function("nfs41_discover_server_trunking") {
+	printf("%s (clp=0x%016x)\n",
+		my_indent(1), $clp)
+	my_indent(-1)
+}
+probe module("nfsv4").function("nfs41_discover_server_trunking").return {
+	printf("%s (clp=0x%016x)\n",
+		my_indent(1), $clp)
+	my_indent(-1)
+}
+
+function memcmp(c1, c2, sz) %{
+	unsigned char *c1 = (unsigned char *)STAP_ARG_c1;
+	unsigned char *c2 = (unsigned char *)STAP_ARG_c2;
+	int sz = (int)STAP_ARG_sz;
+	int i;
+	int ret = 0;
+
+	for (i = 0 ; i < sz ; i ++) {
+		ret = c1[i] - c2[i];
+
+		if (ret)
+			break;
+	}
+	STAP_RETVALUE = (long)ret;
+%}
+
+
+probe module("nfsv4").function("nfs4_check_clientid_trunking") {
+	min_id1 = $a->cl_serverowner->minor_id
+	maj_id1_sz = $a->cl_serverowner->major_id_sz
+	maj_id1 = $a->cl_serverowner->major_id
+
+	min_id2 = $b->cl_serverowner->minor_id
+	maj_id2_sz = $b->cl_serverowner->major_id_sz
+	maj_id2 = $b->cl_serverowner->major_id
+
+	printf("%s(%d) - %s\n",
+		execname(), tid(), ppfunc())
+	if ((maj_id1_sz != maj_id2_sz)  ||
+		memcmp(maj_id1, maj_id2, maj_id1_sz)) {
+		printf("\tserver owners for nfs_clients %p and %p do not match\n",
+			$a, $b)
+		printf("\t\t%s vs %s\n", kernel_hex_str(maj_id1, maj_id1_sz), kernel_hex_str(maj_id2, maj_id2_sz))
+	} else {
+		printf("\tserver owners for nfs_clients %p and %p match\n",
+			$a, $b)
+		printf("\t\t%s\n", kernel_hex_str(maj_id1, maj_id1_sz))
+	}
+
+}
+
+
+
+
+# upstream
+# static struct nfs_client *nfs_match_client(const struct nfs_client_initdata *data)
+probe module("nfs").function("nfs_match_client") {
+
+	printf("%s %s\n",
+		my_indent(0), $data$$)
+}
+
+# unable to probe
+#probe module("nfs").function("nfs_match_client").return {
+#	thread_indent(-1)
+#}
+
+probe module("nfs").function("nfs_found_client") {
+//	printf("%s - %s\n", ppfunc(), get_nfs_client_data($clp))
+//	printf("%s - %s\n", ppfunc(), $clp$$)
+	printf("%s\n", my_indent(0))
+}
+
+probe module("nfs").function("nfs_sockaddr_cmp") ? {
+	printf("%s ('%s', '%s')\n",
+		my_indent(1), sin_to_str($sa1), sin_to_str($sa2))
+	my_indent(-1)
+//	printf("%s\n", ppfunc())
+}
+
+function sin_to_str(addr) {
+	if (@cast(addr, "sockaddr_in")->sin_family != %{ /* pure */ /* unprivileged */ AF_INET %}) {
+		return ""
+	}
+	ipstr = format_ipaddr(@cast(addr, "sockaddr_in")->sin_addr->s_addr, @const("AF_INET"))
+	ipport = ntohs(@cast(addr, "sockaddr_in")->sin_port)
+
+	return sprintf("%s:%d", ipstr, ipport)
+}
+
+
+# module("nfs").function("nfs_get_client@fs/nfs/client.c:479") $cl_init:struct nfs_client_initdata const* $timeparms:struct rpc_timeout const* $ip_addr:char const* $authflavour:rpc_authflavor_t $new:struct nfs_client*
+probe module("nfs").function("nfs_get_client") {
+	# nfs_client_initdata
+	hostname = kernel_string($cl_init->hostname)
+	printf("%s (hostname=%s, addr=%s, clp=%p)\n",
+		my_indent(1), hostname, ip_ntop($cl_init->addr), $new)
+}
+probe module("nfs").function("nfs_get_client").return {
+	printf("%s - client is %p:  %s\n",
+		my_indent(-1), $return, get_nfs_client_data($return))
+}
+
+
+# module("nfsv4").function("nfs40_walk_client_list@fs/nfs/nfs4client.c:471") $new:struct nfs_client* $result:struct nfs_client** $cred:struct rpc_cred* $nn:struct nfs_net* $clid:struct nfs4_setclientid_res $__func__:char[] const
+probe module("nfsv4").function("nfs40_walk_client_list") {
+	printf("%s\n",
+		my_indent(1))
+}
+probe module("nfsv4").function("nfs40_walk_client_list").return {
+	if ($return == 0)
+		printf("%s - found a client: %p\n",
+			my_indent(-1), $result)
+	else
+		printf("%s - returning %d\n",
+			my_indent(-1), $return)
+}
+
+probe syscall.mount {
+	printf("%s - mount %s\n",
+		my_indent(1), argstr)
+}
+probe syscall.mount.return {
+	printf("%s - mount return: %s\n\n",
+		my_indent(-1), retstr)
+}
+
+probe begin {
+	syscall_string_trunc = 256
+}
