@@ -1,0 +1,25 @@
+#!/usr/bin/stap -g
+#
+# from Ben Coddington - bcodding@redhat.com
+
+global do_sync = 0;
+probe begin { printf("begin\n"); }
+
+probe kernel.function("iov_iter_copy_from_user_atomic").return {
+	if (symname($page->mapping->a_ops) == "nfs_file_aops") {
+		do_sync = 1;
+		$return = 0;
+	}
+}
+
+probe module("nfs").function("nfs_write_end") {
+	if (do_sync)
+		system("/usr/bin/sync");
+}
+
+probe module("nfs").function("nfs_write_end").return {
+	if (do_sync) {
+		mdelay(1000);
+		exit();
+	}
+}
