@@ -1,0 +1,65 @@
+--- nfs-utils-1.3.0/utils/gssd/gssd_proc.c	2017-02-09 12:48:52.294763231 -0600
++++ nfs-utils-1.3.0/utils/gssd/gssd_proc.c-new	2017-02-09 12:49:45.164389642 -0600
+@@ -729,10 +735,17 @@
+ 	char			*target = NULL;
+ 	char			*service = NULL;
+ 	char			*enctypes = NULL;
++	char			*upcall_str;
+ 	char			*pbuf = info->lbuf;
+ 
+ 	printerr(2, "\n%s: '%s' (%s)\n", __func__, info->lbuf, clp->relpath);
+ 
++	upcall_str = strdup(info->lbuf);
++	if (upcall_str == NULL) {
++		printerr(0, "ERROR: malloc failure\n");
++		goto out_nomem;
++	}
++
+ 	while ((p = strsep(&pbuf, " "))) {
+ 		if (!strncmp(p, "mech=", strlen("mech=")))
+ 			mech = p + strlen("mech=");
+@@ -757,7 +767,7 @@
+ 	if (!mech || strlen(mech) < 1) {
+ 		printerr(0, "WARNING: handle_gssd_upcall: "
+ 			    "failed to find gss mechanism name "
+-			    "in upcall string '%s'\n", info->lbuf);
++			    "in upcall string '%s'\n", upcall_str);
+ 		goto out;
+ 	}
+ 
+@@ -770,7 +777,7 @@
+ 	if (!uidstr) {
+ 		printerr(0, "WARNING: handle_gssd_upcall: "
+ 			    "failed to find uid "
+-			    "in upcall string '%s'\n", info->lbuf);
++			    "in upcall string '%s'\n", upcall_str);
+ 		goto out;
+ 	}
+ 
+@@ -783,7 +790,7 @@
+ 	if (target && strlen(target) < 1) {
+ 		printerr(0, "WARNING: handle_gssd_upcall: "
+ 			 "failed to parse target name "
+-			 "in upcall string '%s'\n", info->lbuf);
++			 "in upcall string '%s'\n", upcall_str);
+ 		goto out;
+ 	}
+ 
+@@ -798,7 +805,7 @@
+ 	if (service && strlen(service) < 1) {
+ 		printerr(0, "WARNING: handle_gssd_upcall: "
+ 			 "failed to parse service type "
+-			 "in upcall string '%s'\n", info->lbuf);
++			 "in upcall string '%s'\n", upcall_str);
+ 		goto out;
+ 	}
+ 
+@@ -811,6 +818,8 @@
+ 		do_error_downcall(clp->gssd_fd, uid, -EACCES);
+ 	}
+ out:
++	free(upcall_str);
++out_nomem:
+ 	free(info);
+ 	return;
+ }
