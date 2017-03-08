@@ -1,0 +1,10 @@
+#!/bin/bash
+
+
+new_uid=5000
+new_gid=5000
+/bin/ls -1f | while read f ; do
+	/usr/bin/chown $new_uid:$new_gid $f
+	new_uid=$((new_uid + 1))
+done
+

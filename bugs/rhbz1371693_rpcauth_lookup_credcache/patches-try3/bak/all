@@ -1,0 +1,181 @@
+commit 4620f95ca42a0330878ce18eb5cdd29f5b48695a
+Author: Frank Sorenson <sorenson@redhat.com>
+Date:   2016-09-28 12:49:27 -0500
+
+    sunrpc: add hash_cred() function to rpc_authops struct
+    
+    The current rpc_cred_cache hashtable uses only the uid in the hash
+    computation for all auth flavors.
+    
+    For AUTH_SYS, rpc_creds created with the same uid but different
+    gids will all go on the same hash chain.  In certain usage patterns,
+    such as the following, this can lead to extremely long hash chains
+    and slow performance for certain uids
+    
+        for (i = 0 ; i < 100000 ; i++) {
+            setregid(-1, i);
+            stat(path, &st);
+        }
+    
+    With AUTH_SYS, in order to distribute the rpc_creds more evenly
+    throughout the cache, we will include the gid in the hash.
+    
+    However, since the gid is not relevant or appropriate for all
+    auth flavors, we add a 'hash_cred' function to rpc_authops, which
+    allows a hash function specific to each auth flavor.
+    
+    This patch adds the function to the rpc_authops struct.  Further
+    patches will add the auth-specific hash functions and make them
+    active.
+    
+    
+    Signed-off-by: Frank Sorenson <sorenson@redhat.com>
+
+diff --git a/include/linux/sunrpc/auth.h b/include/linux/sunrpc/auth.h
+index 4ccf184..b1bc62b 100644
+--- a/include/linux/sunrpc/auth.h
++++ b/include/linux/sunrpc/auth.h
+@@ -131,6 +131,7 @@ struct rpc_authops {
+ 	struct rpc_auth *	(*create)(struct rpc_auth_create_args *, struct rpc_clnt *);
+ 	void			(*destroy)(struct rpc_auth *);
+ 
++	int			(*hash_cred)(struct auth_cred *, unsigned int);
+ 	struct rpc_cred *	(*lookup_cred)(struct rpc_auth *, struct auth_cred *, int);
+ 	struct rpc_cred *	(*crcreate)(struct rpc_auth*, struct auth_cred *, int, gfp_t);
+ 	int			(*list_pseudoflavors)(rpc_authflavor_t *, int);
+commit 9d2368473dd24a74f502cfe8f0e11f4eb228e5fa
+Author: Frank Sorenson <sorenson@redhat.com>
+Date:   2016-09-28 13:12:55 -0500
+
+    sunrpc: add generic_auth hash_cred() function
+    
+    Add a hash_cred() function for generic_auth, using both the
+    uid and gid from the auth_cred.
+    
+    Signed-off-by: Frank Sorenson <sorenson@redhat.com>
+
+diff --git a/net/sunrpc/auth_generic.c b/net/sunrpc/auth_generic.c
+index 1682195..0494513 100644
+--- a/net/sunrpc/auth_generic.c
++++ b/net/sunrpc/auth_generic.c
+@@ -78,6 +78,14 @@ static struct rpc_cred *generic_bind_cred(struct rpc_task *task,
+ 	return auth->au_ops->lookup_cred(auth, acred, lookupflags);
+ }
+ 
++static int
++generic_hash_cred(struct auth_cred *acred, unsigned int hashbits)
++{
++	return hash_64(from_kgid(&init_user_ns, acred->gid) |
++		((u64)from_kuid(&init_user_ns, acred->uid) <<
++			(sizeof(gid_t) * 8)), hashbits);
++}
++
+ /*
+  * Lookup generic creds for current process
+  */
+@@ -258,6 +266,7 @@ generic_key_timeout(struct rpc_auth *auth, struct rpc_cred *cred)
+ static const struct rpc_authops generic_auth_ops = {
+ 	.owner = THIS_MODULE,
+ 	.au_name = "Generic",
++	.hash_cred = generic_hash_cred,
+ 	.lookup_cred = generic_lookup_cred,
+ 	.crcreate = generic_create_cred,
+ 	.key_timeout = generic_key_timeout,
+commit 99c738643eba8d05dc6a4fcecfb811f46f01fbe9
+Author: Frank Sorenson <sorenson@redhat.com>
+Date:   2016-09-28 13:41:15 -0500
+
+    sunrpc: add auth_unix hash_cred() function
+    
+    Add a hash_cred() function for auth_unix, using both the
+    uid and gid from the auth_cred.
+    
+    Signed-off-by: Frank Sorenson <sorenson@redhat.com>
+
+diff --git a/net/sunrpc/auth_unix.c b/net/sunrpc/auth_unix.c
+index a99278c..4c0c572 100644
+--- a/net/sunrpc/auth_unix.c
++++ b/net/sunrpc/auth_unix.c
+@@ -46,6 +46,14 @@ unx_destroy(struct rpc_auth *auth)
+ 	rpcauth_clear_credcache(auth->au_credcache);
+ }
+ 
++static int
++unx_hash_cred(struct auth_cred *acred, unsigned int hashbits)
++{
++	return hash_64(from_kgid(&init_user_ns, acred->gid) |
++		((u64)from_kuid(&init_user_ns, acred->uid) <<
++			(sizeof(gid_t) * 8)), hashbits);
++}
++
+ /*
+  * Lookup AUTH_UNIX creds for current process
+  */
+@@ -220,6 +228,7 @@ const struct rpc_authops authunix_ops = {
+ 	.au_name	= "UNIX",
+ 	.create		= unx_create,
+ 	.destroy	= unx_destroy,
++	.hash_cred	= unx_hash_cred,
+ 	.lookup_cred	= unx_lookup_cred,
+ 	.crcreate	= unx_create_cred,
+ };
+commit 7994a1754c671e5e816312a4069d0d98bf068559
+Author: Frank Sorenson <sorenson@redhat.com>
+Date:   2016-09-28 13:42:54 -0500
+
+    sunrpc: add RPCSEC_GSS hash_cred() function
+    
+    Add a hash_cred() function for RPCSEC_GSS, using only the
+    uid from the auth_cred.
+    
+    Signed-off-by: Frank Sorenson <sorenson@redhat.com>
+
+diff --git a/net/sunrpc/auth_gss/auth_gss.c b/net/sunrpc/auth_gss/auth_gss.c
+index 976c781..d8bd97a 100644
+--- a/net/sunrpc/auth_gss/auth_gss.c
++++ b/net/sunrpc/auth_gss/auth_gss.c
+@@ -1298,6 +1298,12 @@ gss_destroy_cred(struct rpc_cred *cred)
+ 	gss_destroy_nullcred(cred);
+ }
+ 
++static int
++gss_hash_cred(struct auth_cred *acred, unsigned int hashbits)
++{
++	return hash_64(from_kuid(&init_user_ns, acred->uid), hashbits);
++}
++
+ /*
+  * Lookup RPCSEC_GSS cred for the current process
+  */
+@@ -1982,6 +1988,7 @@ static const struct rpc_authops authgss_ops = {
+ 	.au_name	= "RPCSEC_GSS",
+ 	.create		= gss_create,
+ 	.destroy	= gss_destroy,
++	.hash_cred	= gss_hash_cred,
+ 	.lookup_cred	= gss_lookup_cred,
+ 	.crcreate	= gss_create_cred,
+ 	.list_pseudoflavors = gss_mech_list_pseudoflavors,
+commit 663c2ba55b01edd053271663d6566e6eab0980f0
+Author: Frank Sorenson <sorenson@redhat.com>
+Date:   2016-09-28 13:43:31 -0500
+
+    sunrpc: replace generic auth_cred hash with auth-specific function
+    
+    Replace the generic code to hash the auth_cred with the call to
+    the auth-specific hash function in the rpc_authops struct.
+    
+    Signed-off-by: Frank Sorenson <sorenson@redhat.com>
+
+diff --git a/net/sunrpc/auth.c b/net/sunrpc/auth.c
+index a7e42f9..2bff63a 100644
+--- a/net/sunrpc/auth.c
++++ b/net/sunrpc/auth.c
+@@ -551,7 +551,7 @@ rpcauth_lookup_credcache(struct rpc_auth *auth, struct auth_cred * acred,
+ 			*entry, *new;
+ 	unsigned int nr;
+ 
+-	nr = hash_long(from_kuid(&init_user_ns, acred->uid), cache->hashbits);
++	nr = auth->au_ops->hash_cred(acred, cache->hashbits);
+ 
+ 	rcu_read_lock();
+ 	hlist_for_each_entry_rcu(entry, &cache->hashtable[nr], cr_hash) {

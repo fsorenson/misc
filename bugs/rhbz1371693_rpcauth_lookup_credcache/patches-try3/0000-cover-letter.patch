@@ -1,0 +1,53 @@
+From 663c2ba55b01edd053271663d6566e6eab0980f0 Mon Sep 17 00:00:00 2001
+From: Frank Sorenson <sorenson@redhat.com>
+Date: Wed, 28 Sep 2016 14:30:37 -0500
+Subject: [PATCH 0/5] Add auth-specific auth_cred hash functions
+
+Currently, a single hash algorithm is used to hash the auth_cred
+for lookup in the credcache for all rpc_auth flavors.  Only the
+uid is included in the value to be hashed.
+
+For AUTH_SYS, rpc_creds created with the same uid but different
+gids will all go on the same hash chain.  In certain usage patterns,
+such as the following, this can lead to extremely long hash chains
+and slow performance for certain uids.
+
+    for (i = 0 ; i < 100000 ; i++) {
+        setregid(-1, i);
+        stat(path, &st);
+    }
+
+With AUTH_SYS, in order to distribute the rpc_creds more evenly
+throughout the cache, we want to include the gid in the hash.
+
+However, since the gid is not relevant or appropriate for all
+auth flavors, we need to provide hash functions specific to each
+auth flavor.  Do this by adding a 'hash_cred' function to the
+rpc_authops stuct, and having rpcauth_lookup_credcache call a
+hash function created for each flavor.
+
+As a performance comparison for unix_auth, with a credcache
+containing 100,000 entries, hashing both the uid and gid reduces
+the time to complete an 'ls' of a single directory containing 1000
+files from over 8 1/2 minutes to 4 1/2 seconds.
+
+
+Signed-off-by: Frank Sorenson <sorenson@redhat.com>
+
+Frank Sorenson (5):
+  sunrpc: add hash_cred() function to rpc_authops struct
+  sunrpc: add generic_auth hash_cred() function
+  sunrpc: add auth_unix hash_cred() function
+  sunrpc: add RPCSEC_GSS hash_cred() function
+  sunrpc: replace generic auth_cred hash with auth-specific function
+
+ include/linux/sunrpc/auth.h    | 1 +
+ net/sunrpc/auth.c              | 2 +-
+ net/sunrpc/auth_generic.c      | 9 +++++++++
+ net/sunrpc/auth_gss/auth_gss.c | 7 +++++++
+ net/sunrpc/auth_unix.c         | 9 +++++++++
+ 5 files changed, 27 insertions(+), 1 deletion(-)
+
+-- 
+2.5.5
+

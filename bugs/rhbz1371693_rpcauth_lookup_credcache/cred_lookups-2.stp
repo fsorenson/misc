@@ -1,0 +1,35 @@
+global lookup_count[100]
+global generic_match[100]
+global unx_match[100]
+global gss_match[100]
+global return_errors[100]
+
+function _IS_ERR:long(ptr:long) %{ /* pure */
+	STAP_RETVALUE = IS_ERR((const void *)(long)STAP_ARG_ptr);
+%}
+
+probe module("sunrpc").function("rpcauth_lookup_credcache") { lookup_count[tid()]++ }
+probe module("sunrpc").function("generic_match") { generic_match[tid()]++ }
+probe module("sunrpc").function("unx_match") { unx_match[tid()]++ }
+probe module("auth_rpcgss").function("gss_match") { gss_match[tid()]++ }
+
+probe module("sunrpc").function("rpcauth_lookup_credcache").return {
+        if (@defined($return)) {
+          if (_IS_ERR($return))
+                return_errors[tid()]++
+        }
+}
+
+probe timer.s(10) {
+        printf("%s\n", tz_ctime(gettimeofday_s()))
+        foreach (tid in lookup_count-) {
+		ex = pid2execname(tid)
+                printf("\t%s: lookups: %d (generic_match: %d, unx_match: %d, gss_match: %d, errors: %d)\n",
+			ex, lookup_count[tid], generic_match[tid], unx_match[tid], gss_match[tid], return_errors[tid])
+        }
+        delete lookup_count
+        delete generic_match
+        delete unx_match
+	delete gss_match
+        delete return_errors
+}
