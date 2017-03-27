@@ -1,0 +1,75 @@
+#
+# stap -tvg hack_nfsd.stp
+
+# run on nfs server to send the MODE in the FATTR4 call of an NFS4 exclusive create
+
+# *** addresses may/will change due to kernel's base address randomization ***
+# 0xffffffffa0314bf0 <nfsd4_open>
+
+# get base address for nfsd4_open from /proc/kallsyms:
+# grep -w nfsd4_open /proc/kallsyms
+# ffffffffa0314bf0 t nfsd4_open	[nfsd]
+#
+# add the two offsets for the two absolute addresses:
+# 0xffffffffa0314bf0 + 0x27c = 0xffffffffa0314e6c
+# 0xffffffffa0314bf0 + 0x283 = 0xffffffffa0314e73
+#
+# update the absolute addresses in the probes below
+#
+# tested with nfsd on kernels:
+#     3.10.0-327.10.1.el7.x86_64
+
+
+%{
+#include <linux/kallsyms.h>
+
+#define FATTR4_WORD1_MODE               (1UL << 1)
+%}
+
+global add_mode = 0
+
+# 0xffffffffa0314e59 <nfsd4_open+0x269>:  cmpl   $0x0,0x138(%rbx)
+# 0xffffffffa0314e60 <nfsd4_open+0x270>:  jne    0xffffffffa0315348 <nfsd4_open+0x758>
+# /usr/src/debug/kernel-3.10.0-327.10.1.el7/linux-3.10.0-327.10.1.el7.x86_64/fs/nfsd/nfs4proc.c: 282
+# 0xffffffffa0314e66 <nfsd4_open+0x276>:  cmpl   $0x2,0x34(%rbx)
+# 0xffffffffa0314e6a <nfsd4_open+0x27a>:  jne    0xffffffffa0314e73 <nfsd4_open+0x283>
+
+# /usr/src/debug/kernel-3.10.0-327.10.1.el7/linux-3.10.0-327.10.1.el7.x86_64/fs/nfsd/nfs4proc.c: 283
+# 0xffffffffa0314e6c <nfsd4_open+0x27c>:  movl   $0x208000,0x3c(%rbx)  <<<<<<<<
+
+# /usr/src/debug/kernel-3.10.0-327.10.1.el7/linux-3.10.0-327.10.1.el7.x86_64/fs/nfsd/nfs4proc.c: 211
+# 0xffffffffa0314e73 <nfsd4_open+0x283>:  mov    0x88(%r15),%rax
+
+# 277                /*
+# 278                 * Following rfc 3530 14.2.16, use the returned bitmask
+# 279                 * to indicate which attributes we used to store the
+# 280                 * verifier:
+# 281                 */
+# 282                if (open->op_createmode == NFS4_CREATE_EXCLUSIVE && status == 0)    <<
+# 283                        open->op_bmval[1] = (FATTR4_WORD1_TIME_ACCESS |             <<
+# 284                                                        FATTR4_WORD1_TIME_MODIFY);  <<
+# 285        } else
+
+
+# 0xffffffffa031ce6c <nfsd4_open+0x27c>:  movl   $0x208000,0x3c(%rbx)
+#probe kernel.statement(0xffffffffa031ce6c).absolute {
+probe kernel.statement(0xffffffffa0314e6c).absolute {
+	add_mode = 1
+}
+
+# next line, go back and fix up
+# 0xffffffffa0314e73 <nfsd4_open+0x283>:  mov    0x88(%r15),%rax
+#probe kernel.statement(0xffffffffa031ce73).absolute {
+probe kernel.statement(0xffffffffa0314e73).absolute {
+	if (add_mode) {
+		addr = u_register("rbx") + 0x3c
+		current_val = kernel_long(addr)
+		new_val = current_val | %{ FATTR4_WORD1_MODE %}
+
+		printf("value is currently %x, setting to %x\n",
+			current_val, new_val)
+
+		set_kernel_long(addr, new_val)
+		add_mode = 0
+	}
+}
