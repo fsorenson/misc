@@ -1,0 +1,303 @@
+%{
+#include <linux/kallsyms.h>
+
+#define FATTR4_WORD1_MODE               (1UL << 1)
+%}
+
+global add_mode = 0
+
+function output(str) {
+	printk(4, str);
+	printf("%s\n", str);
+}
+
+/*
+# 0xffffffffa031ce6c <nfsd4_open+0x27c>:  movl   $0x208000,0x3c(%rbx)
+probe kernel.statement(0xffffffffa031ce6c).absolute {
+	add_mode = 1
+}
+
+# next line
+probe kernel.statement(0xffffffffa031ce73).absolute {
+	if (add_mode) {
+		addr = u_register("rbx") + 0x3c
+		current_val = kernel_long(addr)
+		new_val = current_val | %{ FATTR4_WORD1_MODE %}
+
+		printf("value is currently %x, setting to %x\n",
+			current_val, new_val)
+
+		set_kernel_long(addr, new_val)
+		add_mode = 0
+	}
+}
+*/
+
+
+%{
+int sorta_memcmp(char *str1, char *str2, unsigned int len) {
+	char diff;
+	while (len) {
+		diff = *str1 - *str2;
+		if (diff)
+			return diff;
+		str1++;
+		str2++;
+		len--;
+	}
+	return 0;
+}
+
+unsigned char *kinda_memstr(char *haystack, char *needle, unsigned int haystack_len, unsigned int needle_len) {
+	unsigned char *p_found;
+	unsigned long max_p;
+	int found;
+	unsigned long p;
+
+	p_found = 0;
+	max_p = haystack_len - needle_len;
+	found = 0;
+
+	for (p = 0 ; p < max_p ; p ++) {
+		if (! sorta_memcmp(haystack + p, needle, needle_len)) {
+			found = 1;
+			p_found = haystack + p;
+			break;
+		}
+	}
+	if (found) {
+		return p_found;
+	}
+	return 0;
+}
+	
+%}
+
+function kallsyms_lookup_name:long(sym:string) %{
+	STAP_RETVALUE = (long)(unsigned char *)kallsyms_lookup_name(STAP_ARG_sym);
+
+%}
+
+function find_addresses_joined:long(start_addr:long) %{
+#define MEM_BUF_LEN 200ULL
+#define SEARCH_START 500ULL
+#define SEARCH_LEN 1000ULL
+#define NEEDLE_LEN 7ULL
+	unsigned char *start_addr = (unsigned char *)STAP_ARG_start_addr;
+
+
+	unsigned char needle[] = { 0xc7, 0x43, 0x3c, 0x00, 0x80, 0x20, 0x00 };
+//	unsigned char needle[] = { 0xcc, 0x43, 0x3c, 0x00, 0x80, 0x20, 0x00 };
+	unsigned char *p_found = 0;
+	unsigned char *p;
+
+
+	kderef_buffer(NULL, start_addr, SEARCH_LEN + NEEDLE_LEN);
+
+	for (p = start_addr ; p < start_addr + SEARCH_LEN ; p++) {
+		if (! sorta_memcmp(p, needle, NEEDLE_LEN)) {
+			p_found = p;
+			break;
+		}
+	}
+	if (p_found)
+		STAP_RETVALUE = (long)p_found;
+	else
+		STAP_RETVALUE = 0;
+
+	STAP_RETVALUE = (long)p;
+//	STAP_RETVALUE = ((p[0] & 0xff) << 24) | ((p[1] & 0xff) << 16) | ((p[2] & 0xff) << 8) | (p[3] & 0xff);
+//	STAP_RETVALUE = ((start_addr[0] & 0xff) << 24) | ((start_addr[1] & 0xff) << 16) | ((start_addr[2] & 0xff) << 8) | (start_addr[3] & 0xff);
+//	STAP_RETVALUE = ((start_addr[3] & 0xff) << 24) | ((start_addr[2] & 0xff) << 16) | ((start_addr[1] & 0xff) << 8) | (start_addr[0] & 0xff);
+//	STAP_RETVALUE = (long)start_addr[62];
+//	STAP_RETVALUE = ( (buf[0] & 0xff) << 24) | ((buf[1] & 0xff) << 16) | ((buf[2] & 0xff) << 8) | (buf[3] & 0xff);
+//	STAP_RETVALUE = ( (needle[0] & 0xffULL) << 24) | ((needle[1] & 0xffULL) << 16) | ((needle[2] & 0xffULL) << 8) | (needle[3] & 0xffULL);
+
+
+	CATCH_DEREF_FAULT();
+%}
+
+%{
+#include <asm/cacheflush.h>
+#include <asm/pgalloc.h>
+#include <asm/page.h>
+
+#ifndef PAGE_SIZE
+#define PAGE_SIZE (4096ULL)
+#endif
+
+#ifndef PAGE_MASK
+#define PAGE_MASK (~(PAGE_SIZE-1))
+#endif
+
+
+#if 0
+	void futz_perms(unsigned long addr) {
+		unsigned int level;
+		pte_t *pte = lookup_address(addr, &level);
+
+		if (pte->pte &~ _PAGE_RW)
+			pte->pte |= _PAGE_RW;
+	}
+	void unfutz_perms(unsigned long addr) {
+		unsigned int level;
+		pte_t pte = lookup_addr(addr, &level);
+
+		pte->pte = pte->pte &~ _PAGE_RW;
+	}
+#endif
+
+	void _futz_perms(long unsigned int _addr) {
+		set_memory_rw(_addr, 1);
+		CATCH_DEREF_FAULT();
+	}
+	void _unfutz_perms(long unsigned int _addr) {
+		set_memory_ro(_addr, 1);
+		CATCH_DEREF_FAULT();
+	}
+/*
+	void futz_perms(unsigned char *addr) {
+		unsigned long addr_aligned = ((unsigned long)addr) & ~PAGE_MASK;
+		_futz_perms(addr_aligned);
+	}
+	void unfutz_perms(unsigned char *addr) {
+		unsigned long addr_aligned = ((unsigned long)addr) & ~PAGE_MASK;
+		_unfutz_perms(addr_aligned);
+	}
+*/
+
+%}
+
+//probe kernel.function("set_memory_rw") {
+//	output(sprintf("%s (%d): in set_memory_rw: addr=%p, numpages=%d\n", execname(), pid(), addr, numpages))
+//}
+
+
+function futz_perms(addr:long) %{
+	unsigned long addr_aligned = ((unsigned long)STAP_ARG_addr) & PAGE_MASK;
+	printk(KERN_WARNING "futzing permissions for %p", (void *)addr_aligned);
+//	_futz_perms(addr_aligned);
+	set_memory_rw(addr_aligned, 1);
+	CATCH_DEREF_FAULT();
+%}
+
+function unfutz_perms(addr:long) %{
+	unsigned long addr_aligned = ((unsigned long)STAP_ARG_addr) & PAGE_MASK;
+//	_unfutz_perms(addr_aligned);
+	set_memory_ro(addr_aligned, 1);
+	CATCH_DEREF_FAULT();
+%}
+
+
+/*
+function get_pg_perms:long(addr:long) %{
+	unsigned long addr_aligned = ((unsigned long)STAP_ARG_addr) & ~PAGE_MASK;
+//	unsigned char *addr_aligned = (unsigned char *)((STAP_ARG_addr) & ~PAGE_MASK);
+
+	STAP_RETVALUE = _get_pg_perms(addr_aligned);
+	CATCH_DEREF_FAULT();
+%}
+*/
+
+%{
+	static unsigned char without_mode[] = { 0xc7, 0x43, 0x3c, 0x00, 0x80, 0x20, 0x00 };
+	static unsigned char with_mode[] = { 0xc7, 0x43, 0x3c, 0x02, 0x80, 0x20, 0x00 };
+
+	
+%}
+
+function replace_bytes(addr:long, hack:long) %{
+/* add FATTR4_WORD1_MODE */
+	unsigned char *needle;
+	unsigned char *replacement;
+
+	if (STAP_ARG_hack) {
+		needle = without_mode;
+		replacement = with_mode;
+	} else {
+		needle = with_mode;
+		replacement = without_mode;
+	}
+//	unsigned char needle[] = { 0xc7, 0x43, 0x3c, 0x00, 0x80, 0x20, 0x00 };
+//	unsigned char new_bytes[] = { 0xc7, 0x43, 0x3c, 0x02, 0x80, 0x20, 0x00 };
+	unsigned char *p = (unsigned char *)STAP_ARG_addr;
+	int i;
+	int replaced = 0;
+	unsigned char *orig_bytes;
+	unsigned char *new_bytes;
+
+	for (i = 0 ; i < 7 ; i++) {
+		if ((p[i] == needle[i]) && (needle[i] != new_bytes[i])) {
+			futz_perms(&p[i]);
+			kwrite(&p[i], new_bytes[i]);
+			unfutz_perms(&p[i]);
+//			p[i] = new_bytes[i];
+			replaced++;
+		}
+	}
+	STAP_RETVALUE = replaced;
+	CATCH_DEREF_FAULT();
+%}
+
+function find_addresses:long() %{
+#define MEM_BUF_LEN 200ULL
+#define SEARCH_START 500ULL
+#define NEEDLE_LEN 7ULL
+//	unsigned char needle[] = { 0xc7, 0x43, 0x3c, 0x00, 0x80, 0x20, 0x00 };
+	unsigned char needle[] = { 0xcc, 0x43, 0x3c, 0x00, 0x80, 0x20, 0x00 };
+	unsigned char buf[MEM_BUF_LEN];
+	unsigned long p;
+	unsigned long  max_i = MEM_BUF_LEN - NEEDLE_LEN;
+	unsigned long i;
+	int found = 0;
+	unsigned char *p_found = 0;
+
+	p = kallsyms_lookup_name("nfsd4_open");
+	(void)kderef_buffer(buf, p + SEARCH_START, MEM_BUF_LEN);
+
+	p_found = kinda_memstr(buf, needle, MEM_BUF_LEN, NEEDLE_LEN);
+	if (p_found) {
+//		STAP_RETVALUE = p_found - buf + p + SEARCH_START;
+	} else {
+		STAP_RETVALUE = 0;
+	}
+
+
+//	STAP_RETVALUE = ( (buf[0] & 0xff) << 24) | ((buf[1] & 0xff) << 16) | ((buf[2] & 0xff) << 8) | (buf[3] & 0xff);
+//	STAP_RETVALUE = ( (needle[0] & 0xffULL) << 24) | ((needle[1] & 0xffULL) << 16) | ((needle[2] & 0xffULL) << 8) | (needle[3] & 0xffULL);
+//	STAP_RETVALUE = i;
+	CATCH_DEREF_FAULT();
+%}
+
+probe begin {
+	open_addr = kallsyms_lookup_name("nfsd4_open")
+	output(sprintf("address of nfsd4_open is %p", open_addr))
+
+
+	addr = find_addresses_joined(open_addr)
+	output(sprintf("address to change is %p", addr))
+	if (addr) {
+//		current_perms = get_pg_perms(addr)
+//		output(sprintf("current perms: %x\n", current_perms))
+
+futz_perms(addr)
+		output(sprintf("futzed perms"))
+unfutz_perms(addr)
+
+//mdelay(60000)
+
+		output(sprintf("un-futzed perms"))
+
+/*
+		ret = replace_bytes(addr);
+		if (ret != 1) {
+			output(sprintf("may have failed to replace the value in memory.  expected 1 modification, but %d were performed\n", ret))
+		} else {
+			output("may have successfully changed the bytes in memory\n")
+		}
+*/
+	} else {
+		output("Unable to determine address of the bytes to replace\n")
+	}
+//	exit()
+}
