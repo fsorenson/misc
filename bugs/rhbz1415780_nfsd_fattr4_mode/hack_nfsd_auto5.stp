@@ -1,0 +1,253 @@
+#
+# stap -tvg rhbz1415780_auto_hack_nfsd.stp
+#
+# run on nfs server to send the MODE in the FATTR4 call of an NFS4 exclusive create
+#
+# this systemtap will attempt to locate the instruction assigning
+#   the constant in nfsd4_open.  If found, the systemtap will modify
+#   the module's .text to also set the FATTR4_WORD1_MODE bit
+# when the systemtap exits, the original bytes will be restored
+#
+# Frank Sorenson, <sorenson@redhat.com> - 2017
+#
+# tested with nfsd on kernels:
+#	3.10.0-327.10.1.el7.x86_64
+#	3.10.0-514.el7.x86_64
+
+%{
+#include <linux/kallsyms.h>
+#include <asm/page.h>
+
+#define MODULE_NAME ((char *)"rhbz1415780_mod")
+static char *module_name = MODULE_NAME;
+
+struct sar_struct {
+	int len;
+	unsigned char *needle;
+	unsigned char *replacement;
+	char *opcode_string;
+};
+
+static struct sar_struct searches_and_replacements[] = {
+	{	/* as in 3.10.0-327 */
+		.opcode_string = "'movl $0x208000,0x3c(%rbx)' => 'movl $0x208002,0x3c(%rbx)'",
+		.needle = (char[]){ 0xc7, 0x43, 0x3c, 0x00, 0x80, 0x20, 0x00 },
+		.replacement = (char[]){ 0xc7, 0x43, 0x3c, 0x02, 0x80, 0x20, 0x00 },
+		.len = 7
+	},
+	{	/* as in 3.10.0-514 */
+		.opcode_string = "'orl $0x208000,0x3c(%rbx)' => 'orl $0x208002,0x3c(%rbx)'",
+		.needle = (char[]){ 0x81, 0x4b, 0x3c, 0x00, 0x80, 0x20, 0x00 },
+		.replacement = (char[]){ 0x81, 0x4b, 0x3c, 0x02, 0x80, 0x20, 0x00 },
+		.len = 7
+	}
+};
+#define NEEDLE_COUNT (sizeof(searches_and_replacements)/sizeof(searches_and_replacements[0]))
+
+struct mod_data_struct {
+	struct sar_struct *sar;
+	unsigned char *addr;
+};
+static struct mod_data_struct mod_data = { NULL, NULL };
+
+
+/* guesstimate a range to search */
+#define SEARCH_START 500ULL
+#define SEARCH_LEN 1000ULL
+
+#define output(args...) do { \
+	printk(KERN_WARNING args); \
+	_stp_printf(args); \
+	_stp_printf("\n"); \
+} while (0)
+
+%}
+
+global changes_expected = 0;
+global nfsd4_open_addr = 0
+global mod_addr = 0
+global module_name
+global mod_data = 0
+
+function output(str) {
+	printk(4, str);
+	printf("%s\n", str);
+}
+
+%{
+	unsigned char *kinda_memstr(char *haystack, char *needle, unsigned int haystack_len, unsigned int needle_len) {
+		unsigned long max_p = haystack_len - needle_len;
+		unsigned long p;
+
+		for (p = 0 ; p < max_p ; p ++) {
+			if (! memcmp(haystack + p, needle, needle_len))
+				return haystack + p;
+		}
+		return 0;
+	}
+
+#define NUM_PAGES(addr, len) (((addr + len - 1) >> PAGE_SHIFT) - (addr >> PAGE_SHIFT) + 1)
+	void change_perms(unsigned long addr, unsigned long len, int rw) {
+		unsigned long aligned_addr = addr & PAGE_MASK;
+		int num_pages = NUM_PAGES(addr, len);
+
+		if (len < 1)
+			return;
+
+		output("%s: %sfutzing permissions for %d page(s) at %p",
+			module_name, rw ? "" : "un", num_pages, (void *)aligned_addr);
+
+		if (rw)
+			set_memory_rw(aligned_addr, num_pages);
+		else
+			set_memory_ro(aligned_addr, num_pages);
+		CATCH_DEREF_FAULT();
+	}
+
+	void futz_perms(unsigned long addr, unsigned long len) {
+		change_perms(addr, len, 1);
+	}
+	void unfutz_perms(unsigned long addr, unsigned long len) {
+		change_perms(addr, len, 0);
+	}
+
+	unsigned char *search_mem(unsigned char *haystack, unsigned char *needle, int haystack_len, int needle_len) {
+		unsigned char *p_found = 0;
+		unsigned char *p;
+
+		for (p = haystack ; p < haystack + haystack_len - needle_len ; p++) {
+			if (! memcmp(p, needle, needle_len))
+				return p;
+		}
+		CATCH_DEREF_FAULT();
+		return NULL;
+	}
+%}
+
+function search_for_insn:long(start_addr:long) %{
+	unsigned char *start_addr = (unsigned char *)STAP_ARG_start_addr;
+	struct sar_struct *sar_found = NULL;
+	unsigned char *p_found = 0;
+
+	struct sar_struct *sar;
+	int i;
+
+	for (i = 0 ; i < NEEDLE_COUNT ; i++) {
+		sar = &searches_and_replacements[i];
+		kderef_buffer(NULL, start_addr + SEARCH_START, SEARCH_LEN);
+		p_found = search_mem(start_addr + SEARCH_START, sar->needle, SEARCH_LEN, sar->len);
+		if (p_found) {
+			mod_data.sar = sar;
+			mod_data.addr = p_found;
+			break;
+		}
+		p_found = NULL;
+	}
+	if (p_found)
+		STAP_RETVALUE = (long)&mod_data;
+	else
+		STAP_RETVALUE = (long)0;
+	CATCH_DEREF_FAULT();
+%}
+
+/* add/remove FATTR4_WORD1_MODE */
+function replace_bytes(add_mode:long) %{
+	int add_mode = (int)STAP_ARG_add_mode;
+	unsigned char *p = mod_data.addr;
+	unsigned char *needle = mod_data.sar->needle;
+	unsigned char *replacement = mod_data.sar->replacement;
+	int len = mod_data.sar->len;
+	int bytes_replaced = 0;
+	int i;
+
+	if (! add_mode) { /* reverse the replacement */
+		needle = mod_data.sar->replacement;
+		replacement = mod_data.sar->needle;
+	}
+
+	if (! p) {
+		output("%s: no replacement address found: %p", module_name, p);
+	} else {
+		output("%s: replacing %d bytes at %p",
+			module_name, len, p);
+
+		futz_perms((unsigned long)p, len);
+		for (i = 0 ; i < len ; i++) {
+			if ((p[i] == needle[i]) && (needle[i] != replacement[i])) {
+				kwrite(&p[i], replacement[i]);
+				bytes_replaced++;
+			}
+		}
+		unfutz_perms((unsigned long)p, len);
+	}
+	STAP_RETVALUE = bytes_replaced;
+	CATCH_DEREF_FAULT();
+%}
+
+function count_diff:long() %{
+	char *str1 = (char *)mod_data.sar->needle;
+	char *str2 = (char *)mod_data.sar->replacement;
+	unsigned int len = mod_data.sar->len;
+	int diffs = 0;
+	while (len--) {
+		if (*(str1++) - *(str2++))
+			diffs++;
+	}
+	STAP_RETVALUE = diffs;
+%}
+
+function kallsyms_lookup_name:long(sym:string) %{
+	STAP_RETVALUE = (long)(unsigned char *)kallsyms_lookup_name(STAP_ARG_sym);
+%}
+
+probe begin {
+	module_name = %{ MODULE_NAME /* string */ %}
+
+	output(sprintf("%s: loading module", module_name))
+
+	nfsd4_open_addr = kallsyms_lookup_name("nfsd4_open")
+	if (! nfsd4_open_addr) {
+		output(sprintf("%s: unable to find address for nfsd4_open", module_name))
+		exit()
+	}
+	output(sprintf("%s: address of nfsd4_open is %p", module_name, nfsd4_open_addr))
+	mod_data = search_for_insn(nfsd4_open_addr)
+	if (! mod_data) {
+		output(sprintf("%s: Unable to locate opcode to replace",
+			module_name))
+		exit()
+	}
+	mod_addr = %{ mod_data.addr %}
+	opcode_string = kernel_string(%{ mod_data.sar->opcode_string %})
+
+	output(sprintf("%s: opcode to modify is at %p: %s", module_name, mod_addr, opcode_string))
+	changes_expected = count_diff()
+	if (! changes_expected) {
+		output(sprintf("%s: no changes required", module_name))
+		exit()
+	}
+
+	ret = replace_bytes(1)
+	if (ret != changes_expected) {
+		mod_addr = 0
+		output(sprintf("%s: expected %d modification(s), but %d were performed",
+			module_name, changes_expected, ret))
+		exit()
+	} else
+		output(sprintf("%s: bytes successfully replaced", module_name))
+	output(sprintf("%s: module loaded", module_name))
+}
+
+probe end {
+	output(sprintf("%s: unloading module", module_name))
+	if (mod_addr) {
+		output(sprintf("%s: setting bytes back to original string", module_name))
+		ret = replace_bytes(0)
+		if (ret != changes_expected)
+			output(sprintf("%s: expected %d modification(s), but %d were performed",
+				module_name, changes_expected, ret))
+		else
+			output(sprintf("%s: original bytes successfully restored", module_name))
+	}
+	output(sprintf("%s: exiting module", module_name))
+}
