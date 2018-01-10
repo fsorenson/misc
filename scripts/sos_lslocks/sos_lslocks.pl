@@ -96,9 +96,6 @@ sub parse_locks {
 				my $lk_end = $10;
 
 
-#				$lk_list[$lk_num] = { 'desc' => $lk_desc, 'type' => $lk_type,
-#					'pid' => $pid, 'dev' => $mount_dev, 'inode' => $ino,
-#					'start' => $lk_start, 'end' => $lk_end };
 
 
 				my $comm = "(unknown)";
