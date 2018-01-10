@@ -85,32 +85,77 @@ sub parse_locks {
 		chomp;
 		my $line = $_;
 
-		if ($line =~ /^([0-9]+): (FLOCK|POSIX)  (ADVISORY |MANDATORY|[^ ]+) (READ |WRITE) ([0-9]+) ([0-9a-f]{2}):([0-9a-f]{2}):([0-9]+) ([0-9]+) ([0-9]+|EOF)/) {
-				my $lk_num = $1;
-				my $lk_desc = sprintf("%s:%s", $2, $3);
-				my $lk_type = $4;
-				my $pid = $5;
-				my $mount_dev = sprintf("%d,%d", hex($6), hex($7));
-				my $ino = $8;
-				my $lk_start = $9;
-				my $lk_end = $10;
+		if ($line =~ /^(.+) -> (.+)$/) {
+			$line = sprintf("%s %s", $1, $2);
+		}
 
 
 
 
-				my $comm = "(unknown)";
-				if (defined($pid_info{$pid}{'comm'})) {
-					$comm = $pid_info{$pid}{'comm'};
+
+
+		if ($line =~ /^([0-9]+): (FLOCK|POSIX)  (ADVISORY |MANDATORY|MSNFS    |[^ ]+) (READ |WRITE) ([0-9]+) ([0-9a-f]{2}):([0-9a-f]{2}):([0-9]+) ([0-9]+) ([0-9]+|EOF)/) {
+			my $lk_num = $1;
+			my $lk_desc = sprintf("%s:%s", $2, $3);
+			my $lk_type = $4;
+			my $pid = $5;
+			my $mount_dev = sprintf("%d,%d", hex($6), hex($7));
+			my $ino = $8;
+			my $lk_start = $9;
+			my $lk_end = $10;
+
+#			$lk_list[$lk_num] = { 'desc' => $lk_desc, 'type' => $lk_type,
+#				'pid' => $pid, 'dev' => $mount_dev, 'inode' => $ino,
+#				'start' => $lk_start, 'end' => $lk_end };
+
+			my $comm = "(unknown)";
+			if (defined($pid_info{$pid}{'comm'})) {
+				$comm = $pid_info{$pid}{'comm'};
+			}
+
+			my $filename = "unknown";
+			if (defined($dev_inode_info{$mount_dev}{$ino})) {
+				$filename = $dev_inode_info{$mount_dev}{$ino}{'name'};
+				# could also replace 'EOF' with file end/size from 'pos'
+			} else {
+				$mount_dev = sprintf("%d:%d", hex($6), hex($7));
+				if (defined($mountinfo{$mount_dev})) {
+					$filename = sprintf("unknown - inode %d on mountpoint '%s'", $ino, $mountinfo{$mount_dev}{'mountpoint'});
 				}
+			}
 
-				my $filename = "unknown";
-				if (defined($dev_inode_info{$mount_dev}{$ino})) {
-					$filename = $dev_inode_info{$mount_dev}{$ino}{'name'};
-					# could also replace 'EOF' with file end/size from 'pos'
+			printf("%4d %15s %6d %-15s %5s %10d %10s %s\n",
+				++$i, $comm, $pid, $lk_desc, $lk_type, $lk_start, $lk_end, $filename);
+		} elsif ($line =~ /^([0-9]+): (LEASE)  (ACTIVE|BREAKING|BREAKER)[ ]+(READ |WRITE) ([0-9]+) ([0-9a-f]{2}):([0-9a-f]{2}):([0-9]+) ([0-9]+) ([0-9]+|EOF)/) {
+			my $lk_num = $1;
+			my $lk_desc = sprintf("%s:%s", $2, $3);
+			my $lk_type = $4;
+			my $pid = $5;
+			my $mount_dev = sprintf("%d,%d", hex($6), hex($7));
+			my $ino = $8;
+			my $lk_start = $9;
+			my $lk_end = $10;
+#1: LEASE  ACTIVE    READ  2555 fd:11:66323391 0 EOF
+
+			my $comm = "(unknown)";
+			if (defined($pid_info{$pid}{'comm'})) {
+				$comm = $pid_info{$pid}{'comm'};
+			}
+
+			my $filename = "unknown";
+			if (defined($dev_inode_info{$mount_dev}{$ino})) {
+				$filename = $dev_inode_info{$mount_dev}{$ino}{'name'};
+				# could also replace 'EOF' with file end/size from 'pos'
+			} else {
+				$mount_dev = sprintf("%d:%d", hex($6), hex($7));
+				if (defined($mountinfo{$mount_dev})) {
+					$filename = sprintf("unknown - inode %d on mountpoint '%s'", $ino, $mountinfo{$mount_dev}{'mountpoint'});
 				}
+			}
 
-				printf("%4d %15s %5d %5s %5s %10d %10s %s\n",
-					++$i, $comm, $pid, $lk_desc, $lk_type, $lk_start, $lk_end, $filename);
+			printf("%4d %15s %6d %-15s %5s %10d %10s %s\n",
+				++$i, $comm, $pid, $lk_desc, $lk_type, $lk_start, $lk_end, $filename);
+
 		} else {
 			printf("***** parse_locks: NO MATCH: '%s' *****\n", $line);
 		}
