@@ -175,15 +175,20 @@ sub parse_lsof {
 #		if ($line =~ /^(\w+)\s([0-9]+)\s(\w+)\s(\w+)\s(\w+)\s(\w+)\s([0-9]+)\s([0-9]+)\s(.+)$/) {
 #		if ($line =~ /^(\w+)\s+([0-9]+)\s+(\w+)\s+(\w+)\s+(\w+)\s+([^\s]+)\s+([^\s]+)\s+([0-9]+)\s+(.+)$/) {
 		if ($line =~ /^([^\s]+)\s+([0-9]+)\s+(\w+)\s+(\w+)\s+(\w+)\s+([^\s]+)\s+([^\s]+)\s+([0-9]+)\s+(.+)$/) {
+			my $comm = $1;
+			my $pid = $2;
+			my $user = $3;
+
+			if (! defined($pid_info{$pid})) {
+				$pid_info{$pid} = { 'comm' => $comm, 'user' => $user };
+			}
+
 			my $file_type = $5;
 			if ($file_type ne "REG") {
 #				printf("file type %s is not 'REG'\n", $file_type);
 				next;
 			}
 
-			my $comm = $1;
-			my $pid = $2;
-			my $user = $3;
 			my $fd = $4;
 			my $dev = $6;
 			my $pos = $7;
@@ -194,11 +199,6 @@ sub parse_lsof {
 				next;
 #				my $fdnum = $1;
 			}
-
-			if (! defined($pid_info{$pid})) {
-				$pid_info{$pid} = { 'comm' => $comm, 'user' => $user };
-			}
-
 
 			if (! defined($dev_inode_info{$dev})) {
 				$dev_inode_info{$dev} = ();
