@@ -1,0 +1,157 @@
+*** goal is not to receive all events, but to work around the race conditions around adding watches to directories that may have already been modified.  We're not going to concern ourselves about very short-lived files--we'd have to use fanotify to capture these.
+
+
+
+        event arrives
+                directory event for itself
+                        is the directory being deleted? ignored?
+                                YES - remove from watch trees and return
+                        is this the first event for this watchent?
+                                YES - it's now safe to scan the subdir
+                                        open directory
+                                        for each dirent
+                                                file - 'process'
+                                                dir
+                                                        add watch
+                                                        create watchent
+                                                        stat directory to generate an event
+                                                        DON'T RECURSE -- let the event drive the scan of the subdir, as this one did
+                        we already have a watch, and it's not the first
+                                we've scanned, and we have a watch... nothing to do
+                directory event for item in directory
+                        subdirecory
+                                ... dunno ...
+                        file
+                                'process'
+
+mkdir:
+DIRECTORY event: CREATE|ISDIR (path '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final/asdf')
+	wd=1 for '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final', path='asdf'
+
+DIRECTORY event: OPEN|ISDIR (path '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final/asdf')
+	wd=1 for '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final', path='asdf'
+DIRECTORY event: OPEN|ISDIR (path '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final/asdf')
+	wd=6 for '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final/asdf', path=''
+DIRECTORY event: ACCESS|ISDIR (path '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final/asdf')
+	wd=1 for '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final', path='asdf'
+DIRECTORY event: ACCESS|ISDIR (path '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final/asdf')
+	wd=6 for '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final/asdf', path=''
+DIRECTORY event: ACCESS|ISDIR (path '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final/asdf')
+	wd=1 for '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final', path='asdf'
+DIRECTORY event: ACCESS|ISDIR (path '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final/asdf')
+	wd=6 for '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final/asdf', path=''
+DIRECTORY event: CLOSE_NOWRITE|ISDIR (path '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final/asdf')
+	wd=1 for '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final', path='asdf'
+DIRECTORY event: CLOSE_NOWRITE|ISDIR (path '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final/asdf')
+	wd=6 for '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final/asdf', path=''
+
+DIRECTORY event: OPEN|ISDIR (path '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final/asdf')
+	wd=1 for '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final', path='asdf'
+DIRECTORY event: OPEN|ISDIR (path '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final/asdf')
+	wd=6 for '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final/asdf', path=''
+DIRECTORY event: ACCESS|ISDIR (path '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final/asdf')
+	wd=1 for '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final', path='asdf'
+DIRECTORY event: ACCESS|ISDIR (path '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final/asdf')
+	wd=6 for '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final/asdf', path=''
+DIRECTORY event: ACCESS|ISDIR (path '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final/asdf')
+	wd=1 for '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final', path='asdf'
+DIRECTORY event: ACCESS|ISDIR (path '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final/asdf')
+	wd=6 for '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final/asdf', path=''
+
+DIRECTORY event: CLOSE_NOWRITE|ISDIR (path '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final/asdf')
+	wd=1 for '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final', path='asdf'
+DIRECTORY event: CLOSE_NOWRITE|ISDIR (path '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final/asdf')
+	wd=6 for '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final/asdf', path=''
+
+
+
+rmdir
+FILE event: DELETE_SELF (path '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final/asdf')
+	wd=5 for '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final/asdf', path=''
+	***** directory '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final/asdf' deleted ***** file...IN_DELETE_SELF
+FILE event: IGNORED (path '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final/asdf')
+	wd=5 for '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final/asdf', path=''
+^[[?1;2c	***** directory '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final/asdf' ignored *****
+
+
+got an 'IN_DELETE|IN_ISDIR' for wd=1, wd_event_path='/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final', event->name='asdf'
+DIRECTORY event: DELETE|ISDIR (path '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final/asdf')
+	wd=1 for '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final', path='asdf'
+	***** directory '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final/asdf' deleted ***** dir...IN_DELETE
+
+
+
+create file:
+FILE event: CREATE (path '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final/asdf')
+	wd=1 for '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final', path='asdf'
+FILE event: OPEN (path '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final/asdf')
+	wd=1 for '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final', path='asdf'
+FILE event: ATTRIB (path '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final/asdf')
+	wd=1 for '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final', path='asdf'
+FILE event: CLOSE_WRITE (path '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final/asdf')
+	wd=1 for '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final', path='asdf'
+
+overwrite file: echo test > final/asdf
+FILE event: MODIFY (path '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final/asdf')
+	wd=1 for '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final', path='asdf'
+FILE event: OPEN (path '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final/asdf')
+	wd=1 for '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final', path='asdf'
+FILE event: MODIFY (path '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final/asdf')
+	wd=1 for '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final', path='asdf'
+FILE event: CLOSE_WRITE (path '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final/asdf')
+	wd=1 for '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final', path='asdf'
+
+
+replace file with file from outside the watched tree:  final/asdf exists...  touch asdf ; mv asdf final
+FILE event: MOVED_TO (path '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final/asdf')
+	wd=1 for '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final', path='asdf'
+***** note only a MOVED_TO event... no mention that the other file was replaced
+
+replace file with file also existing within the watched tree
+FILE event: MOVED_FROM (path '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final/foo1')
+	wd=1 for '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final', path='foo1'
+FILE event: MOVED_TO (path '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final/foo2')
+	wd=1 for '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final', path='foo2'
+
+replace watched file another watched file, with the directory also watched
+final/ MOVED_FROM foo1
+final/ MOVED_TO foo2
+final/foo2 ATTRIB
+final/foo1 MOVE_SELF
+final/foo2 DELETE_SELF
+
+replace watched file with file which is not being watched, with directory also watched
+final/ MOVED_FROM foo1
+final/ MOVED_TO foo2
+final/foo2 ATTRIB
+final/foo2 DELETE_SELF
+
+
+
+
+
+file moved from watched directory to outside: mv final/asdf .
+FILE event: MOVED_FROM (path '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final/asdf')
+	wd=1 for '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final', path='asdf'
+
+file renamed:  mv final/asdf final/asdf2
+FILE event: MOVED_FROM (path '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final/asdf')
+	wd=1 for '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final', path='asdf'
+FILE event: MOVED_TO (path '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final/asdf2')
+	wd=1 for '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final', path='asdf2'
+
+chmod/chgrp a file
+FILE event: ATTRIB (path '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final/asdf')
+	wd=1 for '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final', path='asdf'
+
+
+
+touch/chmod/chgrp a directory a directory : touch final/zoo, etc.
+DIRECTORY event: ATTRIB|ISDIR (path '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final/zoo')
+	wd=1 for '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final', path='zoo'
+DIRECTORY event: ATTRIB|ISDIR (path '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final/zoo')
+	wd=2 for '/home/sorenson/RH/case_remnants/bz1425948_inotify_move_to_noent/final/zoo', path=''
+
+
+
+

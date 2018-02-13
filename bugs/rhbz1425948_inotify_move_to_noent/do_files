@@ -1,0 +1,48 @@
+#!/bin/bash
+
+
+count=0
+subdirs=30
+loop_count=1
+files_count=1000
+
+mkdir -p final
+#for i in $(seq 0 $((subdirs - 1)) ; do
+#	mkdir -p final/subdir_$i
+#done
+
+test_subdir() {
+	subdir_num=$1
+
+	mkdir -p final/subdir_$subdir_num
+
+	while true ; do
+		testfile="test_file_$count"
+		staging_testfile="staging/subdir_${subdir_num}_$testfile"
+		final_testfile="final/subdir_$subdir_num/$testfile"
+
+		echo "This is test file #$count" > $staging_testfile
+		setfattr -n "user.date_added" -v "$(date +'%F %T.%09N %Z')" $staging_testfile
+
+		mv -f $staging_testfile $final_testfile
+#		staging/subdir_${subdir_num}_${testfile} final/subdir_$subdir_num/testfile
+
+		count=$((count + 1))
+		if [[ $count -ge $files_count ]] ; then
+			loop_count=$((loop_count - 1))
+			[[ $loop_count -le 0 ]] && break;
+			count=0
+		fi
+	done
+}
+
+for i in $(seq 0 $((subdirs - 1)) ); do
+	test_subdir $i &
+done
+
+
+
+wait
+
+
+

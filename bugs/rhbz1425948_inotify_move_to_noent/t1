@@ -1,0 +1,15 @@
+
+
+
+
+mkdir -p final/bar/a/b/c
+touch final/bar/a/b/testfile final/bar/a/b/c/testfile
+mkdir -p final2/boo
+touch final2/boo/boo
+
+
+ls -ld final/bar/a/b/c final/bar/a/b/testfile final/bar/a/b/c/testfile final2/boo final2/boo/boo
+sleep 5
+echo "removing files/directories"
+rm -rf final2/boo final/bar
+
