@@ -1,0 +1,54 @@
+#!/bin/bash
+# re-exec ourselves as 'stap' if called as a script
+
+//bin/true && mod_name=$(basename $0 .stp)
+//bin/true && exec /usr/bin/stap $0 -tvg -m $mod_name --all-modules -DMAXSTRINGLEN=2048 2>&1
+
+
+global tid_paths[500]
+
+#function timestamp:string() { t = gettimeofday_ns() ; return sprintf("%d.%09d", t / 1000000000, t % 1000000000) }
+
+probe nd_syscall.readlink { tid_paths[tid()] = sprintf("readlink(%s)", path) }
+probe nd_syscall.readlinkat { tid_paths[tid()] = sprintf("readlinkat(%s, %s)", dfd_str, path) }
+probe nd_syscall.readlink.return, nd_syscall.readlinkat.return { delete tid_paths[tid()] }
+probe begin { printk(1, "probe for dentry weird name loading") }
+probe end { printk(1, "probe for dentry weird name unloading") }
+
+function dentry_fstype:string(d:long) {
+	if (!d)
+		return "*dentry is null*"
+	sb = @cast(d, "struct dentry")->d_sb
+	if (!sb)
+		return "*super_block is null*"
+	s_type = @cast(sb, "struct super_block")->s_type
+	if (!s_type)
+		return "*file_system_type is null*"
+	return kernel_string(@cast(s_type, "file_system_type")->name)
+}
+
+# stap -L 'kernel.statement("*@fs/dcache.c:2847")'
+#kernel.statement("prepend_path@fs/dcache.c:2847")
+#	$parent:struct mount*
+#	$path:struct path const*
+#	$root:struct path const*
+#	$buffer:char** $buflen:int*
+#	$dentry:struct dentry*
+#	$vfsmnt:struct vfsmount*
+#	$error:int
+#	$bptr:char* $blen:int
+#probe kernel.statement("prepend_path@fs/dcache.c:2847") { /* 3.10.0-693.2.2.el7.x86_64 right at test */
+probe kernel.statement("prepend_path@fs/dcache.c:2850") { /* 3.10.0-693.2.2.el7.x86_64 warning location (message is multiline, probe 2 lines earlier than reported) */
+	tid = tid()
+	tpath = tid_paths[tid]
+	if (tpath == "")
+		next
+
+//	print_backtrace()
+	dname = kernel_string_n($dentry->d_name->name, $dentry->d_name->len)
+	target_path = kernel_string_n($bptr, $blen)
+	msg = sprintf("%s (%d): %s->prepend_path: fstype: %s, d_name: '%s', target: '%s'",
+		execname(), tid, tpath, dentry_fstype($dentry), dname, target_path)
+	printk(1, msg)
+	printf("%s\n", msg)
+}
