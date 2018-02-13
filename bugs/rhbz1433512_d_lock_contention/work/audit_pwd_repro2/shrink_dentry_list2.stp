@@ -1,0 +1,62 @@
+#global shrink_counter[1000]
+global entry_list_len[1000]
+global entry_sb[1000]
+global entry_tstamp[1000]
+
+
+function timestamp:string() { t = gettimeofday_ns() ; return sprintf("%d.%09d", t / 1000000000, t % 1000000000) }
+
+@define list_next(l) %( @l ? @cast(@l, "struct list_head")->next : 0 %)
+function list_len:long(head:long) {
+	len = 0
+	if (head) {
+		n = @list_next(head) ; last = 0
+		while (n && n != head && n != last) {
+			len++ ; last = n ; n = @list_next(n)
+		}
+	}
+	return len
+}
+
+probe kernel.function("shrink_dentry_list") {
+	tid = tid()
+#	shrink_counter[tid] = 0
+	entry_list_len[tid] = list_len($list)
+	if (entry_list_len[tid])
+		entry_sb[tid] = @container_of($list->next, "struct dentry", d_lru)->d_sb
+	else
+		entry_sb[tid] = 0
+	entry_tstamp[tid] = gettimeofday_ns()
+
+//	printf("list on entry = %p (%s)\n", $list, $list$)
+}
+#probe kernel.statement("shrink_dentry_list@fs/dcache.c+6") {
+#	shrink_counter[tid()]++
+#}
+probe kernel.function("shrink_dentry_list").return {
+	tid = tid()
+//	entry_len = @entry(list_len($list))
+	entry_len = entry_list_len[tid]
+	exit_tstamp = gettimeofday_ns()
+	runtime = exit_tstamp - entry_tstamp[tid]
+#	exit_len = list_len($list)
+#	printf("%s (%d) looped %d times in %s/%s (list len was %d, removed %d)\n",
+#		execname(), tid, shrink_counter[tid], probefunc(), ppfunc(), entry_len, entry_len - exit_len)
+
+	if (entry_sb[tid]) {
+		sb = entry_sb[tid]
+		s_id = kernel_string(@cast(sb, "struct super_block")->s_id)
+	} else {
+		sb = 0
+		s_id = "???"
+	}
+
+	printf("%s: %s (%d) ran in %s/%s for %d.%09d sec (list len was %d, sb=%p - %s)\n",
+		timestamp(), execname(), tid, probefunc(), ppfunc(),
+		runtime / 1000000000, runtime % 1000000000,
+		entry_len, sb, s_id)
+#	delete shrink_counter[tid]
+	delete entry_list_len[tid]
+	delete entry_sb[tid]
+	delete entry_tstamp[tid]
+}

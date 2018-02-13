@@ -1,0 +1,47 @@
+starting 1 processes
+starting timing loops
+1 child threads, 100000 loops, 10 files: stat: 482 ns/call/thread, access: 794 ns/call/thread
+starting 2 processes
+starting timing loops
+2 child threads, 100000 loops, 10 files: stat: 332 ns/call/thread, access: 540 ns/call/thread
+starting 4 processes
+starting timing loops
+4 child threads, 100000 loops, 10 files: stat: 369 ns/call/thread, access: 515 ns/call/thread
+starting 8 processes
+starting timing loops
+8 child threads, 100000 loops, 10 files: stat: 342 ns/call/thread, access: 564 ns/call/thread
+starting 16 processes
+starting timing loops
+16 child threads, 100000 loops, 10 files: stat: 417 ns/call/thread, access: 532 ns/call/thread
+starting 32 processes
+starting timing loops
+32 child threads, 100000 loops, 10 files: stat: 417 ns/call/thread, access: 519 ns/call/thread
+starting 64 processes
+starting timing loops
+64 child threads, 100000 loops, 10 files: stat: 466 ns/call/thread, access: 539 ns/call/thread
+starting 128 processes
+starting timing loops
+128 child threads, 100000 loops, 10 files: stat: 423 ns/call/thread, access: 511 ns/call/thread
+starting 256 processes
+starting timing loops
+256 child threads, 100000 loops, 10 files: stat: 466 ns/call/thread, access: 555 ns/call/thread
+starting 512 processes
+starting timing loops
+512 child threads, 100000 loops, 10 files: stat: 469 ns/call/thread, access: 555 ns/call/thread
+starting 1024 processes
+starting timing loops
+1024 child threads, 100000 loops, 10 files: stat: 465 ns/call/thread, access: 555 ns/call/thread
+starting 2048 processes
+starting timing loops
+2048 child threads, 100000 loops, 10 files: stat: 466 ns/call/thread, access: 552 ns/call/thread
+starting 4096 processes
+starting timing loops
+4096 child threads, 100000 loops, 10 files: stat: 527 ns/call/thread, access: 547 ns/call/thread
+enabled 1
+failure 0
+pid 993
+rate_limit 0
+backlog_limit 320
+lost 0
+backlog 6
+loginuid_immutable 0 unlocked

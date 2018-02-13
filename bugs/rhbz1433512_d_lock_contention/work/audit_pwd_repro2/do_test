@@ -1,0 +1,10 @@
+#!/bin/bash
+
+#path=$(pwd)
+path="."
+echo $path
+
+
+for i in $(seq 1 $1) ; do
+	$path/a4 &
+done

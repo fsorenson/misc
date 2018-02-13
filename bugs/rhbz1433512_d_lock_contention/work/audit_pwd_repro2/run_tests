@@ -1,0 +1,54 @@
+#!/bin/bash
+
+#for thr in 1 2 4 8 16 32 64 128 256 512 1024 2048 4096 ; do ./bz1433512-repro1 $thr ; done | tee times.out
+
+audit_enable() {
+	auditctl -e1 -f0 >/dev/null 2>&1
+}
+audit_disable() {
+	auditctl -e0 -f0 >/dev/null 2>&1
+}
+audit_rules() {
+	auditctl -R audit.rules >/dev/null 2>&1
+}
+audit_norules() {
+	auditctl -D >/dev/null 2>&1
+}
+
+
+for enabled in no yes ; do
+	if [[ $enabled == "yes" ]] ; then
+		audit_enable
+	else
+		audit_disable
+	fi
+
+	for rules in no yes ; do
+		if [[ $rules == "yes" ]] ; then
+			audit_rules
+		else
+			audit_norules
+		fi
+
+		echo "**************************************"
+		echo "enabled: $enabled, rules: $rules"
+		auditctl -s
+		auditctl -l
+		echo
+		for thr in 1 2 4 8 16 32 64 128 256 512 1024 2048 4096 ; do
+			killall bz1433512-repro1
+			./bz1433512-repro1 $thr
+		done
+
+		echo
+		echo
+
+	done
+
+done
+
+
+#auditctl -s
+#auditctl -l
+#for thr in 1 2 4 8 16 32 64 128 256 512 1024 2048 4096 ; do ./bz1433512-repro1 $thr ; done
+
