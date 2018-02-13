@@ -1,0 +1,228 @@
+#!/bin/bash
+
+if [ $# -eq 0 ]; then
+	echo "$0 inode"
+	exit 1
+fi
+I=$1
+IHEX=$(echo "obase=16; $I" | bc)
+
+tail -n +12 $0 | sed -e s/INODE/0x$IHEX/g| stap -ktvgo double.stap.log -
+exit
+
+/*
+ *  nfs_readdir
+ *    nfs_dir_mapping_need_revalidate
+ *      nfs_attribute_cache_expired
+ *        nfs_have_delegated_attributes
+ *        nfs_attribute_timeout
+ *    nfs_revalidate_mapping
+ *      __nfs_revalidate_mapping
+ *        nfs_mapping_need_revalidate_inode
+ *        __nfs_revalidate_inode
+ *        nfs_invalidate_mapping
+ *    readdir_search_pagecache
+ *      find_cache_page
+ *        get_cache_page
+ * 	    read_cache_page
+ *            read_cache_page
+ *		read_cache_page_async
+ *		  do_read_cache_page
+ *		    __read_cache_page
+ *		    nfs_readdir_filler (filler())
+ *        nfs_readdir_search_array
+ *          nfs_readdir_get_array
+ *          nfs_readdir_search_for_pos
+ *          nfs_readdir_search_for_cookie
+ *          nfs_readdir_release_array
+ *        cache_page_release
+ *          nfs_readdir_clear_array
+ *          page_cache_release
+ *    uncached_readdir
+ *    nfs_do_filldir
+ *      filldir
+ *
+ */
+
+global inode_match = 0
+global ihex = INODE
+global super_addr = 0
+
+function i_mode2str:string (i_mode:long) {
+    if (%{ S_ISLNK(STAP_ARG_i_mode) %})  
+        return "S_IFLNK"
+    if (%{ S_ISREG(STAP_ARG_i_mode) %})
+        return "S_IFREG"
+    if (%{ S_ISDIR(STAP_ARG_i_mode) %})
+        return "S_IFDIR"
+    if (%{ S_ISCHR(STAP_ARG_i_mode) %})
+        return "S_IFCHR"
+    if (%{ S_ISBLK(STAP_ARG_i_mode) %})
+        return "S_IFBLK"
+    if (%{ S_ISFIFO(STAP_ARG_i_mode) %}) 
+        return "S_IFIFO"
+    if (%{ S_ISSOCK(STAP_ARG_i_mode) %})
+        return "S_IFSOCK"
+}
+
+
+%{
+#include <linux/nfs_fs.h>
+
+struct val_str_pair {
+	long val;
+	const char *string;
+};
+#define N(a) { .val = a, .string = #a }
+
+static const struct val_str_pair nfs_ino_cache_attrs[] = {
+	N(NFS_INO_INVALID_ATTR),
+	N(NFS_INO_INVALID_DATA),
+	N(NFS_INO_INVALID_ATIME),
+	N(NFS_INO_INVALID_ACCESS),
+	N(NFS_INO_INVALID_ACL),
+	N(NFS_INO_REVAL_PAGECACHE),
+	N(NFS_INO_REVAL_FORCED),
+};
+static const int max_nfs_ino_cache_attrs = sizeof(nfs_ino_cache_attrs)/sizeof(nfs_ino_cache_attrs[0]);
+#undef N
+%}
+
+function nfs_ino_cache_attrs_get_val:long(i:long) %{
+	STAP_RETVALUE = nfs_ino_cache_attrs[STAP_ARG_i].val;
+%}
+function nfs_ino_cache_attrs_get_string:string(i:long) %{
+	STAP_RETURN((char *)nfs_ino_cache_attrs[STAP_ARG_i].string);
+%}
+function get_nfs_ino_valid_flag_str:string (fl:long) {
+	ret_str = ""
+
+	for (i = 0 ; i < %{ max_nfs_ino_cache_attrs %} ; i++) {
+		val = nfs_ino_cache_attrs_get_val(i)
+
+		if ((fl & val) == val) {
+			ret_str .= " | " . nfs_ino_cache_attrs_get_string(i)
+		}
+	}
+	return substr(ret_str, 3, %{MAXSTRINGLEN%})
+}
+
+@define inode_is_match(inode) %( (super_addr && @inode && (super_addr == @inode->i_sb) && (@inode->i_ino == ihex)) %)
+#@define inode_is_match(inode) %( (inode_match) %)
+
+/*
+function print_inode(inode:long) {
+	nfs_server = @cast(inode, "inode")->i_sb;
+	nfs_proto =  @cast(nfs_server, "nfs_server", "nfs")->nfs_client->rpc_ops;
+	nfs_inode = &@module_container_of(inode, "nfs", "struct nfs_inode", vfs_inode);
+	cache_validity = @cast(nfs_inode, "struct nfs_inode", "nfs")->cache_validity;
+	printf("Inode = %p (%s)\n", inode, inode_name(inode));
+	printf("inode->i_state:%p\n",@cast(inode, "inode")->i_state);
+	printf("inode->i_ino:%p\n",@cast(inode, "inode")->i_ino);
+	printf("\tnfs_server:%p\n", nfs_server);
+	printf("\tnfs_proto:%p\n", nfs_proto);
+	printf("\tnfs_inode:%p\n", nfs_inode);
+	printf("\tnfs_inode->read_cache_jiffies:%p (j:%p)\n", nfs_inode->read_cache_jiffies, jiffies());
+	printf("\tcache_validity:%p\n", cache_validity);
+}
+*/
+// module("nfs").function("nfs_readdir@fs/nfs/dir.c:928") $filp:struct file* $dirent:void* $filldir:filldir_t $my_desc:nfs_readdir_descriptor_t $desc:nfs_readdir_descriptor_t*
+probe module("nfs").function("nfs_readdir") {
+	dentry = @cast($filp, "struct file")->f_path->dentry;
+	inode = dentry->d_inode;
+	if (ihex == inode->i_ino) {
+		inode_match = 1
+		super_addr = inode->i_sb
+		printf("\n[nfs_readdir] directory:%s filp->f_pos:%d nrpages:%d\n", reverse_path_walk(dentry), $filp->f_pos, inode->i_data->nrpages);
+	}
+}	
+
+probe module("nfs").function("nfs_readdir").return {
+	inode_match = 0;
+}
+
+// module("nfs").function("nfs_do_filldir@fs/nfs/dir.c:819") $desc:nfs_readdir_descriptor_t* $dirent:void* $filldir:filldir_t
+probe module("nfs").function("nfs_do_filldir") {
+	if (@inode_is_match($desc->file->f_path->dentry->d_inode)) {
+		file = $desc->file;
+		dentry = @cast(file, "struct file")->f_path->dentry;
+		printf("  [nfs_do_filldir] directory:%s desc->page:%p desc->file->f_pos:%d desc->current_index:%d desc->eof:%d\n",
+			reverse_path_walk(dentry), $desc->page, $desc->file->f_pos, $desc->current_index, $desc->eof);
+	}
+}
+
+// kernel.function("filldir@fs/readdir.c:149") $__buf:void* $name:char const* $namlen:int $offset:loff_t $ino:u64 $d_type:unsigned int
+probe kernel.function("filldir") {
+//	if (@inode_is_match($ino))
+	if (inode_match) /* we don't have the actual inode */
+		printf("   [filldir]inode:%d name:%s offset:%d d_type:%d\n", $ino, kernel_string_n($name, $namlen), $offset, $d_type);
+}
+
+// module("nfs").function("get_cache_page@fs/nfs/dir.c:775") $desc:nfs_readdir_descriptor_t* 
+probe module("nfs").function("get_cache_page") {
+	if (@inode_is_match($desc->file->f_path->dentry->d_inode)) {
+		file = $desc->file;
+		dentry = @cast(file, "struct file")->f_path->dentry;
+		if (super_addr && (super_addr == dentry->d_sb) && (dentry->d_inode->i_ino == ihex))
+			printf(" [get_cache_page] desc->page:%p directory:%s\n", $desc->page, reverse_path_walk(dentry));
+	}
+}
+
+// module("nfs").function("nfs3_proc_readdir@fs/nfs/nfs3proc.c:632") $dentry:struct dentry* $cred:struct rpc_cred* $cookie:u64 $pages:struct page** $count:unsigned int $plus:int $arg:struct nfs3_readdirargs $res:struct nfs3_readdirres $msg:struct rpc_message
+
+probe module("nfs").function("nfs3_proc_readdir") {
+	if (@inode_is_match($dentry->d_inode))
+		printf(" [nfs3_proc_readdir] directory:%s(inode:%p) count:%d\n", reverse_path_walk($dentry), $dentry->d_inode, $count);
+}
+
+// kernel.function("find_get_page@mm/filemap.c:686") $mapping:struct address_space* $offset:long unsigned int 
+
+probe kernel.function("find_get_page") {
+	inode = @cast($mapping, "struct address_space", "kernel")->host;
+	if (@inode_is_match(inode))
+		printf("  [find_get_page] inode:%p index:%d\n", inode, $offset);
+}
+
+// module("nfs").function("nfs_attribute_cache_expired@fs/nfs/inode.c:876").return $return:int $inode:struct inode*
+probe module("nfs").function("nfs_attribute_cache_expired").return {
+	if (@inode_is_match($inode))
+		printf(" [nfs_attribute_cache_expired] returns %d\n", $return);
+}
+
+// module("nfs").function("nfs_dir_mapping_need_revalidate@fs/nfs/dir.c:913") $dir:struct inode*
+probe module("nfs").function("nfs_dir_mapping_need_revalidate") {
+	if (@inode_is_match($dir)) {
+		nfsi = &@module_container_of($dir, "nfs", "struct nfs_inode", vfs_inode);
+		cache_validity = nfsi->cache_validity
+		cache_validity_str = get_nfs_ino_valid_flag_str(cache_validity)
+		printf(" [nfs_dir_mapping_need_revalidate] nfsi->cache_validity:%d (%s)\n", cache_validity, cache_validity_str);
+	}
+}
+
+// module("nfs").function("nfs_revalidate_mapping@fs/nfs/inode.c:938").return $return:int $inode:struct inode* $mapping:struct address_space*
+probe module("nfs").function("nfs_revalidate_mapping").return {
+	if (@inode_is_match($inode))
+		printf(" [nfs_revalidate_mapping] returns %d\n", $return);
+}
+
+// module("nfs").function("__nfs_revalidate_inode@fs/nfs/inode.c:816").return $return:int $server:struct nfs_server* $inode:struct inode*
+probe module("nfs").function("__nfs_revalidate_inode").return {
+	if (@inode_is_match($inode))
+		printf("  [__nfs_revalidate_inode] returns %d\n", $return);
+}
+
+// module("nfs").function("nfs_invalidate_mapping@fs/nfs/inode.c:897") $mapping:struct address_space* $inode:struct inode*
+probe module("nfs").function("nfs_invalidate_mapping") {
+	if (@inode_is_match($inode)) {
+		printf("   [nfs_invalidate_mapping] inode:%p mapping->nrpages:%d inode->i_mode:%s\n", $inode, $mapping->nrpages, i_mode2str($inode->i_mode));
+	}
+}
+
+probe begin {
+	printf("systemtap starting, inode of directory: 0x%x\n", ihex)
+}
+	
+probe end {
+	printf("systemtap exiting\n")
+
+}
