@@ -1,0 +1,36 @@
+enabled 0
+failure 0
+pid 993
+rate_limit 0
+backlog_limit 320
+lost 0
+backlog 0
+loginuid_immutable 0 unlocked
+No rules
+starting 1 processes
+starting timing loops
+1 child threads, 100000 loops, 10 files: stat: 312 ns/call/thread, access: 597 ns/call/thread
+starting 2 processes
+starting timing loops
+2 child threads, 100000 loops, 10 files: stat: 194 ns/call/thread, access: 373 ns/call/thread
+starting 4 processes
+starting timing loops
+4 child threads, 100000 loops, 10 files: stat: 89 ns/call/thread, access: 223 ns/call/thread
+starting 8 processes
+starting timing loops
+8 child threads, 100000 loops, 10 files: stat: 72 ns/call/thread, access: 168 ns/call/thread
+starting 16 processes
+starting timing loops
+16 child threads, 100000 loops, 10 files: stat: 67 ns/call/thread, access: 211 ns/call/thread
+starting 32 processes
+starting timing loops
+32 child threads, 100000 loops, 10 files: stat: 64 ns/call/thread, access: 120 ns/call/thread
+starting 64 processes
+starting timing loops
+64 child threads, 100000 loops, 10 files: stat: 63 ns/call/thread, access: 106 ns/call/thread
+starting 128 processes
+starting timing loops
+128 child threads, 100000 loops, 10 files: stat: 65 ns/call/thread, access: 106 ns/call/thread
+starting 256 processes
+starting timing loops
+256 child threads, 100000 loops, 10 files: stat: 62 ns/call/thread
