@@ -1,0 +1,35 @@
+#!/bin/bash
+
+result_negative () {
+	echo "This system does not currently appear to be experiencing the nfsv4"
+	echo "  init bug.  However, it may still be affected by the bug, since the"
+	echo "  bug is transient."
+	exit 1
+}
+result_positive () {
+	echo "This system currently appears to be experiencing the nfsv4 init bug."
+	echo "    $wait_init_count pid(s) in nfs_wait_client_init_complete: $wait_init_pids"
+	echo "    $trunking_count pid(s) in nfs4_discover_server_trunking: $trunking_pids"
+	exit 0
+}
+
+mount_nfs_pids=$(pidof -n mount.nfs)
+mount_nfs_count=$(echo $mount_nfs_pids | wc -w)
+if [[ $mount_nfs_count -lt 2 ]] ; then
+	result_negative
+fi
+
+wait_init_pids=""
+trunking_pids=""
+for pid in $mount_nfs_pids ; do
+	current_func=$(head -1 /proc/$pid/stack 2>/dev/null)
+	[[ $current_func =~ nfs_wait_client_init ]] && wait_init_pids="$wait_init_pids $pid"
+	[[ $current_func =~ nfs4_discover_server_trunking ]] && trunking_pids="$trunking_pids $pid"
+done
+
+wait_init_count=$(wc -w <<<"$wait_init_pids")
+trunking_count=$(wc -w <<<"$trunking_pids")
+if [[ $wait_init_count -gt 0 && $trunking_count -gt 0 ]] ; then
+	result_positive
+fi
+result_negative
