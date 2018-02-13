@@ -2,14 +2,15 @@
 	Frank Sorenson <sorenson@redhat.com>
 	Red Hat, 2017
 
-	program to listen for inotify MOVE_TO event
-	with stat() of the new file returning ENOENT
-	or listen for 
+	program to listen for inotify MOVE_TO and other events
 
-	usage: test_inotify_move directory_to_monitor directory_to_monitor/filename
+	usage: test_inotify_move directory_to_monitor
+
+	# gcc -Wall test_inotify_move.c -o test_inotify_move -ggdb3 -l inotifytools 2>&1
 
 	# gcc test_inotify_move.c -o test_inotify_move -l pthread
 	# ./test_inotify_move <staging_dir> <final_dir>
+
 
 */
 #define _GNU_SOURCE
@@ -39,18 +40,34 @@
 // binary trees
 #include <search.h>
 
+
+#define SET_XATTRS 0
+#define WATCH_FILES 0
+
+
+#if SET_XATTRS
 #define FOUND_XATTR "user.found"
-
-
-
-#define KiB (1024ULL)
-#define BUF_SIZE (32ULL * KiB)
-#define MAX_EVENT_STRLEN (4ULL * KiB)
 
 /* hitting the thresh is considered over */
 #define TSTAMP_THRESH_SEC  (1ULL)
 #define TSTAMP_THRESH_NSEC (0ULL)
 
+
+#else
+
+#endif /* SET_XATTRS */
+
+
+//#define DIR_WATCH_EVENTS (IN_MOVED_TO | IN_ATTRIB | IN_CREATE | IN_IGNORED | IN_DELETE)
+#define DIR_WATCH_EVENTS (IN_ALL_EVENTS)
+#define DIR_DONTCARE_EVENTS (IN_ACCESS|IN_ATTRIB|IN_OPEN|IN_CLOSE_WRITE|IN_CLOSE_NOWRITE)
+#define FILE_DONTCARE_EVENTS (IN_ACCESS|IN_DELETE|IN_OPEN|IN_CREATE|IN_MODIFY|IN_CLOSE_NOWRITE)
+
+
+#define KiB (1024ULL)
+#define BUF_SIZE (32ULL * KiB)
+#define MAX_EVENT_STRLEN (4ULL * KiB)
+#define INOTIFY_BUFFER_SIZE (8ULL * KiB)
 
 #define ITER_COUNT 10000
 #define PROGRESS_INTERVAL 50 /* don't flood */
@@ -87,7 +104,6 @@ struct wd_info_struct {
 	void *tree_root;
 	int active_wds;
 	int inotify_fd;
-	struct wd_path_struct *wd_paths;
 };
 
 int tree_find_path(struct wd_info_struct *wd_info, const char *path) {
@@ -179,6 +195,7 @@ void walk_entry(const void *p, VISIT x,int level) {
 	}
 }
 
+#if SET_XATTRS
 struct timespec ts_elapsed(const struct timespec ts1, const struct timespec ts2) {
 	struct timespec ret, a, b;
 	if ((ts1.tv_sec > ts2.tv_sec) ||
@@ -264,7 +281,7 @@ char *create_tstamp(const struct timespec *ts) {
 	return tstamp;
 }
 
-char *create_tstamp_old(const struct timespec *ts) {
+char *create_tstamp_str(const struct timespec *ts) {
 	struct tm tm_info;
 	char time_buffer[32];
 	char tzbuf[8];
@@ -290,61 +307,43 @@ char *create_stat_tstamp(const char *path) {
 	return create_tstamp(&st.st_mtim);
 }
 
-
-/*
-	thread 1:
-		monitor destination directory tree for MOVE_IN events
-		when MOVE_IN event is delivered, stat the file, and report success/failure
-	thread 2:
-		create file in staging directory
-		create destination directory (if necessary)
-		move file to destination directory
-
-*/
-
-//pthread_t monitor_thread;
-//pthread_t files_thread;
-
-#define INOTIFY_BUFFER_SIZE 8192
+#endif /* if SET_XATTRS */
 
 
 
-void add_watch_dir(struct wd_info_struct *wd_info, char *path) {
+enum entry_added_cause { ENTRY_ADDED_CMDLINE, ENTRY_ADDED_EVENT, ENTRY_ADDED_RECURSIVE };
+
+static char *entry_added_cause_string[] = {
+	[ENTRY_ADDED_CMDLINE] = "command line",
+	[ENTRY_ADDED_EVENT] = "event",
+	[ENTRY_ADDED_RECURSIVE] = "recursive"
+};
+enum watchent_type { WATCHENT_TYPE_DIR, WATCHENT_TYPE_FILE };
+static char *watchent_type_string[] = {
+	[WATCHENT_TYPE_DIR] = "dir",
+	[WATCHENT_TYPE_FILE] = "file"
+};
+
+void add_watch(struct wd_info_struct *wd_info, char *path, enum watchent_type type, enum entry_added_cause added_cause) {
 	int wd;
 	struct watchent *new_ent;
+	struct watchent *ret;
 
-	printf("Adding watch for dir: %s\n", path);
-	wd = inotify_add_watch(wd_info->inotify_fd, path, IN_MOVED_TO | IN_ATTRIB | IN_CREATE | IN_IGNORED | IN_DELETE);
+	wd = inotify_add_watch(wd_info->inotify_fd, path, DIR_WATCH_EVENTS);
 	new_ent = new_watchent(wd, path);
-	tsearch(new_ent, &wd_info->tree_root, compare_wd_entries);
+	ret = tfind(new_ent, &wd_info->tree_root, compare_wd_entries);
 
-	printf("tree size now %d\n", get_tree_size(wd_info));
+	if (ret == NULL) { /* new entry */
+		printf("Adding watch (wd = %d) for %s (%s): %s\n", wd,
+			watchent_type_string[type],
+			entry_added_cause_string[added_cause], path);
+		tsearch(new_ent, &wd_info->tree_root, compare_wd_entries);
+
+//		printf("looks like a new entry\n");
+//		printf("tree size now %d\n", get_tree_size(wd_info));
+	} else
+		kill_watchent(new_ent);
 }
-void add_watch_file(struct wd_info_struct *wd_info, char *path) {
-	struct watchent *new_ent;
-	int wd;
-
-
-	printf("Adding watch for file: %s\n", path);
-
-	wd = inotify_add_watch(wd_info->inotify_fd, path, IN_ATTRIB);
-	new_ent = new_watchent(wd, path);
-	tsearch(new_ent, &wd_info->tree_root, compare_wd_entries);
-}
-
-char *create_event_string(const struct inotify_event *event) {
-	char *event_string;
-	int ret;
-
-	event_string = malloc(MAX_EVENT_STRLEN+1);
-//	ret = inotifytools_snprintf(event_string, MAX_EVENT_STRLEN, event, "%w: '%f' had events: %e");
-	ret = inotifytools_snprintf(event_string, MAX_EVENT_STRLEN, (struct inotify_event *)event, "%e");
-	if (ret != -1)
-		return event_string;
-	free(event_string);
-	return strdup("UNKNOWN EVENT");
-}
-
 void do_file_work(char *path, struct stat *st) {
 	/* here is where we'd do some work/actions for each file */
 
@@ -356,6 +355,64 @@ void do_file_work(char *path, struct stat *st) {
 	nanosleep(&ts, NULL);
 }
 
+struct val_str_pair {
+	long val;
+	const char *string;
+};
+#define N(a) { .val = IN_##a, .string = #a }
+static const struct val_str_pair event_string_pair[] = {
+	N(ACCESS),
+	N(MODIFY),
+	N(ATTRIB),
+	N(CLOSE_WRITE),
+	N(CLOSE_NOWRITE),
+	N(OPEN),
+	N(MOVED_FROM),
+	N(MOVED_TO),
+	N(CREATE),
+	N(DELETE_SELF),
+	N(DELETE),
+	N(UNMOUNT),
+	N(Q_OVERFLOW),
+	N(IGNORED),
+//	N(CLOSE),
+	N(MOVE_SELF),
+	N(ISDIR),
+	N(ONESHOT)
+};
+static const int max_event_string_pair = sizeof(event_string_pair)/sizeof(event_string_pair[0]);
+#undef N
+
+char *create_event_string(const struct inotify_event *event) {
+	char *event_string;
+//	int ret;
+	char sep = '|';
+	int i;
+
+	event_string = calloc(MAX_EVENT_STRLEN+1, sizeof(char));
+	for (i = 0 ; i < max_event_string_pair ; i++) {
+		if (event->mask & event_string_pair[i].val) {
+			strcat(event_string, event_string_pair[i].string);
+			event_string[strlen(event_string)] = sep;
+		}
+	}
+	if (strlen(event_string)) {
+		event_string[strlen(event_string) - 1] = '\0';
+	}
+	return event_string;
+
+
+//	ret = inotifytools_snprintf(event_string, MAX_EVENT_STRLEN, event, "%w: '%f' had events: %e");
+#if 0
+	ret = inotifytools_snprintf(event_string, MAX_EVENT_STRLEN, (struct inotify_event *)event, "%e");
+	if (ret != -1)
+		return event_string;
+	free(event_string);
+	return strdup("UNKNOWN EVENT");
+#endif
+}
+
+#if SET_XATTRS
 void update_xattr(const char *path, struct timespec *ts) {
 	char *tstamp;
 
@@ -364,8 +421,10 @@ void update_xattr(const char *path, struct timespec *ts) {
 		printf("WARNING: Failed to set xattr '" FOUND_XATTR "' to '%s' for '%s': %m\n", tstamp, path);
 	free(tstamp);
 }
+#endif
 
 void process_file(struct wd_info_struct *wd_info, char *path) {
+#if SET_XATTRS
 	/* startup behavior: */
 	/* check whether it has an extended attribute */
 
@@ -412,9 +471,10 @@ void process_file(struct wd_info_struct *wd_info, char *path) {
 		update_xattr(path, &st.st_mtim);
 		do_file_work(path, &st);
 	}
+#endif /* if SET_XATTRS */
 }
 
-void add_watches_recursive(struct wd_info_struct *wd_info, char *path){
+void add_watches_recursive(struct wd_info_struct *wd_info, char *path, enum entry_added_cause added_cause) {
 	/* add self directory */
 	/* iterate children, recurse for each dir */
 	int dir_fd;
@@ -426,11 +486,13 @@ void add_watches_recursive(struct wd_info_struct *wd_info, char *path){
 
 	stat(path, &st);
 	if (S_ISREG(st.st_mode)) {
-//		add_watch_file(wd_info, path);
+#if WATCH_FILES
+		add_watch(wd_info, path, WATCHENT_TYPE_FILE, added_cause);
+#endif
 		process_file(wd_info, path);
 		return;
 	}
-	add_watch_dir(wd_info, path);
+	add_watch(wd_info, path, WATCHENT_TYPE_DIR, added_cause);
 
         if ((dir_fd = open(path, O_RDONLY | O_DIRECTORY)) == -1)
                 exit_fail("open call failed");
@@ -459,7 +521,7 @@ void add_watches_recursive(struct wd_info_struct *wd_info, char *path){
 				case DT_REG: {
 					char *new_path;
 					asprintf(&new_path, "%s/%s", path, temp_de->d_name);
-					add_watches_recursive(wd_info, new_path);
+					add_watches_recursive(wd_info, new_path, ENTRY_ADDED_RECURSIVE);
 					free(new_path);
 					break;
 				}
@@ -492,6 +554,8 @@ void handle_events(struct wd_info_struct *wd_info) {
 
 		if (len <= 0)
 			break;
+		buf[len] = '\0'; /* may not be null-terminated */
+
 		for (ptr = buf; ptr < buf + len; ptr += sizeof(struct inotify_event) + event->len) {
 			event = (const struct inotify_event *) ptr;
 			handled_events = 0;
@@ -514,44 +578,52 @@ void handle_events(struct wd_info_struct *wd_info) {
 //			printf("path: %s\n", tree_watchent->path);
 
 
-			if (*event->name == '\0') {
+
+//			if (*event->name == '\0') {
+			if (event->len == 0) {
 				event_path = strdup(wd_event_path);
 			} else {
 				asprintf(&event_path, "%s/%s", wd_event_path, event->name);
 			}
-printf("got %s event: %s (path '%s')\n", (event->mask & IN_ISDIR) ? "DIRECTORY" : "FILE", event_string, event_path);
-printf("\twatch descriptor's path: %s, event->name: %s\n", wd_event_path, event->name);
+
+printf("%s event: %s (path '%s')\n", (event->mask & IN_ISDIR) ? "DIRECTORY" : "FILE", event_string, event_path);
+
+#if 0
+if (event->len) {
+printf("\twatch descriptor's path: '%s', event->name: '%s'\n", wd_event_path, event->name);
+} else {
+printf("\twatch descriptor's path: '%s'\n", wd_event_path);
+}
+#endif
 
 			if (event->mask & IN_ISDIR) {
 				handled_events |= IN_ISDIR;
-				if (event->mask & IN_CREATE) {
-					add_watches_recursive(wd_info, event_path);
-					handled_events |= IN_CREATE;
-				}
-				if (event->mask & IN_MOVED_TO) { /* directory moved in */
-					add_watches_recursive(wd_info, event_path);
-					handled_events |= IN_MOVED_TO;
-				}
-				if (event->mask & IN_DELETE) /* directory inside directory was removed; subdir should generate events--we can ignore */
-					handled_events |= IN_DELETE;
 
-				if (event->mask & IN_ATTRIB)
-					handled_events |= IN_ATTRIB;
-				if (event->mask & IN_OPEN)
-					handled_events |= IN_OPEN;
+				if (event->mask & (IN_CREATE|IN_MOVED_TO)) {
+					add_watches_recursive(wd_info, event_path, ENTRY_ADDED_EVENT);
+					handled_events |= (event->mask & (IN_CREATE|IN_MOVED_TO));
+				}
+				if (event->mask & IN_DELETE) { /* directory inside directory was removed; subdir should generate events--we can ignore */
+					printf("\t***** directory '%s' deleted *****\n", event_path);
+					handled_events |= IN_DELETE;
+				}
+
 				if (event->mask & IN_MOVED_FROM) /* wait for the IN_IGNORED event before killing the wd */
 					handled_events |= IN_MOVED_FROM;
 				if (event->mask & IN_DELETE_SELF) /* wait for the IN_IGNORED event before killing the wd */
 					handled_events |= IN_DELETE_SELF;
+
 				if (event->mask & IN_IGNORED) {
 					ignore_watchent(wd_info, event->wd);
 					handled_events |= IN_IGNORED;
 				}
+				handled_events |= (DIR_DONTCARE_EVENTS & event->mask);
 
 			} else { /* event for a file, rather than a dir */
 				if (event->mask & IN_DELETE_SELF) { /* stupid thing shows up as a file event */
 				/* IN_DELETE_SELF -- supposed to only occur for a watched item, and since we're only watching dirs... */
 					printf("\t***** directory '%s' deleted *****\n", event_path);
+					handled_events |= IN_DELETE_SELF;
 				}
 
 				if (event->mask & IN_IGNORED) {
@@ -560,43 +632,19 @@ printf("\twatch descriptor's path: %s, event->name: %s\n", wd_event_path, event-
 
 					handled_events |= IN_IGNORED;
 				}
-				if (event->mask & IN_MOVED_TO) { /* file moved in */
+
+				if (event->mask & (IN_MOVED_TO|IN_ATTRIB|IN_CLOSE_WRITE)) {
+					/* file moved in, touched, closed after possible write */
 					process_file(wd_info, event_path);
-					handled_events |= IN_MOVED_TO;
+					handled_events |= (event->mask & (IN_MOVED_TO|IN_ATTRIB|IN_CLOSE_WRITE));
 				}
-				if (event->mask & IN_ATTRIB) { /* file touched, etc. */
-					process_file(wd_info, event_path);
-					handled_events |= IN_ATTRIB;
-				}
-
-				if (event->mask & IN_DELETE) /* file was deleted */
-					handled_events |= IN_DELETE;
-
-				if (event->mask & IN_OPEN)
-					handled_events |= IN_OPEN; /* process when closing, if opened for write */
-				if (event->mask & IN_CREATE) /* we'll process when closing */
-					handled_events |= IN_CREATE;
-				if (event->mask & IN_MODIFY) /* file was modified - reprocess when closing */
-					handled_events |= IN_MODIFY;
-				if (event->mask & IN_CLOSE_WRITE) { /* we'll reprocess */
-					process_file(wd_info, event_path);
-					handled_events |= IN_CLOSE_WRITE;
-				}
-				if (event->mask & IN_CLOSE_NOWRITE) /* nothing to do */
-					handled_events |= IN_CLOSE_NOWRITE;
-
-
 			}
-
 //			printf("\t'%s' for '%s': event->mask: 0x%08x, handled_events: 0x%08x\n",
 //				event_string, event_path, event->mask, handled_events);
 			if (event->mask != handled_events)
 				printf("\t*** WARNING *** unhandled events:\n"
 					"\t'%s' for '%s': event->mask: 0x%08x, handled_events: 0x%08x\n",
 					event_string, event_path, event->mask, handled_events);
-
-
-
 		}
 		free(event_path);
 		free(event_string);
@@ -625,23 +673,12 @@ int main(int argc, char *argv[]) {
 
 	wd_info->active_wds = 0;
 
-	inotifytools_initialize();
+//	inotifytools_initialize();
 	for (i = 1 ; i < argc ; i++) {
 		path = canonicalize_file_name(argv[i]);
-		add_watches_recursive(wd_info, path);
+		add_watches_recursive(wd_info, path, ENTRY_ADDED_CMDLINE);
 		free(path);
 	}
-
-	/* display the tree */
-//	printf("tree:\n");
-//	twalk(wd_info->tree_root, walk_entry);
-//	printf("....\n");
-//	printf("tree size = %d\n", get_tree_size(wd_info));
-
-
-           /* Mark directories for events
-              - file was opened
-              - file was closed */
 
 	/* Prepare for polling */
 	nfds = 2;
@@ -684,7 +721,9 @@ int main(int argc, char *argv[]) {
 
 	/* Close inotify file descriptor */
 	close(wd_info->inotify_fd);
+	tdestroy(wd_info->tree_root, kill_watchent);
+	free(wd_info);
+//	inotifytools_cleanup();
 
-//	free(wd);
 	return EXIT_SUCCESS;
 }
