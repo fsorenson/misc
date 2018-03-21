@@ -6,14 +6,10 @@
 #   as reproducer for Red Hat bugzilla 1553004
 #
 # creates a 20 TB ext4 filesystem image, populates it 90% full with files, using
-#   debugfs to allocate only metadata.  Final image size slightly less than 800 MiB
-#
-# NOTE: creation of the filesystem image requires 'fallocate' function in
-#   debugfs.  The RHEL 7 debugfs manpage claims this is available, however it is
-#   not included.  Compile a more recent debugfs, and set recent_debugfs= to its path
-recent_debugfs=/root/rpmbuild/BUILD/e2fsprogs/debugfs/debugfs
+#   fallocate to allocate disk blocks.  Final image size is approximately 1.4 GiB
 
 image=testfs.img
+mount=/mnt/testfs
 # exact calculations are not needed
 fs_size=20000000000000	# filesystem 'size'
 occupy_pct=90		# percentage of filesystem blocks to allocate
@@ -25,24 +21,17 @@ file_count=40000	# number of files to create on the filesystem
 file_size=$(( $occupy_size / $file_count ))	# size of each file created
 file_blks=$(( $file_size / $fs_block_size ))	# number of blocks for each file
 
-start_blk=5000	# starting block to begin allocation
-
 echo "creating filesystem"
 rm -f $image
 truncate -s $fs_size $image
 mkfs.ext4 -q -F -b $fs_block_size -g 32768 -I 256 $image
 
 echo "adding $file_count files of $file_size bytes ($file_blks blocks) each"
-cmd_file=/tmp/debugfs_cmd
-current_blk=$start_blk
->$cmd_file
+mkdir -p $mount
+mount $image $mount
 for i in $(seq 1 $file_count) ; do
-	echo -en "write /dev/null testfile$i
-	sif testfile$i size $file_size
-	fallocate testfile$i $current_blk $(($current_blk + $file_blks))
-	" >> $cmd_file
-	current_blk=$(($current_blk + $file_blks + 1))
+	fallocate -l $file_size $mount/testfile$i
 done
+umount /mnt/testfs
 
-$recent_debugfs -w -f $cmd_file $image >/tmp/debugfs.out 2>&1
 dumpe2fs -h $image
