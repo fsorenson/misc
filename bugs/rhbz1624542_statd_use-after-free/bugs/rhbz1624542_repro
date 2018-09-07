@@ -1,0 +1,56 @@
+#!/bin/bash
+
+# reproducer for statd use-after-free, Red Hat bugzilla 1624542
+# by Frank Sorenson, <sorenson@redhat.com, 2018
+#
+# requires 'nsm_client' test program from nfs-utils source
+
+nsm_client="/tmp/nsm_client"
+sm_base="/var/lib/nfs/statd"
+ip_range="192.168.123.\$i"
+ip_low=1
+ip_high=10
+
+chown -R rpcuser:rpcuser $sm_base/sm{,.bak}
+for i in $(seq $ip_low $ip_high) ; do
+	eval rm -f $ip_range
+done
+
+# return success if running
+# return failure if not running, and no message
+# exit with message and failure if not running, and message given
+check_statd() {
+	statd_pid=$(pidof rpc.statd statd)
+	[[ -n $statd_pid ]] && return 0
+	[[ $# -lt 1 ]] && return 1
+	echo "${*}"
+	exit 1
+}
+
+check_statd || {
+	rpc.statd
+	check_statd "Failed to start rpc.statd"
+}
+
+echo "doing initial 'monitor' calls"
+for i in $(seq $ip_low $ip_high) ; do
+	eval $nsm_client mon $ip_range 1
+done
+echo
+
+echo "changing directory ownership to root"
+chown -R root:root $sm_base/sm{,.bak}
+
+echo "attempting to 'monitor' with new cookie"
+for i in $(seq $ip_high -1 $ip_low) ; do
+	eval $nsm_client mon $ip_range 2
+	check_statd "rpc.statd has died"
+done
+
+# one last check
+sleep 0.25
+
+eval $nsm_client mon $ip_range 2
+check_statd "rpc.statd has died"
+
+echo "rpc.statd is still running"
