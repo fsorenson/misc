@@ -1,0 +1,58 @@
+#!/usr/bin/perl -w
+
+# Frank Sorenson <sorenson@redhat.com>, 2018
+
+# script to interpret nfs capabilities value from /proc/self/mountstats
+
+use strict;
+use warnings;
+
+use Data::Dumper;
+use Scalar::Util qw(looks_like_number);
+
+
+# grep -r '^#define NFS_CAP' include/linux/nfs_fs_sb.h | awk '{printf "\t%d => \"%s\",\n", int($5),$2}' >> /var/tmp/nfs_caps.pl
+my %cap_defs = (
+	0 => "NFS_CAP_READDIRPLUS",
+	1 => "NFS_CAP_HARDLINKS",
+	2 => "NFS_CAP_SYMLINKS",
+	3 => "NFS_CAP_ACLS",
+	4 => "NFS_CAP_ATOMIC_OPEN",
+	6 => "NFS_CAP_FILEID",
+	7 => "NFS_CAP_MODE",
+	8 => "NFS_CAP_NLINK",
+	9 => "NFS_CAP_OWNER",
+	10 => "NFS_CAP_OWNER_GROUP",
+	11 => "NFS_CAP_ATIME",
+	12 => "NFS_CAP_CTIME",
+	13 => "NFS_CAP_MTIME",
+	14 => "NFS_CAP_POSIX_LOCK",
+	15 => "NFS_CAP_UIDGID_NOMAP",
+	16 => "NFS_CAP_STATEID_NFSV41",
+	17 => "NFS_CAP_ATOMIC_OPEN_V1",
+	18 => "NFS_CAP_SECURITY_LABEL",
+	19 => "NFS_CAP_SEEK",
+	20 => "NFS_CAP_ALLOCATE",
+	21 => "NFS_CAP_DEALLOCATE",
+	22 => "NFS_CAP_LAYOUTSTATS",
+	23 => "NFS_CAP_CLONE",
+	24 => "NFS_CAP_COPY",
+);
+
+sub get_caps {
+	my $caps = shift;
+	my @ret = ();
+
+	foreach my $key (sort keys %cap_defs) {
+		if ($caps & (1 << $key)) {
+			push @ret, substr($cap_defs{$key}, 4);
+		}
+	}
+	return join " | ", @ret;
+}
+
+if ($ARGV[0]) {
+	my $str = get_caps(hex($ARGV[0]));
+	printf("result: %s\n", $str);
+
+}
