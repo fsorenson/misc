@@ -1,0 +1,171 @@
+#!/bin/bash
+
+# Frank Sorenson <sorenson@redhat.com>, 2018
+#
+# 'fake' snapshot system, useful for testing nfs client automount behavior when crossing filesystem boundaries (new fsid)
+# run snap script from within the base directory;
+# .snapshot directory will be maintained by the script, using small filesystem image files kept in the base dir
+
+default_keep=5
+keep=${keep:-$default_keep}
+fs_size="50M"
+fs_type="xfs"
+export_opts="rw,no_root_squash,nohide"
+
+base_dir=$(readlink -f $(pwd))
+snap_dir="$base_dir/.snapshot"
+date_pattern='20[0-9][0-9]-\(0[1-9]\|1[0-2]\)-\(0[1-9]\|[12][0-9]\|3[01]\)_\([0-1][0-9]\|2[0-3]\)\([0-5][0-9]\)\([0-5][0-9]\|60\)'
+
+earliest_keep_time=$(date -d "00:00 $(( $keep - 1)) days ago - 1 second" +%s)
+now_tstamp=$(date +%s)
+
+exit_fail() {
+	echo -e "error: $*"
+	exit 1
+}
+make_date_str () {
+	local dtime=$1
+	date -d @$dtime +"%Y-%m-%d_%H%M%S"
+}
+make_fsid () {
+	local hostid=$(hostid)
+	local base_dir=$1
+	local date_tstamp=$2
+
+	if [[ -x /usr/bin/b2sum ]] ; then
+		local path_hash=$(echo -n "$base_dir" | b2sum -l 64 | awk '{printf "%s", $1}')
+	else
+		local path_hash="0000-"$(printf %08x $(echo -n "$base_dir" | cksum | awk '{printf "%s", $1}'))"-0000"
+	fi
+	local date_bytes=$(printf %08x $date_tstamp)
+	echo -n "$hostid-$path_hash-$date_bytes"
+}
+all_snap_dirs() {
+	local snap_dir=$1
+	find $snap_dir -mindepth 1 -maxdepth 1 -type d -regex '.+/\.snapshot/'$date_pattern'$' -regextype posix-extended -printf "%f "
+}
+all_img_files() {
+	local base_dir=$1
+	find $base_dir -mindepth 1 -maxdepth 1 -type f -regex "$base_dir/"$date_pattern.img$  -regextype posix-extended -printf "%f "
+}
+remove_snap_mount() {
+	local snap_dir=$1
+	local date_dir=$2
+
+	local mntpoint="$snap_dir/$date_dir"
+
+	out=$(exportfs -uv "*:$mntpoint" 2>&1) || exit_fail "could not un-export '$mntpoint'\n$out"
+	out=$(umount $mntpoint 2>&1) || exit_fail "could not unmount '$mntpoint'\n$out"
+	out=$(rmdir $mntpoint 2>&1) || exit_fail "could not remove directory '$mntpoint'\n$out"
+} # remove_snap_mount
+remove_snap_img() {
+	local base_dir=$1
+	local img=$2
+
+	out=$(rm -f $base_dir/$img 2>&1) || exit_fail "could not remove image '$base_dir/$img'\n$out"
+} # remove snap_img
+expire_dirs() {
+	local base_dir=$1
+	local snap_dir=$2
+	local earliest_keep_time=$3
+
+	for d in $(all_snap_dirs $snap_dir) ; do
+		dtime_str=$(echo -n "${d:0:10} ${d:11:2}:${d:13:2}:${d:15:2}")
+		dtime=$(date -d "$dtime_str" +%s)
+
+		if [[ $dtime -lt $earliest_keep_time ]] ; then
+			echo "un-export $d, unmount $d, rmdir $d, delete img file"
+			remove_snap_mount $snap_dir $d
+		fi
+	done
+} # expire_dirs
+expire_img_files() {
+	local base_dir=$1
+	local earliest_keep_time=$2
+
+	for img in $(all_img_files $base_dir) ; do
+		dtime_str=$(echo -n "${img:0:10} ${img:11:2}:${img:13:2}:${img:15:2}")
+		dtime=$(date -d "$dtime_str" +%s)
+		if [[ $dtime -lt $earliest_keep_time ]] ; then
+			remove_snap_img $base_dir $img
+		fi
+	done
+} # expire_img_files
+setup_snaps() {
+	local base_dir=$1
+	local snap_dir=$2
+	local keep=$3
+
+	for i in $(seq 0 $(( $keep - 1)) ) ; do
+		date_tstamp=$(date -d "00:00 $i days ago - 1 second" +%s)
+		date_str=$(date -d @$date_tstamp +"%Y-%m-%d_%H%M%S")
+
+		date_mnt="$snap_dir/$date_str"
+		date_img="$base_dir/$date_str.img"
+
+		if [[ ! -f $date_img ]] ; then
+			out=$(truncate -s $fs_size $date_img) || exit_fail "could not create/extend $date_img\n$out"
+			out=$(mkfs -t $fs_type $date_img 2>&1) || exit_fail "could not create filesystem on $date_img\n$out"
+		fi
+		if [[ ! -d $date_mnt ]] ; then
+			out=$(mkdir $date_mnt 2>&1) || exit_fail "could not create directory $date_mng\n$out"
+		fi
+		mntpoint=$(stat -c %m $date_mnt)
+		if [[ $date_mnt != $mntpoint ]] ; then
+			out=$(mount $date_img $date_mnt -oloop 2>&1) || exit_fail "could not mount $date_img on $date_mnt\n$out"
+		fi
+
+		out=$(touch "$date_mnt/file_in_$date_str" 2>&1) || exit_fail "could not create file $date_mnt/file_in_$date_str\n$out"
+		fs_hash=$(make_fsid "$base_dir" $date_tstamp)
+
+		out=$(exportfs -v -o "fsid=$fs_hash,$export_opts" "*:$date_mnt" 2>&1) || exit_fail "could not export '$date_mnt' with fsid=$fs_hash\n$out"
+	done
+} # setup_snaps
+
+if [[ $# -ne 1 ]] ; then
+	echo "usage: $0 <snap | expire | idle | clean>"
+	echo -e "\tsnap - make $keep snapshot images, mount under .snapshot, export"
+	echo -e "\texpire - expire and delete snapshot directories and images older than the last $keep"
+	echo -e "\tidle - un-export and remove snapshot directories, but keep the image files"
+	echo -e "\tclean - un-export and remove snapshot directories, remove all image files"
+	echo
+	echo -e "\tset the variable 'keep' to the number of snapshots to retain, if other than the default $default_keep"
+	exit 1
+fi
+
+if [[ ! -d $snap_dir ]] ; then
+	out=$(mkdir $snap_dir 2>&1) || exit_fail "could not create $snap_dir"
+fi
+export_base() {
+	local base_dir=$1
+	out=$(exportfs -v -o "rw,fsid=$(make_fsid "$base_dir" 0)" "*:$base_dir" 2>&1) || exit_fail "could not export base directory '$base_dir'\n$out"
+}
+unexport_base() {
+	local base_dir=$1
+
+	out=$(exportfs -uv "*:$base_dir" 2>&1) || {
+		exit_fail "error un-exporting '$base_dir'\n$out"
+		# something went wrong...  sorry 'bout that, folks
+		:
+	}
+}
+
+if [[ $1 == "clean" ]] ; then
+	expire_dirs $base_dir $snap_dir $now_tstamp  # just say everything is expired
+	expire_img_files $base_dir $now_tstamp
+	unexport_base $base_dir
+elif [[ $1 == "idle" ]] ; then
+	for d in $(all_snap_dirs $snap_dir) ; do
+		remove_snap_mount $snap_dir $d
+	done
+elif [[ $1 == "expire" ]] ; then
+	expire_dirs $base_dir $snap_dir $earliest_keep_time
+	expire_img_files $base_dir $earliest_keep_time
+elif [[ $1 == "snap" ]] ; then
+	export_base $base_dir
+#	out=$(exportfs -v -o "fsid=$(make_fsid "$base_dir" 0)" "*:$base_dir" 2>&1) || exit_fail "could not export base directory '$base_dir'\n$out"
+	setup_snaps $base_dir $snap_dir $keep
+fi
+
+
+

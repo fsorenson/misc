@@ -1,0 +1,211 @@
+*fake* snapshot setup
+  base /export directory
+  fake snapshots as small filesystem images within base dir
+  .snapshot dir with filesystem mountpoints for each of the snapshot filesystem images
+  separate fsid for base directory and each snapshot dir (generated from hostid + hash of base path + timestamp)
+  intended to look like individual daily snapshots (taken at midnight - 1 second) each day
+  server: vm1
+  client: vm3
+
+vm1 # pwd
+/exports6
+
+vm1 # ls -al
+total 18492
+drwxr-xr-x   3 root root     4096 Sep  7 07:11 .
+dr-xr-xr-x. 40 root root     4096 Sep  5 09:29 ..
+-rw-r--r--   1 root root 52428800 Sep  6 21:28 2018-09-01_235959.img
+-rw-r--r--   1 root root 52428800 Sep  6 21:28 2018-09-02_235959.img
+-rw-r--r--   1 root root 52428800 Sep  6 21:28 2018-09-03_235959.img
+-rw-r--r--   1 root root 52428800 Sep  6 21:28 2018-09-04_235959.img
+-rw-r--r--   1 root root 52428800 Sep  6 21:28 2018-09-05_235959.img
+-rwxr-xr-x   1 root root     5445 Sep  7 07:10 do_snaps
+drwxr-xr-x   7 root root      126 Sep  6 21:26 .snapshot
+
+vm1 #  ls -al .snapshot
+total 4
+drwxr-xr-x 7 root root  126 Sep  6 21:26 .
+drwxr-xr-x 3 root root 4096 Sep  7 07:11 ..
+drwxr-xr-x 2 root root   39 Sep  6 21:26 2018-09-01_235959
+drwxr-xr-x 2 root root   39 Sep  6 21:26 2018-09-02_235959
+drwxr-xr-x 2 root root   39 Sep  6 21:26 2018-09-03_235959
+drwxr-xr-x 2 root root   39 Sep  6 21:26 2018-09-04_235959
+drwxr-xr-x 2 root root   39 Sep  6 21:26 2018-09-05_235959
+
+vm1 # mount | grep exports6
+/exports6/2018-09-05_235959.img on /exports6/.snapshot/2018-09-05_235959 type xfs (rw,relatime,attr2,inode64,noquota)
+/exports6/2018-09-04_235959.img on /exports6/.snapshot/2018-09-04_235959 type xfs (rw,relatime,attr2,inode64,noquota)
+/exports6/2018-09-03_235959.img on /exports6/.snapshot/2018-09-03_235959 type xfs (rw,relatime,attr2,inode64,noquota)
+/exports6/2018-09-02_235959.img on /exports6/.snapshot/2018-09-02_235959 type xfs (rw,relatime,attr2,inode64,noquota)
+/exports6/2018-09-01_235959.img on /exports6/.snapshot/2018-09-01_235959 type xfs (rw,relatime,attr2,inode64,noquota)
+
+vm1 # exportfs -v
+/exports6/.snapshot/2018-09-01_235959
+		<world>(rw,sync,wdelay,nohide,no_subtree_check,fsid=a8c0497a-000-1562238577-000-5b8b6e4f,sec=sys,secure,no_root_squash,no_all_squash)
+/exports6/.snapshot/2018-09-03_235959
+		<world>(rw,sync,wdelay,nohide,no_subtree_check,fsid=a8c0497a-000-1562238577-000-5b8e114f,sec=sys,secure,no_root_squash,no_all_squash)
+/exports6/.snapshot/2018-09-05_235959
+		<world>(rw,sync,wdelay,nohide,no_subtree_check,fsid=a8c0497a-000-1562238577-000-5b90b44f,sec=sys,secure,no_root_squash,no_all_squash)
+/exports6     	<world>(rw,sync,wdelay,hide,no_subtree_check,fsid=a8c0497a-000-1562238577-000-00000000,sec=sys,secure,root_squash,no_all_squash)
+/exports6/.snapshot/2018-09-04_235959
+		<world>(rw,sync,wdelay,nohide,no_subtree_check,fsid=a8c0497a-000-1562238577-000-5b8f62cf,sec=sys,secure,no_root_squash,no_all_squash)
+/exports6/.snapshot/2018-09-02_235959
+		<world>(rw,sync,wdelay,nohide,no_subtree_check,fsid=a8c0497a-000-1562238577-000-5b8cbfcf,sec=sys,secure,no_root_squash,no_all_squash)
+
+
+mounted on client:
+vm3 # mount vm6:/exports6 /mnt/tmp -overs=3
+
+vm1:/exports6 on /mnt/tmp type nfs (rw,relatime,vers=3,rsize=262144,wsize=262144,namlen=255,hard,proto=tcp,timeo=600,retrans=2,sec=sys,mountaddr=192.168.122.73,mountvers=3,mountport=20048,mountproto=udp,local_lock=none,addr=192.168.122.73)
+
+
+vm3 # ls -al /mnt/tmp
+total 18492
+drwxr-xr-x.  3 root root     4096 Sep  7 07:11 .
+drwxr-xr-x. 36 root root     4096 Aug 30 11:10 ..
+-rw-r--r--.  1 root root 52428800 Sep  6 21:28 2018-09-01_235959.img
+-rw-r--r--.  1 root root 52428800 Sep  6 21:28 2018-09-02_235959.img
+-rw-r--r--.  1 root root 52428800 Sep  6 21:28 2018-09-03_235959.img
+-rw-r--r--.  1 root root 52428800 Sep  6 21:28 2018-09-04_235959.img
+-rw-r--r--.  1 root root 52428800 Sep  6 21:28 2018-09-05_235959.img
+-rwxr-xr-x.  1 root root     5445 Sep  7 07:10 do_snaps
+drwxr-xr-x.  7 root root      126 Sep  6 21:26 .snapshot
+
+vm3 # ls -aild /mnt/tmp/.snapshot/*/*
+67 -rw-r--r--. 1 root root 0 Sep  6 21:26 /mnt/tmp/.snapshot/2018-09-01_235959/file_in_2018-09-01_235959
+67 -rw-r--r--. 1 root root 0 Sep  6 21:26 /mnt/tmp/.snapshot/2018-09-02_235959/file_in_2018-09-02_235959
+67 -rw-r--r--. 1 root root 0 Sep  6 21:26 /mnt/tmp/.snapshot/2018-09-03_235959/file_in_2018-09-03_235959
+67 -rw-r--r--. 1 root root 0 Sep  6 21:26 /mnt/tmp/.snapshot/2018-09-04_235959/file_in_2018-09-04_235959
+67 -rw-r--r--. 1 root root 0 Sep  6 21:26 /mnt/tmp/.snapshot/2018-09-05_235959/file_in_2018-09-05_235959
+
+
+
+* now mounted *
+vm3 # mount
+vm1:/exports6 on /mnt/tmp type nfs (rw,relatime,vers=3,rsize=262144,wsize=262144,namlen=255,hard,proto=tcp,timeo=600,retrans=2,sec=sys,mountaddr=192.168.122.73,mountvers=3,mountport=20048,mountproto=udp,local_lock=none,addr=192.168.122.73)
+
+vm1:/exports6/.snapshot/2018-09-01_235959 on /mnt/tmp/.snapshot/2018-09-01_235959 type nfs (rw,relatime,vers=3,rsize=262144,wsize=262144,namlen=255,hard,proto=tcp,timeo=600,retrans=2,sec=sys,local_lock=none,addr=192.168.122.73)
+
+vm1:/exports6/.snapshot/2018-09-02_235959 on /mnt/tmp/.snapshot/2018-09-02_235959 type nfs (rw,relatime,vers=3,rsize=262144,wsize=262144,namlen=255,hard,proto=tcp,timeo=600,retrans=2,sec=sys,local_lock=none,addr=192.168.122.73)
+
+vm1:/exports6/.snapshot/2018-09-03_235959 on /mnt/tmp/.snapshot/2018-09-03_235959 type nfs (rw,relatime,vers=3,rsize=262144,wsize=262144,namlen=255,hard,proto=tcp,timeo=600,retrans=2,sec=sys,local_lock=none,addr=192.168.122.73)
+
+vm1:/exports6/.snapshot/2018-09-04_235959 on /mnt/tmp/.snapshot/2018-09-04_235959 type nfs (rw,relatime,vers=3,rsize=262144,wsize=262144,namlen=255,hard,proto=tcp,timeo=600,retrans=2,sec=sys,local_lock=none,addr=192.168.122.73)
+
+vm1:/exports6/.snapshot/2018-09-05_235959 on /mnt/tmp/.snapshot/2018-09-05_235959 type nfs (rw,relatime,vers=3,rsize=262144,wsize=262144,namlen=255,hard,proto=tcp,timeo=600,retrans=2,sec=sys,local_lock=none,addr=192.168.122.73)
+
+vm3 # cat /proc/fs/nfsfs/volumes
+NV SERVER   PORT DEV          FSID                              FSC
+v3 c0a87a49  801 0:42         225601007a399790:0                no 
+v3 c0a87a49  801 0:45         6d388a5b7a399790:0                no 
+v3 c0a87a49  801 0:46         ede98d5b7a399790:0                no 
+v3 c0a87a49  801 0:47         6d478f5b7a399790:0                no 
+v3 c0a87a49  801 0:48         ed348e5b7a399790:0                no 
+v3 c0a87a49  801 0:49         6de2915b7a399790:0                no 
+
+
+"use" one of the snapshots:
+vm3 # cd /mnt/tmp/.snapshot/2018-09-01_235959
+
+vm3 # pwd
+/mnt/tmp/.snapshot/2018-09-01_235959
+
+vm3 # ls -al
+total 0
+drwxr-xr-x. 2 root root  39 Sep  7 08:05 .
+drwxr-xr-x. 8 root root 150 Sep  7 08:05 ..
+-rw-r--r--. 1 root root   0 Sep  7 08:05 file_in_2018-09-01_235959
+
+
+* wait for timeout *
+
+vm3 # mount
+vm1:/exports6 on /mnt/tmp type nfs (rw,relatime,vers=3,rsize=262144,wsize=262144,namlen=255,hard,proto=tcp,timeo=600,retrans=2,sec=sys,mountaddr=192.168.122.73,mountvers=3,mountport=20048,mountproto=udp,local_lock=none,addr=192.168.122.73)
+
+vm1:/exports6/.snapshot/2018-09-01_235959 on /mnt/tmp/.snapshot/2018-09-01_235959 type nfs (rw,relatime,vers=3,rsize=262144,wsize=262144,namlen=255,hard,proto=tcp,timeo=600,retrans=2,sec=sys,local_lock=none,addr=192.168.122.73)
+
+
+* rotate the snapshots for a new day *
+
+* discard 2018-09-01_235959 *
+vm1 # ./do_snaps expire
+
+* create 2018-09-06_235959 *
+vm1 # ./do_snaps snap
+
+
+vm1 # mount
+/exports6/2018-09-05_235959.img on /exports6/.snapshot/2018-09-05_235959 type xfs (rw,relatime,attr2,inode64,noquota)
+/exports6/2018-09-04_235959.img on /exports6/.snapshot/2018-09-04_235959 type xfs (rw,relatime,attr2,inode64,noquota)
+/exports6/2018-09-03_235959.img on /exports6/.snapshot/2018-09-03_235959 type xfs (rw,relatime,attr2,inode64,noquota)
+/exports6/2018-09-02_235959.img on /exports6/.snapshot/2018-09-02_235959 type xfs (rw,relatime,attr2,inode64,noquota)
+/exports6/2018-09-06_235959.img on /exports6/.snapshot/2018-09-06_235959 type xfs (rw,relatime,attr2,inode64,noquota)
+
+
+/exports6/.snapshot/2018-09-02_235959
+		<world>(rw,sync,wdelay,nohide,no_subtree_check,fsid=a8c0497a-000-1562238577-000-5b8cbfcf,sec=sys,secure,no_root_squash,no_all_squash)
+/exports6/.snapshot/2018-09-04_235959
+		<world>(rw,sync,wdelay,nohide,no_subtree_check,fsid=a8c0497a-000-1562238577-000-5b8f62cf,sec=sys,secure,no_root_squash,no_all_squash)
+/exports6/.snapshot/2018-09-06_235959
+		<world>(rw,sync,wdelay,nohide,no_subtree_check,fsid=a8c0497a-000-1562238577-000-5b9205cf,sec=sys,secure,no_root_squash,no_all_squash)
+/exports6     	<world>(rw,sync,wdelay,hide,no_subtree_check,fsid=a8c0497a-000-1562238577-000-00000000,sec=sys,secure,root_squash,no_all_squash)
+/exports6/.snapshot/2018-09-05_235959
+		<world>(rw,sync,wdelay,nohide,no_subtree_check,fsid=a8c0497a-000-1562238577-000-5b90b44f,sec=sys,secure,no_root_squash,no_all_squash)
+/exports6/.snapshot/2018-09-03_235959
+		<world>(rw,sync,wdelay,nohide,no_subtree_check,fsid=a8c0497a-000-1562238577-000-5b8e114f,sec=sys,secure,no_root_squash,no_all_squash)
+
+
+vm3 # ls -al /mnt/tmp/.snapshot/
+total 4
+drwxr-xr-x. 7 root root  126 Sep  7 08:01 .
+drwxr-xr-x. 3 root root 4096 Sep  7 08:01 ..
+drwxr-xr-x. 2 root root   39 Sep  6 21:26 2018-09-02_235959
+drwxr-xr-x. 2 root root   39 Sep  6 21:26 2018-09-03_235959
+drwxr-xr-x. 2 root root   39 Sep  6 21:26 2018-09-04_235959
+drwxr-xr-x. 2 root root   39 Sep  6 21:26 2018-09-05_235959
+drwxr-xr-x. 2 root root   39 Sep  7 08:01 2018-09-06_235959
+
+vm3 # ls -aild /mnt/tmp/.snapshot/*/*
+67 -rw-r--r--. 1 root root 0 Sep  7 08:05 /mnt/tmp/.snapshot/2018-09-02_235959/file_in_2018-09-02_235959
+67 -rw-r--r--. 1 root root 0 Sep  7 08:05 /mnt/tmp/.snapshot/2018-09-03_235959/file_in_2018-09-03_235959
+67 -rw-r--r--. 1 root root 0 Sep  7 08:05 /mnt/tmp/.snapshot/2018-09-04_235959/file_in_2018-09-04_235959
+67 -rw-r--r--. 1 root root 0 Sep  7 08:05 /mnt/tmp/.snapshot/2018-09-05_235959/file_in_2018-09-05_235959
+67 -rw-r--r--. 1 root root 0 Sep  7 08:05 /mnt/tmp/.snapshot/2018-09-06_235959/file_in_2018-09-06_235959
+
+(note inode in the first column is '67' on all filesystems)
+
+
+vm3 # cat /proc/fs/nfsfs/servers
+NV SERVER   PORT USE HOSTNAME
+v3 c0a87a49  801   6 vm1
+
+vm3 # cat /proc/fs/nfsfs/volumes
+NV SERVER   PORT DEV          FSID                              FSC
+v3 c0a87a49  801 0:42         225601007a399790:0                no 
+v3 c0a87a49  801 0:45         6d388a5b7a399790:0                no 
+
+vm3 # pwd
+/mnt/tmp/.snapshot/2018-09-01_235959
+
+vm3 # ls -al
+ls: cannot open directory .: Stale file handle
+
+vm3 # cd ..
+-bash: cd: ..: No such file or directory
+
+
+
+vm3 # cd $(dirname $(pwd))
+
+vm3 # pwd
+/mnt/tmp/.snapshot
+
+* wait for timeout *
+
+# cat /proc/fs/nfsfs/volumes
+NV SERVER   PORT DEV          FSID                              FSC
+v3 c0a87a49  801 0:42         225601007a399790:0                no 
+
+
+
+
