@@ -1,0 +1,87 @@
+%{
+#include <linux/sunrpc/xdr.h>
+
+%}
+
+
+
+#module("nfsv4").function("nfs4_decode_dirent@fs/nfs/nfs4xdr.c:7348") $xdr:struct xdr_stream* $entry:struct nfs_entry* $plus:int $savep:unsigned int $bitmap:uint32_t[] $len:uint32_t $__func__:char[] const
+
+probe module("nfsv4").statement("nfs4_decode_dirent@fs/nfs/nfs4xdr.c:7355") {
+	if ($p == 0)
+		printf("%s: decoding '*p'\n", pp())
+}
+probe module("nfsv4").statement("nfs4_decode_dirent@fs/nfs/nfs4xdr.c:7359") {
+	if ($p == 0)
+		printf("%s: decoding 'p'\n", pp())
+}
+probe module("nfsv4").statement("nfs4_decode_dirent@fs/nfs/nfs4xdr.c:7359") {
+	if ($p == 0)
+		printf("%s: decoding 'p'\n", pp())
+}
+probe module("nfsv4").statement("nfs4_decode_dirent@fs/nfs/nfs4xdr.c:7361") {
+	if (kernel_long($p) == %{ xdr_zero %}  )
+		printf("%s: xdr_zero - EAGAIN\n", pp())
+}
+probe module("nfsv4").statement("nfs4_decode_dirent@fs/nfs/nfs4xdr.c:7364") {
+	printf("%s: EBADCOOKIE\n", pp())
+}
+probe module("nfsv4").statement("nfs4_decode_dirent@fs/nfs/nfs4xdr.c:7368") {
+	if ($p == 0)
+		printf("%s line 7368, decoding 12 bytes\n", pp())
+}
+probe module("nfsv4").statement("nfs4_decode_dirent@fs/nfs/nfs4xdr.c:7370") {
+	printf("%s cookie advanced from %d to %d\n", pp(), $entry->prev_cookie, $entry->cookie)
+}
+probe module("nfsv4").statement("nfs4_decode_dirent@fs/nfs/nfs4xdr.c:7372") {
+	printf("%s decoded new cookie %d\n", pp(), $entry->cookie)
+}
+probe module("nfsv4").statement("nfs4_decode_dirent@fs/nfs/nfs4xdr.c:7375") {
+	if ($p == 0)
+		printf("%s decoding entry->len (%d)\n", pp(), $entry->len)
+	else {
+		fname = kernel_string($entry->name)
+		if (strlen(fname) != $entry->len) {
+			printf("\texpected to read directory entry name of %d bytes, but got %d bytes\n",
+				$entry->len, strlen(fname))
+			printf("\tname is '%s'\n", fname)
+		} else {
+			printf("%s okay, decoded dentry name '%s'\n", pp(), kernel_string($entry->name))
+		}
+	}
+}
+probe module("nfsv4").function("nfs4_decode_dirent").callee("decode_attr_bitmap").return {
+	if ($return < 0)
+		printf("in decode_attr_bitmap, called from nfs4_decode_dirent, returning %d\n", $return)
+}
+
+#probe module("nfsv4").function("nfs4_decode_dirent").callee("decode_attr_length").return {
+#	if ($return < 0)
+#		printf("in decode_attr_length, called from nfs4_decode_dirent, returning %d\n", $return)
+#}
+probe module("nfsv4").function("nfs4_decode_dirent").callee("decode_getfattr_attrs").return {
+	if ($return < 0)
+		printf("in decode_getfattr_attrs, called from nfs4_decode_dirent, returning %d\n", $return)
+}
+
+
+
+
+probe module("nfsv4").function("nfs4_decode_dirent").return {
+	if ($return)
+		printf("returning from %s: %d\n", ppfunc(), $return)
+}
+
+
+probe module("nfsd").function("nfsd4_encode_readdir") {
+	printf("%s:  rd_cookie=%d, rd_dircount=%d, rd_maxcount=%d, cookie_offset=%d\n", ppfunc(),
+		$readdir->rd_cookie, $readdir->rd_dircount, $readdir->rd_maxcount, $readdir->cookie_offset)
+	$readdir->rd_maxcount = $readdir->rd_maxcount + 136
+	printf("\n")
+}
+
+
+probe module("sunrpc").function("xs_tcp_read_common@net/sunrpc/xprtsock.c:1288") {
+	printf("%s: truncated\n", pp())
+}
+

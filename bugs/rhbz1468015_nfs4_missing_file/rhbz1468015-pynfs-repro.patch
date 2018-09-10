@@ -1,0 +1,50 @@
+diff --git a/nfs4.0/nfs4server.py b/nfs4.0/nfs4server.py
+index bd848ca..377d867 100755
+--- a/nfs4.0/nfs4server.py
++++ b/nfs4.0/nfs4server.py
+@@ -637,6 +637,8 @@ class NFS4Server(rpc.RPCServer):
+ 
+     def op_readdir(self, op):
+         # We ignore dircount hint
++        if op.opreaddir.cookie == 102:
++            op.opreaddir.maxcount = 32904
+         print "  CURRENT FILEHANDLE %s" % repr(self.curr_fh)
+         print "  COOKIEVERF: %s, %s" % ( repr(op.opreaddir.cookieverf), repr(op.opreaddir.cookie))
+         print "  DIRCOUNT: %d MAXCOUNT: %d" % ( op.opreaddir.dircount, op.opreaddir.maxcount)
+@@ -960,6 +962,36 @@ def startup(host, port):
+         pass
+     print "Python NFSv4 Server, (c) CITI, Regents of the University of Michigan"
+     print "Starting Server, root handle: %s" % rootfh 
++
++    rootfh.create("subdir", createtype4(NF4DIR))
++    subdir = rootfh.dirent["subdir"]
++
++    fileid_base = 123456L
++    min_filesize = 50000L
++    max_filesize = 700000L
++    owner_string = "username@EXAMPLE.COM"
++    owner_group_string = "CORP-SERVER-RANDOM-DATA-CREATION-GROUP-BUY-MOR-DISK@EXAMPLE.COM"
++
++    for i in range(300):
++        fname = "test_file_%035d" % (i)
++        subdir.create(fname, createtype4(NF4REG))
++        finfo = subdir.dirent[fname]
++        finfo.fattr4_fileid = fileid_base + i
++        finfo.fattr4_size = random.randint(min_filesize, max_filesize)
++        finfo.fattr4_owner = owner_string
++        finfo.fattr4_owner_group = owner_group_string
++        finfo.fattr4_mode = 0775
++
++        # from 'converttime()' in nfs4state.py
++        now = time.time()
++        now_time = nfstime4(int(now), (now-int(now)) * 1000000000)
++
++        finfo.fattr4_time_modify = now_time
++        finfo.fattr4_time_access = now_time
++        finfo.fattr4_time_metadata = now_time
++
++        server.fhcache[finfo.handle] = finfo
++
+     server.run()
+     try:
+         server.unregister()
