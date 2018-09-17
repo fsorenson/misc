@@ -1,0 +1,55 @@
+#!/bin/bash
+
+cleanup_dir () {
+	# quick checks to (hopefully) determine we're in a sosreport directory
+	for d in sos_commands sos_logs sos_reports ; do
+		[[ -d ./$d ]] || {
+			echo "unable to find directory $d"
+			return
+		}
+	done
+	for f in uname uptime ; do
+		[[ -e ./$f ]] || {
+			echo "Unable to find file $f"
+			return
+		}
+	done
+
+	lsof_path="$(readlink -f lsof)"
+
+	if [[ -f $lsof_path ]] ; then
+
+		sed -e "
+s/^lsof: avoiding \(stat\|readlink\)(.\+): -b was specified.$//g
+s/^lsof: WARNING: can't stat() .\+ file system .\+//g
+s/^      Output information may be incomplete.//g
+s/ (\(stat\|readlink\): \(No such file or directory\|Resource temporarily unavailable\))$//g
+s/ lstat: \(No such file or directory\|Resource temporarily unavailable\))$//g
+/^$/d
+" "$lsof_path" > /tmp/lsof_clean && mv /tmp/lsof_clean "$lsof_path"
+
+#		egrep -wv "^lsof: avoiding readlink|^lsof: avoiding stat|^lsof: WARNING: can't stat|^      Output information may be incomplete." "$lsof_path" > /tmp/lsof_clean && mv /tmp/lsof_clean "$lsof_path"
+#		sed -i -e s/'lstat: No such file or directory)'//g -e s/'lstat: Resource temporarily unavailable)'//g -e s/'(stat: Resource temporarily unavailable)'//g -e s/'(stat: No such file or directory)'//g "$lsof_path"
+	fi
+
+	sudo chown -R $USER .
+	sudo find . -type d -exec chmod a+x,u+rwx {} +
+	sudo find . -type f -exec chmod a+r {} +
+
+	# useless ultra-verbose log
+	[[ -f sos_commands/logs/journalctl_--no-pager_--all_--boot_--output_verbose ]] && rm -f sos_commands/logs/journalctl_--no-pager_--all_--boot_--output_verbose
+}
+
+if [[ "$#" -eq 0  ]] ; then
+	cleanup_dir
+
+else
+	while [ "$1" != "" ]; do
+		pushd $1 >/dev/null
+		cleanup_dir
+		popd >/dev/null
+		shift
+	done
+fi
+
+
