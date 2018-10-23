@@ -13,6 +13,7 @@
 #include <netdb.h>
 #include <string.h>
 #include <signal.h>
+#include <poll.h>
 
 static char sendbuf[]  = {0x80, 0x00, 0x00, 0x3c, 0x49, 0x1f, 0xcc, 0x7d, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x01, 0x86, 0xa0, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x86, 0xa0, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
 
@@ -50,6 +51,7 @@ int main(int argc, char *argv[]) {
 	int split = SEND_BUF_LEN;
 	struct sigaction sa;
 	unsigned long counter = 0;
+	struct pollfd pfd[1];
 
 	if (argc == 3) {
 		host = argv[1];
@@ -82,6 +84,9 @@ int main(int argc, char *argv[]) {
 		error_exit_fail("calling connect\n");
 	freeaddrinfo(res);
 
+	pfd[0].fd = fd;
+	pfd[0].events = POLLIN;
+
 	while (counter++ < STOP_COUNT) {
 		debug("%lu: ", counter);
 		if ((ret = send(fd, sendbuf, split, FIRST_SEND_FLAGS)) != split)
@@ -94,9 +99,15 @@ int main(int argc, char *argv[]) {
 			debug("sent %d bytes...  ", ret);
 		}
 
-		if ((ret = recv(fd, recvbuf, RECV_BUF_LEN, 0)) == -1)
-			error_exit_fail("calling recv\n");
-		debug("received %d bytes\n", ret);
+		pfd[0].revents = 0;
+		ret = poll(pfd, 1, -1);
+		if (ret <= 0)
+			error_exit_fail("waiting for reply\n");
+		if (pfd[0].revents & POLLIN) {
+			if ((ret = recv(fd, recvbuf, RECV_BUF_LEN, 0)) == -1)
+				error_exit_fail("calling recv\n");
+			debug("received %d bytes\n", ret);
+		}
 	}
 	debug("completed %d rpc calls\n", STOP_COUNT);
 
