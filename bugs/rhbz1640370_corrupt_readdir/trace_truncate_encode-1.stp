@@ -1,0 +1,341 @@
+function min(x, y) { return (x < y ? x : y) }
+function max(x, y) { return (x > y ? x : y) }
+
+function tstamp:string(epochns:long) %{ /* pure */
+	u64 nsec = STAP_ARG_epochns;
+	time_t epochsec = nsec / 1000000000;
+	struct tm gmt;
+
+	nsec = nsec % 1000000000;
+
+	time_to_tm(epochsec, -tz_gmtoff, &gmt);
+	snprintf(STAP_RETVALUE, MAXSTRINGLEN, "%04ld-%02d-%02d %02d:%02d:%02d.%09llu",
+		gmt.tm_year + 1900, gmt.tm_mon + 1, gmt.tm_mday,
+		gmt.tm_hour, gmt.tm_min, gmt.tm_sec, nsec);
+%}
+
+%{
+#include <linux/kernel.h>
+#include <linux/ctype.h>
+%}
+
+function hex_asc:string(c) %{ /* pure */
+	char ret[3] = "\0\0\0";
+	char c = (char)(STAP_ARG_c & 0xff);
+
+	ret[0] = hex_asc_hi(c);
+	ret[1] = hex_asc_lo(c);
+	snprintf(STAP_RETVALUE, 3, ret)
+%}
+
+function isprint(c) %{
+	char c = (char)(STAP_ARG_c & 0xff);
+	STAP_RETVALUE = isprint(c);
+%}
+function char_str(c) %{ /* pure */
+	char ret[2] = { (char)( STAP_ARG_c & 0xff), '\0'};
+	snprintf(STAP_RETVALUE, 2, ret);
+%}
+
+function make_hexdump_char_string:string(ptr, len) %{
+	char ret[17];
+	char *ptr = (char *)STAP_ARG_ptr;
+	int len = (int)STAP_ARG_len;
+	char ch;
+	int i;
+
+	for (i = 0 ; i < len ; i++) {
+		ch = ptr[i];
+		ret[i] = (isascii(ch) && isprint(ch)) ? ch : '.';
+	}
+	ret[len] = '\0';
+	snprintf(STAP_RETVALUE, 16, ret);
+%}
+
+function hexdump:string(addr:long, len:long) {
+	ret = ""
+
+	offset = 0
+	while (offset < len) {
+		left = ""
+		right = ""
+		str = ""
+
+		c_this_line = min(len - offset, 16)
+
+#		c1 = min(len - offset, 8)
+		for (i = 0 ; i < min(c_this_line, 8) ; i++ ) {
+			if (i < c_this_line) {
+				c = kernel_char(addr + offset + i) & 0xff
+				left .= sprintf("%02x ", c)
+#				if (isprint(c))
+#					str .= char_str(c)
+#				else
+#					str .= "."
+			}
+		}
+#		if (c_this_line < 8) {
+#			left .= sprintf("%*s", (8 - c_this_line) * 3, "")
+#		}
+
+
+		for (i = 8 ; i < min(c_this_line, 16) ; i++ ) {
+			if (i < c_this_line) {
+				c = kernel_char(addr + offset + i) & 0xff
+				right .= sprintf("%02x ", c)
+#				if (isprint(c))
+#					str .= char_str(c)
+#				else
+#					str .= "."
+			}
+		}
+#		if (c_this_line < 16) {
+#			right .= sprintf("%*s", max(16 - c_this_line, 8) * 3, "")
+#		}
+
+		str = make_hexdump_char_string(addr + offset, c_this_line)
+
+		ret .= sprintf("%016x: %24s %24s  [%s]\n", addr + offset, left, right, str)
+
+		offset += c_this_line
+	}
+	return ret
+}
+
+
+
+/*
+# stap -L 'module("nfsd").statement("nfsd4_encode_dirent@fs/nfsd/nfs4xdr.c+42")'
+# module("nfsd").statement("nfsd4_encode_dirent@fs/nfsd/nfs4xdr.c:3057") $ccdv:void* $name:char const* $namlen:int $offset:loff_t $ino:u64 $d_type:unsigned int $ccd:struct readdir_cd* $cd:struct nfsd4_readdir* $xdr:struct xdr_stream* $start_offset:int $wire_offset:__be64
+probe module("nfsd").statement("nfsd4_encode_dirent@fs/nfsd/nfs4xdr.c+42") {
+	p_remain = $xdr->end - $xdr->p
+	printf("return nfserr_toosmall from nfsd4_encode_dirent_fattr(), start_offset=%d, xdr->buf->len=%d, end-p=%d\n", $start_offset, $xdr->buf->len, p_remain)
+	printf("\tccd: %s\n", $ccd$)
+	printf("\tcd: %s\n", $cd$)
+	printf("\txdr: %s\n", $xdr$)
+	printf("\txdr->scratch: %s\n", $xdr->scratch$)
+	printf("\txdr_buf: %s\n", $xdr->buf$)
+}
+*/
+
+# module("nfsd").function("nfsd4_encode_dirent@fs/nfsd/nfs4xdr.c:3015") $ccdv:void* $name:char const* $namlen:int $offset:loff_t $ino:u64 $d_type:unsigned int $wire_offset:__be64
+probe module("nfsd").function("nfsd4_encode_dirent") {
+	ccd = &@cast($ccdv, "struct readdir_cd")
+	cd = &@module_container_of(ccd, "nfsd", "struct nfsd4_readdir", common)
+	xdr = cd->xdr
+	xdr_buf = xdr->buf
+
+	printf("%s: %s(%d) %s(%s)\n", tstamp(gettimeofday_ns()), execname(), pid(), ppfunc(), kernel_string_n($name, $namlen))
+	printf("\tcd->rd_dircount=%d, cd->rd_maxcount=%d, cd->cookie_offset=%d\n", cd->rd_dircount, cd->rd_maxcount, cd->cookie_offset)
+	printf("\txdr->p=%p, xdr->page_ptr=%p, xdr_buf->len=%d\n", xdr->p, xdr->page_ptr, xdr_buf->len)
+/*
+	printf("\tcd: %s\n", (cd)$)
+	printf("\txdr: %s\n", (xdr)$)
+	printf("\txdr_buf: %s\n", (xdr_buf)$)
+	print_backtrace()
+
+
+2018-10-28 23:04:24.519613338: nfsd(1051) nfsd4_encode_dirent(test_file_00015_00000000000000000000000000000000000)
+
+cd->rd_dircount=7072, cd->rd_maxcount=29028, cd->cookie_offset=3452
+xdr->p=0xffff9fe467e7ee7c, xdr->page_ptr=0xffff9fe46a8
+xdr_buf->len=
+
+
+.rd_rqstp=0xffff9fe46a882148, .rd_fhp=0xffff9fe46a8e91b0, .common={...}, .xdr=0xffff9fe46a8e9148, 
+xdr: {.p=0xffff9fe467e7ee7c, .buf=0xffff9fe46a882328, .end=0xffff9fe467e7f000, .iov=0xffff9fe46a882328, .scratch={...}, .page_ptr=0xffff9fe46a8
+*/
+
+
+	printf("\n")
+
+
+
+}
+probe module("nfsd").function("nfsd4_encode_dirent").return {
+	ccd = &@cast(@entry($ccdv), "struct readdir_cd")
+	cd = &@module_container_of(ccd, "nfsd", "struct nfsd4_readdir", common)
+	xdr = cd->xdr
+	xdr_buf = xdr->buf
+	printf("%s: %s(%d) %s(%s).return\n", tstamp(gettimeofday_ns()), execname(), pid(), ppfunc(), @entry(kernel_string_n($name, $namlen)))
+
+	printf("\tcd->rd_dircount=%d, cd->rd_maxcount=%d, cd->cookie_offset=%d\n", cd->rd_dircount, cd->rd_maxcount, cd->cookie_offset)
+	printf("\txdr->p=%p, xdr->page_ptr=%p, xdr_buf->len=%d\n", xdr->p, xdr->page_ptr, xdr_buf->len)
+/*
+	printf("\tcd: %s\n", (cd)$)
+	printf("\txdr: %s\n", (xdr)$)
+	printf("\txdr_buf: %s\n", (xdr_buf)$)
+*/
+
+#	print_backtrace()
+	printf("\n\n")
+}
+
+
+global encode_dirent_names[30]
+probe module("nfsd").function("nfsd4_encode_dirent") {
+	encode_dirent_names[pid()] = kernel_string_n($name, $namlen)
+}
+
+# stap -L 'module("nfsd").statement("nfsd4_encode_dirent@fs/nfsd/nfs4xdr.c+45")'
+# module("nfsd").statement("nfsd4_encode_dirent@fs/nfsd/nfs4xdr.c:3060") $ccdv:void* $name:char const* $namlen:int $offset:loff_t $ino:u64 $d_type:unsigned int $ccd:struct readdir_cd* $cd:struct nfsd4_readdir* $xdr:struct xdr_stream* $start_offset:int $cookie_offset:int $wire_offset:__be64
+#probe module("nfsd").statement("nfsd4_encode_dirent@fs/nfsd/nfs4xdr.c+45") {
+/*
+probe module("nfsd").statement("nfsd4_encode_dirent@fs/nfsd/nfs4xdr.c:2953") {
+	p_remain = $xdr->end - $xdr->p
+	filename = encode_dirent_names[pid()]
+	delete encode_dirent_names[pid()]
+	printf("%s: return nfserr_noent from nfsd4_encode_dirent_fattr(%s)\n", tstamp(gettimeofday_ns()), filename)
+	printf("\tstart_offset=%d, wire_offset: %x, cookie_offset=%d, xdr->buf->len=%d, end-p=%d\n",
+		$start_offset, $wire_offset, $cookie_offset, $xdr->buf->len, p_remain)
+	printf("\tccd: %s\n", $ccd$)
+	printf("\tcd: %s\n", $cd$)
+	printf("\txdr: %s\n", $xdr$)
+	printf("\txdr->scratch: %s\n", $xdr->scratch$)
+	printf("\txdr_buf: %s\n", $xdr->buf$)
+	printf("\n")
+}
+*/
+
+/*
+3052         nfserr = nfsd4_encode_dirent_fattr(xdr, cd, name, namlen);
+3053         switch (nfserr) {
+3054         case nfs_ok:
+	3055                 break;
+3056         case nfserr_resource:
+	3057                 nfserr = nfserr_toosmall;
+3058                 goto fail;
+3059         case nfserr_noent:
+	3060                 xdr_truncate_encode(xdr, start_offset);
+3061                 goto skip_entry;
+3062         default:
+*/
+
+
+%{
+#include <uapi/linux/nfs.h>
+%}
+@define nfserr_resource %( %{ cpu_to_be32(NFSERR_RESOURCE) %} %)
+@define nfserr_noent %( %{ cpu_to_be32(NFSERR_NOENT) %} %)
+
+@define bswap64(i) %( %{ be64_to_cpu(@i) %} %)
+
+
+
+/*
+probe module("sunrpc").function("xdr_truncate_encode"), module("sunrpc").function("xdr_truncate_encode").callees {
+	dirent_name = encode_dirent_names[pid()]
+
+	printf("%s: %s(%d) %s('%s' - %s)\n",
+		tstamp(gettimeofday_ns()), execname(), pid(), ppfunc(), dirent_name, $$parms$$)
+}
+*/
+
+# module("sunrpc").function("xdr_truncate_encode@net/sunrpc/xdr.c:602") $xdr:struct xdr_stream* $len:size_t
+probe module("sunrpc").function("xdr_truncate_encode") {
+#	if (!$len == 3448)
+#		next
+	dirent_name = encode_dirent_names[pid()]
+
+	xdr_buf = $xdr->buf
+	tail = &@cast(xdr_buf->tail, "struct kvec")
+	fraglen = min(xdr_buf->len - $len, tail->iov_len)
+
+
+	printf("%s: %s(%d) %s('%s' - len=%d)\n",
+		tstamp(gettimeofday_ns()), execname(), pid(), "xdr_truncate_encode", dirent_name, $len)
+	printf("\txdr->p=0x%016x, xdr->page_ptr=%p, xdr_buf->len=%d\n", $xdr->p, $xdr->page_ptr, xdr_buf->len)
+	print("fraglen: %d\n", fraglen)
+
+/*
+	printf("%s: %s(%d) %s('%s' - xdr: %s, len=%d)\n\txdr_buf: %s\n",
+		tstamp(gettimeofday_ns()), execname(), pid(), "xdr_truncate_encode", dirent_name, $xdr$$, $len, $xdr->buf$$)
+
+
+	printf("\tpages:\n")
+	printf("\t\t0x%016x  0x%016x\n", $xdr->buf->pages[0], $xdr->buf->pages[1])
+	printf("\t\t0x%016x  0x%016x\n", $xdr->buf->pages[2], $xdr->buf->pages[3])
+	printf("\t\t0x%016x  0x%016x\n", $xdr->buf->pages[4], $xdr->buf->pages[5])
+	printf("\t\t0x%016x  0x%016x\n", $xdr->buf->pages[6], $xdr->buf->pages[7])
+*/
+//	print_backtrace()
+
+
+#	printf("page_ptr: %10M\n", $xdr->page_ptr)
+
+#	printf("hexdump:\n%s", hexdump($xdr->page_ptr, 32))
+	printf("\n")
+}
+
+/*
+probe module("sunrpc").function("xdr_commit_encode") {
+	dirent_name = encode_dirent_names[pid()]
+
+	printf("%s: %s(%d) %s(%s) - xdr: %s\n",
+		tstamp(gettimeofday_ns()), execname(), pid(), ppfunc(), dirent_name, $xdr$)
+}
+*/
+
+/*
+probe module("sunrpc").function("xdr_truncate_encode").callees.return {
+	dirent_name = encode_dirent_names[pid()]
+
+	printf("%s: %s(%d) %s() returns %s\n",
+		tstamp(gettimeofday_ns()), execname(), tid(), ppfunc(), dirent_name, $return$)
+}
+*/
+
+
+#probe module("sunrpc").function("xdr_truncate_encode").return, module("sunrpc").function("xdr_commit_encode").return {
+probe module("sunrpc").function("xdr_truncate_encode").return {
+#	if (! @entry($len) == 3448)
+#		next
+	dirent_name = encode_dirent_names[pid()]
+	xdr = &@cast(@entry($xdr), "struct xdr_stream")
+	xdrs = @cast(@entry($xdr), "struct xdr_stream")$$
+	xdr_buf = &@cast(@entry($xdr->buf), "struct xdr_buf")
+	xdrbs = @cast(xdr_buf, "struct xdr_buf")$$
+
+#	parms = @entry(sprintf("%s", $$parms$$))
+#	retstr = @choose_defined($return$, "")
+#	printf("%s: %s(%d) %s(%s - %s) returns %s\n",
+#		tstamp(gettimeofday_ns()), execname(), pid(), ppfunc(), dirent_name, parms, retstr)
+	xdrbp = &@cast(xdr_buf, "struct xdr_buf")
+#	pages = &@cast(xdr_buf, "struct xdr_buf")->pages
+#	pages = xdrbp->pages
+
+	page_ptr = xdr->page_ptr
+	printf("%s: %s(%d) %s(%s).return\n",
+		tstamp(gettimeofday_ns()), execname(), pid(), "xdr_truncate_encode", dirent_name)
+	printf("\txdr->p=%p, xdr->page_ptr=%p, xdr_buf->len=%d\n", xdr->p, xdr->page_ptr, xdr_buf->len)
+
+
+	entry_page_ptr = @entry($xdr->page_ptr)
+	if (entry_page_ptr != page_ptr) {
+		if ((@entry($len) / 4096) == (xdr_buf->len / 4096)) {
+			printf("TRYING TO FIX UP PAGE_PTR\n")
+			xdr->page_ptr = entry_page_ptr
+		}
+	}
+
+
+
+/*
+	printf("%s: %s(%d) %s(%s).return - xdr: %s\n\txdrb: %s\n",
+		tstamp(gettimeofday_ns()), execname(), pid(), "xdr_truncate_encode", dirent_name, xdrs, xdrbs)
+
+
+	printf("\tpages:\n")
+	printf("\t\t0x%016x  0x%016x\n", xdrbp->pages[0], @cast(xdrb, "struct xdr_buf")->pages[1])
+	printf("\t\t0x%016x  0x%016x\n", @cast(xdrb, "struct xdr_buf")->pages[2], @cast(xdrb, "struct xdr_buf")->pages[3])
+	printf("\t\t0x%016x  0x%016x\n", @cast(xdrb, "struct xdr_buf")->pages[4], @cast(xdrb, "struct xdr_buf")->pages[5])
+	printf("\t\t0x%016x  0x%016x\n", @cast(xdrb, "struct xdr_buf")->pages[6], @cast(xdrb, "struct xdr_buf")->pages[7])
+*/
+
+#	printf("page_ptr: %10M\n", xdr->page_ptr)
+#	printf("hexdump:\n%s", hexdump(xdr->page_ptr, 32))
+
+	printf("\n")
+
+}
+

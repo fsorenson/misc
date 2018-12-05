@@ -1,0 +1,145 @@
+you will need just a single nfs client; populate a directory like this:
+
+# mkdir $nfsmnt/dirent_test
+# cd $nfsmnt/dirent_test
+# for i in {1..5000} ; do touch $(printf "testfile_%04d" $i) ; done
+
+verify we created files:
+# echo 3 >/proc/sys/vm/drop_caches ; find | wc -l
+5001
+
+
+on the nfs server system, start systemtap:
+# stap -tvg --suppress-time-limits -d kernel -d nfsd -d sunrpc /tmp/encode_dirent_fattr_repro.stp
+Pass 1: parsed user script and 468 library scripts using 238032virt/40076res/3436shr/36704data kb, in 580usr/50sys/620real ms.
+Pass 2: analyzed script: 2 probes, 19 functions, 6 embeds, 5 globals using 279296virt/82564res/4700shr/77968data kb, in 950usr/310sys/1261real ms.
+Pass 3: using cached /root/.systemtap/cache/7d/stap_7d06c33ed05d4b0407b6bcdfcf88c1d1_13187.c
+Pass 4: using cached /root/.systemtap/cache/7d/stap_7d06c33ed05d4b0407b6bcdfcf88c1d1_13187.ko
+Pass 5: starting run.
+
+start a packet capture:
+# tshark -w /tmp/trace.pcap tcp port 2049
+Capturing on 'eth0'
+
+
+run a single find command:
+# echo 3 > /proc/sys/vm/drop_caches ; find >/tmp/find.out
+
+
+the systemtap will output a message each time it returns an error:
+Wed Dec  5 13:29:57 2018 CST: forcing nfsd4_encode_dirent_fattr error for 'testfile_0729'
+Wed Dec  5 13:29:57 2018 CST: forcing nfsd4_encode_dirent_fattr error for 'testfile_1149'
+Wed Dec  5 13:29:57 2018 CST: forcing nfsd4_encode_dirent_fattr error for 'testfile_1260'
+Wed Dec  5 13:29:57 2018 CST: forcing nfsd4_encode_dirent_fattr error for 'testfile_1780'
+Wed Dec  5 13:29:57 2018 CST: forcing nfsd4_encode_dirent_fattr error for 'testfile_1825'
+Wed Dec  5 13:29:57 2018 CST: forcing nfsd4_encode_dirent_fattr error for 'testfile_1936'
+Wed Dec  5 13:29:57 2018 CST: forcing nfsd4_encode_dirent_fattr error for 'testfile_2047'
+Wed Dec  5 13:29:57 2018 CST: forcing nfsd4_encode_dirent_fattr error for 'testfile_2158'
+Wed Dec  5 13:29:58 2018 CST: forcing nfsd4_encode_dirent_fattr error for 'testfile_2269'
+Wed Dec  5 13:29:58 2018 CST: forcing nfsd4_encode_dirent_fattr error for 'testfile_2789'
+Wed Dec  5 13:29:58 2018 CST: forcing nfsd4_encode_dirent_fattr error for 'testfile_2834'
+Wed Dec  5 13:29:58 2018 CST: forcing nfsd4_encode_dirent_fattr error for 'testfile_2945'
+Wed Dec  5 13:29:58 2018 CST: forcing nfsd4_encode_dirent_fattr error for 'testfile_3056'
+Wed Dec  5 13:29:58 2018 CST: forcing nfsd4_encode_dirent_fattr error for 'testfile_3167'
+Wed Dec  5 13:29:58 2018 CST: forcing nfsd4_encode_dirent_fattr error for 'testfile_3278'
+Wed Dec  5 13:29:58 2018 CST: forcing nfsd4_encode_dirent_fattr error for 'testfile_3798'
+Wed Dec  5 13:29:58 2018 CST: forcing nfsd4_encode_dirent_fattr error for 'testfile_3843'
+Wed Dec  5 13:29:58 2018 CST: forcing nfsd4_encode_dirent_fattr error for 'testfile_3954'
+Wed Dec  5 13:29:58 2018 CST: forcing nfsd4_encode_dirent_fattr error for 'testfile_4065'
+Wed Dec  5 13:29:58 2018 CST: forcing nfsd4_encode_dirent_fattr error for 'testfile_4176'
+Wed Dec  5 13:29:58 2018 CST: forcing nfsd4_encode_dirent_fattr error for 'testfile_4288'
+
+
+the 'find' command may output an error referencing a bogus filename, depending on where the directory entries get placed in the xdr pages:
+
+# echo 3 > /proc/sys/vm/drop_caches ; find >/tmp/find.out
+find: ‘./testfile_435A’: No such file or directory
+
+
+stop the packet capture and systemtap, and check the packet capture for errors:
+
+# tshark -r /tmp/trace.pcap malformed
+Running as user "root" and group "root". This could be dangerous.
+ 49 0.196635756 192.168.122.60 -> 192.168.122.61 NFS 32882 V4 Reply (Call In 48)[Malformed Packet]
+ 82 0.484696159 192.168.122.60 -> 192.168.122.61 NFS 32882 V4 Reply (Call In 81)[Malformed Packet]
+115 0.748862758 192.168.122.60 -> 192.168.122.61 NFS 32882 V4 Reply (Call In 114)[Malformed Packet]
+148 0.996898739 192.168.122.60 -> 192.168.122.61 NFS 32882 V4 Reply (Call In 147)[Malformed Packet]
+
+
+NOTE: the following is probably overkill, and isn't necessary to demonstrating the issue exists or has been resolved.
+
+I'm including it here because I'm an engineer, and unnecessary analysis is a hobby.
+
+
+check what entries in the directory listing were found to be malformed (lists the last two entries returned, prior to the entry found to be malformed:
+# tshark -Tfields -E header=n -e nfs.name -r /tmp/trace.pcap malformed tshark -Tfields -E header=n -e nfs.name -r /tmp/trace.pcap malformed
+
+Running as user "root" and group "root". This could be dangerous.
+testfile_1289 testfile_129f
+testfile_2310 testfile_231f
+testfile_3331 testfile_333
+testfile_4353 testfile_435A
+
+(note that the final entry of each is actually bogus itself; this is because the final byte of these filenames got placed across the page boundary, and wasn't actually detected as malformed; this won't always occur, though)
+
+
+we can see the missed entries with an ugly awk script:
+
+awk '{
+        if (NR > 1){
+                cur=substr($1,length($1) - 3, 4)
+                check=sprintf("./testfile_%04d", cur)
+                if ($1 != check) {
+                        bogus_count++
+                        printf("possibly bogus filename: %s\n", $1)
+                } else {
+                        while (last + 1 < cur) {
+                                missing_count++
+                                printf("missing: testfile_%04d\n", last + 1)
+                                last ++
+                        }
+                        valid_count++
+                        last = cur
+
+                }
+        }
+}
+END{
+        if (last < 5000) {
+                new_missing = 5000 - last
+                printf("missing %d - 5000 (%d)\n", last + 1, new_missing)
+                missing_count += new_missing
+        }
+        printf("total: %d, valid: %d, missing: %d, bogus: %d\n",
+                valid_count + missing_count + bogus_count, valid_count, missing_count, bogus_count)
+}' /tmp/find.out
+
+missing: testfile_1260
+missing: testfile_2269
+missing: testfile_3278
+missing: testfile_4176
+missing: testfile_4288
+possibly bogus filename: ./testfile_435A
+missing 4354 - 5000 (647)
+total: 5001, valid: 4348, missing: 652, bogus: 1
+
+(this matches up with the 4350 lines in the file; we have 4348 valid, one bogus, and '.')
+
+
+confirm these are missing:
+# egrep '1260|2269|3278|4176|4288|4354' /tmp/find.out
+
+we do have the bogus entry (which we also got the error message for):
+# egrep '435A' /tmp/find.out
+./testfile_435A
+
+and we can see the directory listing got cut off before reaching 5000:
+# tail -5 /tmp/find.out
+./testfile_4350
+./testfile_4351
+./testfile_4352
+./testfile_4353
+./testfile_435A
+
+
+so due to the bug, we have 652 missing and one bogus entry

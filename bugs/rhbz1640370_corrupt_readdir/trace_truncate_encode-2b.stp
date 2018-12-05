@@ -1,0 +1,62 @@
+function tstamp:string(epochns:long) %{ /* pure */
+	u64 nsec = STAP_ARG_epochns;
+	time_t epochsec = nsec / 1000000000;
+	struct tm gmt;
+
+	nsec = nsec % 1000000000;
+
+	time_to_tm(epochsec, -tz_gmtoff, &gmt);
+	snprintf(STAP_RETVALUE, MAXSTRINGLEN, "%04ld-%02d-%02d %02d:%02d:%02d.%09llu",
+		gmt.tm_year + 1900, gmt.tm_mon + 1, gmt.tm_mday,
+		gmt.tm_hour, gmt.tm_min, gmt.tm_sec, nsec);
+%}
+
+
+global encode_dirent_names[30]
+global dircounts[30]
+global maxcounts[30]
+
+# module("nfsd").function("nfsd4_encode_dirent@fs/nfsd/nfs4xdr.c:3015") $ccdv:void* $name:char const* $namlen:int $offset:loff_t $ino:u64 $d_type:unsigned int $wire_offset:__be64
+probe module("nfsd").function("nfsd4_encode_dirent") {
+	encode_dirent_names[pid()] = substr(kernel_string_n($name, $namlen), 0, $namlen)
+
+	ccd = &@cast($ccdv, "struct readdir_cd")
+	cd = &@module_container_of(ccd, "nfsd", "struct nfsd4_readdir", common)
+
+	dircounts[pid()] = cd->rd_dircount
+	maxcounts[pid()] = cd->rd_maxcount
+}
+
+# module("sunrpc").function("xdr_truncate_encode@net/sunrpc/xdr.c:602") $xdr:struct xdr_stream* $len:size_t
+# probe module("sunrpc").function("xdr_truncate_encode").return, module("sunrpc").function("xdr_commit_encode").return {
+probe module("sunrpc").function("xdr_truncate_encode").return {
+	dirent_name = encode_dirent_names[pid()]
+	original_len = @entry($xdr->buf->len)
+	trunc_len = @entry($len)
+
+	entry_page_ptr = @entry($xdr->page_ptr)
+	xdr = &@cast(@entry($xdr), "struct xdr_stream")
+
+	if (original_len > dircounts[pid()] || original_len > maxcounts[pid()]) {
+#		printf("%s: original_len=%d, trunc_len=%d, dircount=%d, maxcount=%d\n", tstamp(gettimeofday_ns()),
+#			original_len, trunc_len, dircounts[pid()], maxcounts[pid()])
+		next
+	}
+
+	printf("%s: truncated from %d to %d for missing '%s'", tstamp(gettimeofday_ns()), original_len, trunc_len, dirent_name)
+	if (entry_page_ptr != xdr->page_ptr && (trunc_len / 4096) == (xdr->buf->len / 4096)) {
+		if (trunc_len / 4096 == 0) {
+			printf(", fixing up page_ptr\n")
+			xdr->page_ptr = entry_page_ptr
+		} else
+			printf(", page_ptr differs, but not adjusting\n")
+	} else
+		printf("\n")
+}
+
+# module("sunrpc").statement("xdr_truncate_encode@net/sunrpc/xdr.c:645") $xdr:struct xdr_stream* $len:size_t $buf:struct xdr_buf* $head:struct kvec* $tail:struct kvec* $fraglen:int
+probe module("sunrpc").statement("xdr_truncate_encode@net/sunrpc/xdr.c:645") {
+	printf("fraglen = %d\n", $fraglen)
+
+}
+

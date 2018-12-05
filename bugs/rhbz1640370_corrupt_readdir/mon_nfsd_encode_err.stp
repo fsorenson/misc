@@ -1,0 +1,181 @@
+function tstamp:string(epochns:long) %{ /* pure */
+	u64 nsec = STAP_ARG_epochns;
+	time_t epochsec = nsec / 1000000000;
+	struct tm gmt;
+
+	nsec = nsec % 1000000000;
+
+	time_to_tm(epochsec, -tz_gmtoff, &gmt);
+	snprintf(STAP_RETVALUE, MAXSTRINGLEN, "%04ld-%02d-%02d %02d:%02d:%02d.%09llu",
+		gmt.tm_year + 1900, gmt.tm_mon + 1, gmt.tm_mday,
+		gmt.tm_hour, gmt.tm_min, gmt.tm_sec, nsec);
+%}
+
+
+/*
+# stap -L 'module("nfsd").statement("nfsd4_encode_dirent@fs/nfsd/nfs4xdr.c+42")'
+# module("nfsd").statement("nfsd4_encode_dirent@fs/nfsd/nfs4xdr.c:3057") $ccdv:void* $name:char const* $namlen:int $offset:loff_t $ino:u64 $d_type:unsigned int $ccd:struct readdir_cd* $cd:struct nfsd4_readdir* $xdr:struct xdr_stream* $start_offset:int $wire_offset:__be64
+probe module("nfsd").statement("nfsd4_encode_dirent@fs/nfsd/nfs4xdr.c+42") {
+	p_remain = $xdr->end - $xdr->p
+	printf("return nfserr_toosmall from nfsd4_encode_dirent_fattr(), start_offset=%d, xdr->buf->len=%d, end-p=%d\n", $start_offset, $xdr->buf->len, p_remain)
+	printf("\tccd: %s\n", $ccd$)
+	printf("\tcd: %s\n", $cd$)
+	printf("\txdr: %s\n", $xdr$)
+	printf("\txdr->scratch: %s\n", $xdr->scratch$)
+	printf("\txdr_buf: %s\n", $xdr->buf$)
+}
+*/
+
+global encode_dirent_names[30]
+probe module("nfsd").function("nfsd4_encode_dirent") {
+	encode_dirent_names[pid()] = kernel_string_n($name, $namlen)
+}
+
+# stap -L 'module("nfsd").statement("nfsd4_encode_dirent@fs/nfsd/nfs4xdr.c+45")'
+# module("nfsd").statement("nfsd4_encode_dirent@fs/nfsd/nfs4xdr.c:3060") $ccdv:void* $name:char const* $namlen:int $offset:loff_t $ino:u64 $d_type:unsigned int $ccd:struct readdir_cd* $cd:struct nfsd4_readdir* $xdr:struct xdr_stream* $start_offset:int $cookie_offset:int $wire_offset:__be64
+#probe module("nfsd").statement("nfsd4_encode_dirent@fs/nfsd/nfs4xdr.c+45") {
+/*
+probe module("nfsd").statement("nfsd4_encode_dirent@fs/nfsd/nfs4xdr.c:2953") {
+	p_remain = $xdr->end - $xdr->p
+	filename = encode_dirent_names[pid()]
+	delete encode_dirent_names[pid()]
+	printf("%s: return nfserr_noent from nfsd4_encode_dirent_fattr(%s)\n", tstamp(gettimeofday_ns()), filename)
+	printf("\tstart_offset=%d, wire_offset: %x, cookie_offset=%d, xdr->buf->len=%d, end-p=%d\n",
+		$start_offset, $wire_offset, $cookie_offset, $xdr->buf->len, p_remain)
+	printf("\tccd: %s\n", $ccd$)
+	printf("\tcd: %s\n", $cd$)
+	printf("\txdr: %s\n", $xdr$)
+	printf("\txdr->scratch: %s\n", $xdr->scratch$)
+	printf("\txdr_buf: %s\n", $xdr->buf$)
+	printf("\n")
+}
+*/
+
+/*
+3052         nfserr = nfsd4_encode_dirent_fattr(xdr, cd, name, namlen);
+3053         switch (nfserr) {
+3054         case nfs_ok:
+	3055                 break;
+3056         case nfserr_resource:
+	3057                 nfserr = nfserr_toosmall;
+3058                 goto fail;
+3059         case nfserr_noent:
+	3060                 xdr_truncate_encode(xdr, start_offset);
+3061                 goto skip_entry;
+3062         default:
+*/
+
+
+%{
+#include <uapi/linux/nfs.h>
+%}
+@define nfserr_resource %( %{ cpu_to_be32(NFSERR_RESOURCE) %} %)
+@define nfserr_noent %( %{ cpu_to_be32(NFSERR_NOENT) %} %)
+
+@define bswap64(i) %( %{ be64_to_cpu(@i) %} %)
+
+
+#fs/nfsd/nfsd.h:
+##define	nfserr_resource		cpu_to_be32(NFSERR_RESOURCE)
+#include/uapi/linux/nfs.h:	NFSERR_RESOURCE = 10018,	/*       v4 */
+#10018
+
+#probe module("nfsd").statement("nfsd4_encode_dirent@fs/nfsd/nfs4xdr.c:3054") {
+
+/*
+Symbol xdr is multi-location:
+  Range 0xffffffffc06e6be2-0xffffffffc06e6e43: a variable in $r12 <<<<
+  Range 0xffffffffc06e6e4b-0xffffffffc06e6f7d: a variable in $r12
+, length 8.
+Symbol ccd is multi-location:
+  Range 0xffffffffc06e6be2-0xffffffffc06e6bea: a variable in $rdi
+  Range 0xffffffffc06e6bea-0xffffffffc06e6e41: a variable in $rbx <<<<
+
+
+*/
+probe kernel.statement(0xffffffffc06e6d6e).absolute {
+#	nfserr = u_register("rdi")
+	nfserr = u_register("r15")
+
+	if (nfserr == @nfserr_resource) {
+
+	} else if (nfserr == @nfserr_noent) {
+		xdr = &@cast(u_register("r12"), "struct xdr_stream", "sunrpc")
+		ccd = &@cast(u_register("rbx"), "struct readdir_cd", "nfsd")
+		cd = &@module_container_of(ccd, "nfsd", "struct nfsd4_readdir", common)
+/*
+Symbol wire_offset is a complex DWARF expression:
+     0: DW_OP_fbreg -88
+, length 8.
+*/
+		wire_offset = kernel_long(u_register("rbp") - 88)
+
+/*
+Symbol offset is multi-location:
+  Range 0xffffffffc06e6bb0-0xffffffffc06e6c0b: a variable in $rcx
+  Range 0xffffffffc06e6c0b-0xffffffffc06e6e4b: a complex DWARF expression:
+     0: DW_OP_GNU_entry_value
+       2: DW_OP_reg2 [$rcx]
+     3: DW_OP_stack_value
+*/
+		offset = 0
+
+/*
+Symbol cookie_offset is multi-location:
+  Range 0xffffffffc06e6c3c-0xffffffffc06e6c40: a variable in $rax
+  Range 0xffffffffc06e6c40-0xffffffffc06e6e21: a complex DWARF expression:
+     0: DW_OP_breg6 -80 [$rbp]
+*/
+		cookie_offset = kernel_long(u_register("rbp") - 80)
+/*
+Symbol start_offset is multi-location:
+  Range 0xffffffffc06e6bf0-0xffffffffc06e6c0b: a variable in $rax
+  Range 0xffffffffc06e6c0b-0xffffffffc06e6e4a: a complex DWARF expression:
+     0: DW_OP_breg6 -76 [$rbp]
+*/
+		start_offset = kernel_long(u_register("rbp") - 76)
+
+		p_remain = xdr->end - xdr->p
+		filename = encode_dirent_names[pid()]
+
+		delete encode_dirent_names[pid()]
+
+		printf("%s: return nfserr_noent from nfsd4_encode_dirent_fattr(%s)\n", tstamp(gettimeofday_ns()), filename)
+
+		printf("\tstart_offset=%d, offset=%d, wire_offset: %x, cookie_offset=%d, xdr->buf->len=%d, end-p=%d\n",
+			start_offset, offset, ntohll(wire_offset), cookie_offset, xdr->buf->len, p_remain)
+		printf("\tcd->rd_dircount=%d, ->rc_maxcount=%d, ->cookie_offset=%d\n",
+			cd->rd_dircount, cd->rd_maxcount, cd->cookie_offset)
+		printf("\txdr->buf->page_base=%d, ->page_len=%d, ->buflen=%d, ->len=%d\n",
+			xdr->buf->page_base, xdr->buf->page_len, xdr->buf->buflen, xdr->buf->len)
+
+
+
+#		printf("\tccd: %s\n", $ccd$)
+#		printf("\tcd: %s\n", $cd$)
+#		printf("\txdr: %s\n", $xdr$)
+#		printf("\txdr->scratch: %s\n", $xdr->scratch$)
+#		printf("\txdr->buf: %s\n", $xdr->buf$)
+		printf("\n")
+/*
+start_offset=6304, wire_offset: d500000000000000, cookie_offset=6308, xdr->buf->len=6372, end-p=1820
+	cd: {.rd_cookie=0, .rd_verf={...}, .rd_dircount=6636, .rd_maxcount=26432, .rd_bmval=[...], .rd_rqstp=0xffff980ea511c290, .rd_fhp=0xffff980ea50aa2f8, .common={...}, .xdr=0xffff980ea50aa290, .cookie_offset=6048}
+	xdr: {.p=0xffff980e4aa048e4, .buf=0xffff980ea511c470, .end=0xffff980e4aa05000, .iov=0x0, .scratch={...}, .page_ptr=0xffff980ea511c4c0, .nwords=0}
+	xdr->scratch: {.iov_base=0xffff980e4926fffc, .iov_len=0}
+	xdr_buf: {.head=[...], .tail=[...], .pages=0xffff980ea511c4c0, .page_base=0, .page_len=2276, .flags=0, .buflen=266240, .len=6372}
+*/
+	} else if (nfserr == 0) {
+
+	} else {
+		printf("%s: return %x from %s(%s)\n",
+			tstamp(gettimeofday_ns()), nfserr, ppfunc(), filename)
+	}
+}
+
+probe module("nfsd").function("nfsd4_encode_dirent").return {
+	if ($return != 0) {
+		filename = @entry(kernel_string_n($name, $namlen))
+		printf("%s: %s(%s): %d\n",
+			tstamp(gettimeofday_ns()), ppfunc(), filename, $return)
+	}
+}
