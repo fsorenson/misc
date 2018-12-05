@@ -1,0 +1,21 @@
+global lookup_count = 0
+
+# using this probe pattern, but this is not being accepted
+# module(MPATTERN).function(PATTERN).callee(PATTERN).return
+#probe module("nfsd").function("nfsd4_encode_dirent_fattr").callee("lookup_one_len_unlocked").return {
+probe kernel.function("lookup_one_len_unlocked").return {
+	caller = symname(caller_addr())
+
+	if (caller == "nfsd_readdir") {
+		lookup_count = (lookup_count + 1) % 1000
+		if (! (lookup_count) ) {
+			entry_name_ptr = @entry($name)
+			entry_len_ptr = @entry($len)
+			entry_name = kernel_string_n(entry_name_ptr, entry_len_ptr)
+
+			printf("%s: forcing nfsd4_encode_dirent_fattr error for '%s'\n",
+				tz_ctime(gettimeofday_s()), entry_name)
+			$return = -2 # ENOENT
+		}
+	}
+}

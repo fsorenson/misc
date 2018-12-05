@@ -1,0 +1,10 @@
+#probe module("sunrpc").function("xdr_truncate_encode").return, module("sunrpc").function("xdr_commit_encode").return {
+probe module("sunrpc").function("xdr_truncate_encode").return {
+	xdr = &@cast(@entry($xdr), "struct xdr_stream")
+	if (@entry($len) / 4096 == xdr->buf->len / 4096) {
+		entry_page_ptr = @entry($xdr->page_ptr)
+		if (entry_page_ptr != xdr->page_ptr)
+			xdr->page_ptr = entry_page_ptr
+	}
+}
+

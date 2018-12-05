@@ -1,0 +1,30 @@
+#!/bin/bash
+
+awk '{
+	if (NR > 1){
+		cur=substr($1,length($1) - 3, 4)
+		check=sprintf("./testfile_%04d", cur)
+		if ($1 != check) {
+			bogus_count++
+			printf("possibly bogus filename: %s\n", $1)
+		} else {
+			while (last + 1 < cur) {
+				missing_count++
+				printf("missing: testfile_%04d\n", last + 1)
+				last ++
+			}
+			valid_count++
+			last = cur
+
+		}
+	}
+}
+END{
+	if (last < 5000) {
+		new_missing = 5000 - last
+		printf("missing %d - 5000 (%d)\n", last + 1, new_missing)
+		missing_count += new_missing
+	}
+	printf("total: %d, valid: %d, missing: %d, bogus: %d\n",
+		valid_count + missing_count + bogus_count, valid_count, missing_count, bogus_count)
+}' /tmp/find.out
