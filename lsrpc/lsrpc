@@ -27,9 +27,6 @@ sub show_rpc_xprt_states {
 		printf("\t0x%x - %s\n", $key, $name);
 	}
 };
-#show_rpc_xprt_states();
-#printf("\n");
-
 my %rpc_task_flags = (
 	0x0001 => "RPC_TASK_ASYNC",
 	0x0002 => "RPC_TASK_SWAPPER",
@@ -44,10 +41,8 @@ my %rpc_task_flags = (
 	0x2000 => "RPC_TASK_NOCONNECT",
 	0x4000 => "RPC_TASK_NO_RETRANS_TIMEOUT",
 );
-
 sub indent_str {
 	my $count = shift;
-
 	return "  " x $count;
 }
 
@@ -55,14 +50,8 @@ sub show_rpc_task_flags {
 	foreach my $key (sort {$a<=>$b} keys(%rpc_task_flags)) {
 		my $name = $rpc_task_flags{$key};
 		printf("\t0x%x - %s\n", $key, $name);
-
 	}
 };
-#show_rpc_task_flags();
-#foreach my $k (sort { $a <=> $b } keys(%rpc_task_flags)) {
-#	printf("%d\n", $k);
-#}
-
 sub xprt_states_str {
 	my @ret = ();
 	my $val = int(shift);
@@ -74,7 +63,6 @@ sub xprt_states_str {
 		}
 	}
 	return join(" | ",@ret);
-#	printf("rpc_xprt state %d - %s\n", $val, join(" | ",@ret));
 };
 
 sub rpc_task_flags_str {
@@ -88,7 +76,6 @@ sub rpc_task_flags_str {
 		}
 	}
 	return join(" | ",@ret);
-#	printf("rpc_task flags %x - %s\n", $val, join(" | ",@ret));
 };
 
 
@@ -101,7 +88,6 @@ if (-d "/sys/kernel/debug/sunrpc/") {
 		next if ($d eq "." || $d eq "..");
 		my $info_file = "/sys/kernel/debug/sunrpc/rpc_xprt/" . $d . "/info";
 		my $xprt_num = int($d);
-#		printf("opening %s for xprt '%s' (%d)\n", $info_file, $d, $xprt_num);
 
 		open(my $fh, $info_file) or die("unable to open $info_file");
 
@@ -176,45 +162,12 @@ if (-d "/sys/kernel/debug/sunrpc/") {
 #					$new_task{'pid'}, $new_task{'flags'}, $new_task{'status'}, $new_task{'clientid'},
 #					$new_task{'xid'}, $new_task{'timeout'}, $new_task{'ops'}, $new_task{'prog'}, $new_task{'proc'}, $new_task{'action'}, $new_task{'queue'});
 
-				my $task_flags_str = rpc_task_flags_str($2);
-#				xprt_states_str($2);
-
-#				printf("\n");
-
-#        seq_printf(f, "%5u %04x %6d 0x%x 0x%x %8ld %ps %sv%u %s a:%ps q:%s\n",
-
-
-#/sys/kernel/debug/sunrpc/rpc_clnt/3/tasks: 4132 5281    -11 0x3 0x0        0 nfs41_sequence_ops [nfsv4] nfsv4 SEQUENCE a:call_reserveresult [sunrpc] q:xprt_sending
-#/sys/kernel/debug/sunrpc/rpc_clnt/7/tasks: 4128 4001      0 0x7 0x688c653c        0 nfs_pgio_common_ops [nfs] nfsv4 WRITE a:call_transmit_status [sunrpc] q:none
-#/sys/kernel/debug/sunrpc/rpc_clnt/7/tasks: 4129 4001    -11 0x7 0x0        0 nfs_pgio_common_ops [nfs] nfsv4 WRITE a:call_reserveresult [sunrpc] q:xprt_sending
-#/sys/kernel/debug/sunrpc/rpc_clnt/7/tasks: 4130 4001    -11 0x7 0x0        0 nfs_pgio_common_ops [nfs] nfsv4 WRITE a:call_reserveresult [sunrpc] q:xprt_sending
-#/sys/kernel/debug/sunrpc/rpc_clnt/7/tasks: 4131 4001    -11 0x7 0x0        0 nfs_pgio_common_ops [nfs] nfsv4 WRITE a:call_reserveresult [sunrpc] q:xprt_sending
-#/sys/kernel/debug/sunrpc/rpc_clnt/7/tasks: 4134 4080    -11 0x7 0x0        0 nfs41_call_sync_ops [nfsv4] nfsv4 GETATTR a:call_reserveresult [sunrpc] q:xprt_sending
-			}
-
-#			$task_count++;
-#			if ($task_count == 1) {
-#				printf("%5s %04s %6s %18s %18s %8s %s %sv%s a:%s q:%s\n",
-#					"pid", "flgs", "status", "clid", "xid", "timeout", "ops",
-#					"prog", "v", "proc", "action", "waitq");
-#			}
-#        seq_printf(f, "%5u %04x %6d 0x%x 0x%x %8ld %ps %sv%u %s a:%ps q:%s\n",
-#                task->tk_pid, task->tk_flags, task->tk_status,
-#                clnt->cl_clid, xid, task->tk_timeout, task->tk_ops,
-#                clnt->cl_program->name, clnt->cl_vers, rpc_proc_name(task),
-#                task->tk_action, rpc_waitq);
 
 
 		}
 	}		
 
 
-#tasks
-#lrwxrwxrwx 1 root root 0 Dec  8 08:33 xprt -> ../../rpc_xprt/1
-#/sys/kernel/debug/sunrpc/rpc_xprt/1/info /sys/kernel/debug/sunrpc/rpc_clnt/0/*
-#-r-------- 1 root root 0 Dec  8 08:33 /sys/kernel/debug/sunrpc/rpc_clnt/0/tasks
-#lrwxrwxrwx 1 root root 0 Dec  8 08:33 /sys/kernel/debug/sunrpc/rpc_clnt/0/xprt -> ../../rpc_xprt/1
-#-r-------- 1 root root 0 Dec  8 08:33 /sys/kernel/debug/sunrpc/rpc_xprt/1/info
 
 
 	my $rpc_xprt_count = 0;
@@ -237,9 +190,6 @@ if (-d "/sys/kernel/debug/sunrpc/") {
 
 			my %rpc_task = %{ $task };
 
-#			printf("\tpid: %d, flags: %x, status: %d, clientid: %s, xid: %s\ttimeout: %d, ops: %s, prog: %s, proc: %s, action: %s, queue: %s\n",
-#				$rpc_task{'pid'}, $rpc_task{'flags'}, $rpc_task{'status'}, $rpc_task{'clientid'},
-#				$rpc_task{'xid'}, $rpc_task{'timeout'}, $rpc_task{'ops'}, $rpc_task{'prog'}, $rpc_task{'proc'}, $rpc_task{'action'}, $rpc_task{'queue'});
 
 			printf("\n") if ($xprt_task_count++ != 0);
 
@@ -263,49 +213,4 @@ if (-d "/sys/kernel/debug/sunrpc/") {
 	}
 
 }
-exit();
-
-#tasks_show(struct seq_file *f, void *v)
-#{
-#        u32 xid = 0;
-#        struct rpc_task *task = v;
-#        struct rpc_clnt *clnt = task->tk_client;
-#        const char *rpc_waitq = "none";
-#
-#        if (RPC_IS_QUEUED(task))
-#                rpc_waitq = rpc_qname(task->tk_waitqueue);
-#
-#        if (task->tk_rqstp)
-#                xid = be32_to_cpu(task->tk_rqstp->rq_xid);
-#
-#        seq_printf(f, "%5u %04x %6d 0x%x 0x%x %8ld %ps %sv%u %s a:%ps q:%s\n",
-#                task->tk_pid, task->tk_flags, task->tk_status,
-#                clnt->cl_clid, xid, task->tk_timeout, task->tk_ops,
-#                clnt->cl_program->name, clnt->cl_vers, rpc_proc_name(task),
-#                task->tk_action, rpc_waitq);
-        #return 0;
-#}
-
-
-
-#/sys/kernel/debug/sunrpc/
-#rpc_clnt
-#rpc_xprt
-
-#[root@vm6 sunrpc]# dir /sys/kernel/debug/sunrpc/rpc_xprt/
-#total 0
-#drwxr-xr-x 5 root root 0 Dec  8 18:13 .
-#drwxr-xr-x 5 root root 0 Dec  8 08:33 ..
-#drwxr-xr-x 2 root root 0 Dec  8 08:33 1
-#drwxr-xr-x 2 root root 0 Dec  8 02:33 2
-#drwxr-xr-x 2 root root 0 Dec  8 18:05 7
-#[root@vm6 sunrpc]# dir /sys/kernel/debug/sunrpc/rpc_xprt/1/
-#total 0
-#drwxr-xr-x 2 root root 0 Dec  8 08:33 .
-#drwxr-xr-x 5 root root 0 Dec  8 18:13 ..
-#-r-------- 1 root root 0 Dec  8 08:33 info
-
-
-
-
 
