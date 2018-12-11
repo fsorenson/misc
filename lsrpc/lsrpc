@@ -79,7 +79,7 @@ sub rpc_task_flags_str {
 };
 
 
-if (-d "/sys/kernel/debug/sunrpc/") {
+die("no debug directory: /sys/kernel/debug/sunrpc/") if (! -d "/sys/kernel/debug/sunrpc/");
 	opendir DIR, "/sys/kernel/debug/sunrpc/rpc_xprt" or die("Unable to open /sys/kernel/debug/sunrpc/rpc_xprt");
 	my @xprt_contents = readdir DIR;
 	closedir DIR;
@@ -211,6 +211,3 @@ if (-d "/sys/kernel/debug/sunrpc/") {
 		}
 
 	}
-
-}
-
