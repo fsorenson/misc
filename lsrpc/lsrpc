@@ -107,58 +107,55 @@ foreach my $xprt (@xprt_contents) {
 	$xprt_info{$xprt_num}{'clnts'} = [];
 }
 
-	opendir DIR, "/sys/kernel/debug/sunrpc/rpc_clnt" or die("Unable to open /sys/kernel/debug/sunrpc/rpc_clnt");
-	my @clnt_contents = readdir DIR;
-	closedir DIR;
+opendir DIR, "/sys/kernel/debug/sunrpc/rpc_clnt" or die("Unable to open /sys/kernel/debug/sunrpc/rpc_clnt");
+my @clnt_contents = readdir DIR;
+closedir DIR;
 
-	foreach my $clnt (@clnt_contents) {
-		next if ($clnt eq "." || $clnt eq "..");
-		my $clnt_num = int($clnt);
+foreach my $clnt (@clnt_contents) {
+	next if ($clnt eq "." || $clnt eq "..");
+	my $clnt_num = int($clnt);
 
-		my $tasks_file = "/sys/kernel/debug/sunrpc/rpc_clnt/" . $clnt_num . "/tasks";
-		my $clnt_xprt_link = "/sys/kernel/debug/sunrpc/rpc_clnt/" . $clnt_num . "/xprt";
-		open (my $fh, $tasks_file) or die("unable to open $tasks_file");
-		my $task_count = 0;
+	my $tasks_file = "/sys/kernel/debug/sunrpc/rpc_clnt/" . $clnt_num . "/tasks";
+	open (my $fh, $tasks_file) or die("unable to open $tasks_file");
+	my $task_count = 0;
 
-		my $xprt_num = int(basename(readlink("/sys/kernel/debug/sunrpc/rpc_clnt/" . $clnt_num . "/xprt")));
-		push $xprt_info{$xprt_num}{'clnts'}, $clnt_num;
+#	my $clnt_xprt_link = "/sys/kernel/debug/sunrpc/rpc_clnt/" . $clnt_num . "/xprt";
+	my $xprt_num = hex(basename(readlink("/sys/kernel/debug/sunrpc/rpc_clnt/" . $clnt_num . "/xprt")));
+	push $xprt_info{$xprt_num}{'clnts'}, $clnt_num;
 
-		while (<$fh>) {
-			chomp;
-			my $line = $_;
-
-			if ($line =~ /^\s*([0-9]+) ([0-9a-f]+) \s*([-0-9]+) (0x[0-9a-f]+) (0x[0-9a-f]+) \s*([0-9]+) ([^ ]+ [^ ]+) ([^ ]+v[^ ]+) ([^ ]+) (a:[^ ]+ \[[^ ]+\]) (q:.+)/) {
-				my $task_pid = $1;
-				my $task_flags = $2;
-				my $task_status = $3;
-				my $task_clientid = hex($4);
-				my $task_xid = $5;
-				my $task_timeout = $6;
-				my $task_ops = $7;
-				my $task_prog = $8;
-				my $task_proc = $9;
-				my $task_action = $10;
-				my $task_queue = $11;
-				my %new_task = (
-					'pid' => $1,
-					'flags' => $2,
-					'status' => $3,
-					'clientid' => $task_clientid,
-					'xid' => hex($5),
-					'timeout' => $6,
-					'ops' => $7,
-					'prog' => $8,
-					'proc' => $9,
-					'action' => $10,
-					'queue' => $11,
-				);
-#				push @{$xprt_info{$clnt_num}{'tasks'}}, \%new_task;
-#				printf("adding task to list for xprt %d\n", $xprt_num);
-				push @{$xprt_info{$xprt_num}{'tasks'}}, \%new_task;
-
+	while (<$fh>) {
+		chomp;
+		if ($_ =~ /^\s*([0-9]+) ([0-9a-f]+) \s*([-0-9]+) (0x[0-9a-f]+) (0x[0-9a-f]+) \s*([0-9]+) ([^ ]+ [^ ]+) ([^ ]+v[^ ]+) ([^ ]+) (a:[^ ]+ \[[^ ]+\]) (q:.+)/) {
+#			my $task_pid = $1;
+#			my $task_flags = $2;
+#			my $task_status = $3;
+#			my $task_xid = $5;
+#			my $task_timeout = $6;
+#			my $task_ops = $7;
+#			my $task_prog = $8;
+#			my $task_proc = $9;
+#			my $task_action = $10;
+#			my $task_queue = $11;
+			my %new_task = (
+				'pid' => $1,
+				'flags' => $2,
+				'status' => $3,
+				'clientid' => hex($4),
+				'xid' => hex($5),
+				'timeout' => $6,
+				'ops' => $7,
+				'prog' => $8,
+				'proc' => $9,
+				'action' => $10,
+				'queue' => $11,
+			);
+			push @{$xprt_info{$xprt_num}{'tasks'}}, \%new_task;
 #				printf("pid: %d, flags: %x, status: %d, clientid: %s, xid: %s\ttimeout: %d, ops: %s, prog: %s, proc: %s, action: %s, queue: %s\n",
 #					$new_task{'pid'}, $new_task{'flags'}, $new_task{'status'}, $new_task{'clientid'},
 #					$new_task{'xid'}, $new_task{'timeout'}, $new_task{'ops'}, $new_task{'prog'}, $new_task{'proc'}, $new_task{'action'}, $new_task{'queue'});
+		}
+	}
+}
 
 
 
