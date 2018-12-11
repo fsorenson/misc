@@ -80,34 +80,32 @@ sub rpc_task_flags_str {
 
 
 die("no debug directory: /sys/kernel/debug/sunrpc/") if (! -d "/sys/kernel/debug/sunrpc/");
-	opendir DIR, "/sys/kernel/debug/sunrpc/rpc_xprt" or die("Unable to open /sys/kernel/debug/sunrpc/rpc_xprt");
-	my @xprt_contents = readdir DIR;
-	closedir DIR;
+opendir DIR, "/sys/kernel/debug/sunrpc/rpc_xprt" or die("Unable to open /sys/kernel/debug/sunrpc/rpc_xprt");
+my @xprt_contents = readdir DIR;
+closedir DIR;
 
-	foreach my $d (@xprt_contents) {
-		next if ($d eq "." || $d eq "..");
-		my $info_file = "/sys/kernel/debug/sunrpc/rpc_xprt/" . $d . "/info";
-		my $xprt_num = int($d);
+foreach my $xprt (@xprt_contents) {
+	next if ($xprt eq "." || $xprt eq "..");
+	my $info_file = "/sys/kernel/debug/sunrpc/rpc_xprt/" . $xprt . "/info";
+	my $xprt_num = hex($xprt);
 
-		open(my $fh, $info_file) or die("unable to open $info_file");
-
-		while (<$fh>) {
-			chomp;
-			my $line = $_;
-			if ($line =~ /^state: (.+)/) {
-				$xprt_info{$xprt_num}{'state'} = hex($1);
-			} elsif ($line =~ /^netid: (.+)/) {
-				$xprt_info{$xprt_num}{'netid'} = $1;
-			} elsif ($line =~ /^addr: (.+)/) {
-				$xprt_info{$xprt_num}{'addr'} = $1;
-			} elsif ($line =~ /^port: (.+)/) {
-				$xprt_info{$xprt_num}{'port'} = $1;
-			}
+	open(my $fh, $info_file) or die("unable to open $info_file");
+	while (<$fh>) {
+		chomp;
+		if ($_ =~ /^state: (.+)/) {
+			$xprt_info{$xprt_num}{'state'} = hex($1);
+		} elsif ($_ =~ /^netid: (.+)/) {
+			$xprt_info{$xprt_num}{'netid'} = $1;
+		} elsif ($_ =~ /^addr: (.+)/) {
+			$xprt_info{$xprt_num}{'addr'} = $1;
+		} elsif ($_ =~ /^port: (.+)/) {
+			$xprt_info{$xprt_num}{'port'} = $1;
 		}
-		$xprt_info{$xprt_num}{'tasks'} = [];
-		$xprt_info{$xprt_num}{'clnts'} = [];
-		close $fh;
 	}
+	close $fh;
+	$xprt_info{$xprt_num}{'tasks'} = [];
+	$xprt_info{$xprt_num}{'clnts'} = [];
+}
 
 	opendir DIR, "/sys/kernel/debug/sunrpc/rpc_clnt" or die("Unable to open /sys/kernel/debug/sunrpc/rpc_clnt");
 	my @clnt_contents = readdir DIR;
