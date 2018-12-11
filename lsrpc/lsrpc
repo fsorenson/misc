@@ -78,7 +78,6 @@ sub rpc_task_flags_str {
 	return join(" | ",@ret);
 };
 
-
 die("no debug directory: /sys/kernel/debug/sunrpc/") if (! -d "/sys/kernel/debug/sunrpc/");
 opendir DIR, "/sys/kernel/debug/sunrpc/rpc_xprt" or die("Unable to open /sys/kernel/debug/sunrpc/rpc_xprt");
 my @xprt_contents = readdir DIR;
@@ -158,51 +157,48 @@ foreach my $clnt (@clnt_contents) {
 }
 
 
+my $rpc_xprt_count = 0;
+foreach my $rpc_xprt_num (sort {$a<=>$b} keys(%xprt_info)) {
+	my %rpc_xprt = %{$xprt_info{$rpc_xprt_num}};
 
-		}
-	}		
-
-
-
-
-	my $rpc_xprt_count = 0;
-	foreach my $rpc_xprt_num (sort {$a<=>$b} keys(%xprt_info)) {
-		my %rpc_xprt = %{$xprt_info{$rpc_xprt_num}};
-
-		printf("\n") if ($rpc_xprt_count++ != 0);
-		if ($rpc_xprt{'netid'} eq "local") {
-			printf("%d: %s - ", $rpc_xprt_num, $rpc_xprt{'addr'});
-		} elsif ($rpc_xprt{'netid'} eq "tcp") {
-			printf("%d: %s:%d - ", $rpc_xprt_num, $rpc_xprt{'addr'}, $rpc_xprt{'port'});
-		} else {
-			printf("%d: netid: %s, addr: %s, port: %s - ", $rpc_xprt_num, $rpc_xprt{'netid'}, $rpc_xprt{'addr'}, $rpc_xprt{'port'});
-		}
-		printf("%s\n", xprt_states_str($rpc_xprt{'state'}));
-
-		my @tasks = @{ $rpc_xprt{'tasks'} };
-		my $xprt_task_count = 0;
-		foreach my $task (@tasks) {
-
-			my %rpc_task = %{ $task };
-
-
-			printf("\n") if ($xprt_task_count++ != 0);
-
-			printf("%spid %d:  %s %s", indent_str(1), $rpc_task{'pid'}, $rpc_task{'prog'}, $rpc_task{'proc'});
-			if ($rpc_task{'xid'} != 0)  {
-				printf(" - xid: 0x%08x", $rpc_task{'xid'});
-			} else {
-				printf("%17s", "");
-			}
-			printf(" - status: %d (%s)", $rpc_task{'status'}, strerror(-$rpc_task{'status'})) if ($rpc_task{'status'} != 0);
-			printf("\n");
-
-
-
-			my $task_flags_str = rpc_task_flags_str($rpc_task{'flags'});
-			printf("%sflags: %s\n", indent_str(2), $task_flags_str);
-
-			printf("%s%s, %s\n", indent_str(2), $rpc_task{'queue'}, $rpc_task{'action'});
-		}
-
+	printf("\n") if ($rpc_xprt_count++ != 0);
+	if ($rpc_xprt{'netid'} eq "local") {
+		printf("%x: %s - ", $rpc_xprt_num, $rpc_xprt{'addr'});
+	} elsif ($rpc_xprt{'netid'} eq "tcp") {
+		printf("%x: %s:%d - ", $rpc_xprt_num, $rpc_xprt{'addr'}, $rpc_xprt{'port'});
+	} else {
+		printf("%x: netid: %s, addr: %s, port: %s - ", $rpc_xprt_num, $rpc_xprt{'netid'}, $rpc_xprt{'addr'}, $rpc_xprt{'port'});
 	}
+	printf("%s\n", xprt_states_str($rpc_xprt{'state'}));
+
+	my @tasks = @{ $rpc_xprt{'tasks'} };
+	my $xprt_task_count = 0;
+	foreach my $task (@tasks) {
+
+		my %rpc_task = %{ $task };
+
+#		printf("\tpid: %d, flags: %x, status: %d, clientid: %s, xid: %s\ttimeout: %d, ops: %s, prog: %s, proc: %s, action: %s, queue: %s\n",
+#			$rpc_task{'pid'}, $rpc_task{'flags'}, $rpc_task{'status'}, $rpc_task{'clientid'},
+#			$rpc_task{'xid'}, $rpc_task{'timeout'}, $rpc_task{'ops'}, $rpc_task{'prog'}, $rpc_task{'proc'}, $rpc_task{'action'}, $rpc_task{'queue'});
+
+		printf("\n") if ($xprt_task_count++ != 0);
+
+		printf("%spid %d:  %s %s", indent_str(1), $rpc_task{'pid'}, $rpc_task{'prog'}, $rpc_task{'proc'});
+		if ($rpc_task{'xid'} != 0)  {
+			printf(" - xid: 0x%08x", $rpc_task{'xid'});
+		} else {
+			printf("%17s", "");
+		}
+		printf(" - status: %d (%s)", $rpc_task{'status'}, strerror(-$rpc_task{'status'})) if ($rpc_task{'status'} != 0);
+		printf("\n");
+
+
+
+		my $task_flags_str = rpc_task_flags_str($rpc_task{'flags'});
+		printf("%sflags: %s\n", indent_str(2), $task_flags_str);
+
+		printf("%s%s, %s\n", indent_str(2), $rpc_task{'queue'}, $rpc_task{'action'});
+	}
+
+}
+
