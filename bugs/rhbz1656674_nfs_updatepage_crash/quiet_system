@@ -1,0 +1,13 @@
+#!/bin/bash
+
+
+for i in {1..5} ; do
+
+	rmmod rpcrdma rdma_ucm ib_ucm rdma_ucm ib_uverbs ib_cm iw_cm ocrdma rdma_cm ib_iser ib_isertib_srp ib_srpt ib_ipoib ib_srp libiscsi ib_umad ib_core wmi rdma_cm ib_cm iw_cm ib_isert >/dev/null 2>&1
+
+done
+
+auditctl -e 0 >/dev/null 2>&1
+
+systemctl stop lvm2-lvmetad.socket
+systemctl stop lvm2-lvmetad.service

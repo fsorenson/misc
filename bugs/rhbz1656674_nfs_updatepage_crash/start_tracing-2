@@ -1,0 +1,24 @@
+#!/bin/bash
+
+#disable globbing
+set -f
+
+events="syscalls:sys_enter_write syscalls:sys_exit_write syscalls:sys_enter_read syscalls:sys_exit_read syscalls:sys_enter_lseek syscalls:sys_exit_lseek syscalls:sys_enter_truncate syscalls:sys_exit_truncate syscalls:sys_enter_ftruncate syscalls:sys_exit_ftruncate nfs:* writeback:* filemap:* pagemap:* probe:*"
+
+
+events_str=""
+for e in $events ; do
+	events_str="$events_str -e $e"
+done
+
+buf="-b 20000"
+
+echo executing: trace-cmd start --date -p nop $buf $events_str
+#trace-cmd start --date --profile -p function_graph $events_str
+trace-cmd start --date -p nop $buf $events_str
+
+
+echo 20000 > /sys/kernel/debug/tracing/buffer_size_kb
+
+
+

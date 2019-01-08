@@ -1,0 +1,602 @@
+#!/bin/bash
+
+VERBOSE=""
+DRY_RUN=""
+
+set -e
+
+# for ctx->error from file, that's '@cast(file->private_data, nfs_open_context)->error'
+# file->private_data is offset 0xa8 = 168
+# nfs_open_context->error is offset 0x60 = 96
+# need to determine where 'file' is stored (in this case, '%di'), then access error with:
+# +96(+168(%di))
+#
+# for example:
+
+# perf probe -v -m nfs -n 'nfs_write_end file ctx=file->private_data'
+# ...
+# Writing event: p:probe/nfs_write_end nfs:nfs_write_end+0 file=%di:u64 ctx=+168(%di):u64
+#
+# file is in %di, and ->private_data is offset 168
+
+
+
+#ctx_error=+168(%di):u64 ctx_error2=+96(+168(%di)):s32 page=%si:u64 page_index=+16(%si):u64 page_mapping=+8(%si):u64 offset=%dx:u32 count=%cx:u32
+#Added new event:
+#  probe:nfs_updatepage (on nfs_updatepage in nfs with file file_mapping=file->f_mapping nrpages=file->f_mapping->nrpages ctx_error=file->private_data ctx_error2=+96(+168(%di)):s32
+
+
+
+
+# perf probe -m nfs -V nfs_write_end
+#Available variables at nfs_write_end
+#        @<nfs_write_end+0>
+#                 (unknown_type  fsdata
+#                loff_t  pos
+#                struct address_space*   mapping
+#                struct file*    file
+#                struct page*    page
+#                unsigned int    copied
+#                unsigned int    len
+
+perf probe $VERBOSE $DRY_RUN -m nfs 'nfs_write_end file file_ctx_error=+96(+168(%di)):s32 mapping nrpages=mapping->nrpages page page_index=page->index page_mapping=page->mapping pos copied len'
+
+
+# perf probe -m nfs -V nfs_updatepage
+#Available variables at nfs_updatepage
+#        @<nfs_updatepage+0>
+#                struct file*    file
+#                struct page*    page
+#                unsigned int    count
+#                unsigned int    offset
+perf probe $VERBOSE $DRY_RUN -m nfs 'nfs_updatepage file file_ctx_error=+96(+168(%di)):s32 file_mapping=file->f_mapping nrpages=file->f_mapping->nrpages page page_index=page->index page_mapping=page->mapping offset count'
+
+
+# perf probe -m nfs -V nfs_writepage_setup
+#Available variables at nfs_writepage_setup
+#        @<nfs_updatepage+170>
+#                long unsigned int*      addr
+#                struct nfs_open_context*        ctx
+#                struct page*    page
+#                unsigned int    bytes
+#                unsigned int    count
+#                unsigned int    offset
+perf probe $VERBOSE $DRY_RUN -m nfs -a 'nfs_writepage_setup=nfs_writepage_setup addr ctx ctx_error=ctx->error page page_index=page->index page_mapping=page->mapping offset bytes count'
+
+
+# perf probe -v -n -m nfs -V nfs_writepage_locked
+#Available variables at nfs_writepage_locked
+#        @<nfs_writepage_locked+0>
+#                bool    launder
+#                struct nfs_pageio_descriptor    pgio
+#                struct page*    page
+#                struct writeback_control*       wbc
+perf probe $VERBOSE $DRY_RUN -m nfs 'nfs_writepage_locked pgio pgio.pg_inode pgio_mapping=pgio.pg_inode->i_mapping pgio_mapping_nrpages=pgio.pg_inode->i_mapping->nrpages page page_index=page->index page_mapping=page->mapping'
+
+
+# perf probe -m nfs -V nfs_do_writepage
+#Available variables at nfs_do_writepage
+#        @<nfs_do_writepage+0>
+#                bool    launder
+#                struct nfs_pageio_descriptor*   pgio
+#                struct page*    page
+#                struct writeback_control*       wbc
+perf probe $VERBOSE $DRY_RUN -m nfs 'nfs_do_writepage pgio pgio_inode=pgio->pg_inode pgio_mapping=pgio->pg_inode->i_mapping pgio_mapping_nrpages=pgio->pg_inode->i_mapping->nrpages page page_index=page->index page_mapping=page->mapping wbc'
+
+
+
+#perf probe -m nfs -V nfs_grow_file
+#Available variables at nfs_grow_file
+#        @<nfs_updatepage+423>
+#                long unsigned int*      addr
+#                struct page*    page
+#                unsigned int    count
+#                unsigned int    offset
+#
+perf probe $VERBOSE $DRY_RUN -m nfs -a 'nfs_grow_file=nfs_grow_file addr page page_index=page->index page_mapping=page->mapping offset count'
+
+
+# perf probe -m nfs -V nfs_file_read
+#Available variables at nfs_file_read
+#        @<nfs_file_read+0>
+#                loff_t  pos
+#                long unsigned int       nr_segs
+#                struct iovec*   iov
+#                struct kiocb*   iocb
+perf probe $VERBOSE $DRY_RUN -m nfs 'nfs_read=nfs_file_read file=iocb->ki_filp file_ctx_error=+96(+168(+8(%di))):s32 inode=iocb->ki_filp->f_inode mapping=iocb->ki_filp->f_mapping pos'
+perf probe $VERBOSE $DRY_RUN -m nfs 'nfs_read_return=nfs_file_read%return $retval'
+
+
+
+# perf probe -m nfs -V nfs_file_write
+#Available variables at nfs_file_write
+#        @<nfs_file_write+0>
+#                loff_t  pos
+#                long unsigned int       nr_segs
+#                size_t  count
+#                struct iovec*   iov
+#                struct kiocb*   iocb
+perf probe $VERBOSE $DRY_RUN -m nfs 'nfs_write=nfs_file_write file=iocb->ki_filp file_ctx_error=+96(+168(+8(%di))):s32 inode=iocb->ki_filp->f_inode mapping=iocb->ki_filp->f_mapping pos'
+perf probe $VERBOSE $DRY_RUN -m nfs 'nfs_write_return=nfs_file_write%return $retval'
+
+
+# perf probe -V generic_file_buffered_write
+#Available variables at generic_file_buffered_write
+#        @<generic_file_buffered_write+0>
+#                loff_t  pos
+#                loff_t* ppos
+#                long unsigned int       nr_segs
+#                size_t  count
+#                ssize_t written
+#                struct iov_iter i
+#                struct iovec*   iov
+#                struct kiocb*   iocb
+perf probe $VERBOSE $DRY_RUN 'generic_file_buffered_write iocb file=iocb->ki_filp file_ctx_error=+96(+168(+8(%di))):s32 inode=iocb->ki_filp->f_inode mapping=iocb->ki_filp->f_mapping pos nr_segs count written'
+
+perf probe $VERBOSE $DRY_RUN 'generic_file_buffered_write_return=generic_file_buffered_write%return $retval'
+
+
+
+# perf probe -V generic_write_sync
+#Available variables at generic_write_sync
+#        @<generic_write_sync+0>
+#                loff_t  count
+#                loff_t  pos
+#                struct file*    file
+perf probe $VERBOSE $DRY_RUN 'generic_write_sync file file_ctx_error=+96(+168(+8(%di))):s32 inode=file->f_inode mapping=file->f_mapping pos count'
+perf probe $VERBOSE $DRY_RUN 'generic_write_sync_return=generic_write_sync%return $retval'
+
+
+
+# perf probe -m nfs -V nfs_write_begin
+#Available variables at nfs_write_begin
+#        @<nfs_write_begin+0>
+#                 (unknown_type  fsdata
+#                loff_t  pos
+#                struct address_space*   mapping
+#                struct file*    file
+#                struct page**   pagep
+#                unsigned int    flags
+#                unsigned int    len
+
+perf probe $VERBOSE $DRY_RUN -m nfs 'nfs_write_begin file file_mapping=file->f_mapping file_ctx_error=+96(+168(%di)):s32 inode=file->f_inode mapping nrpages=mapping->nrpages pos len'
+
+
+
+# perf probe -m nfs -V nfs_revalidate_mapping_protected
+#Available variables at nfs_revalidate_mapping_protected
+#        @<nfs_revalidate_mapping_protected+0>
+#                struct address_space*   mapping
+#                struct inode*   inode
+perf probe $VERBOSE $DRY_RUN -m nfs 'nfs_revalidate_mapping_protected inode inode_mapping=inode->i_mapping inode_nrpages=inode->i_mapping->nrpages mapping mapping_nrpages=mapping->nrpages mapping_inode=mapping->host'
+perf probe $VERBOSE $DRY_RUN -m nfs 'nfs_revalidate_mapping_protected_return=nfs_revalidate_mapping_protected%return $retval'
+
+
+# perf probe -m nfs -V __nfs_revalidate_mapping
+#Available variables at __nfs_revalidate_mapping
+#        @<__nfs_revalidate_mapping+0>
+#                bool    may_lock
+#                long unsigned int*      bitlock
+#                struct address_space*   mapping
+#                struct inode*   inode
+perf probe $VERBOSE $DRY_RUN -m nfs '__nfs_revalidate_mapping inode inode_mapping=inode->i_mapping inode_nrpages=inode->i_mapping->nrpages mapping mapping_nrpages=mapping->nrpages mapping_inode=mapping->host bitlock may_lock'
+
+
+# perf probe -m nfs -V nfs_invalidate_page
+#Available variables at nfs_invalidate_page
+#        @<nfs_invalidate_page+0>
+#                struct page*    page
+#                unsigned int    length
+#                unsigned int    offset
+
+perf probe $VERBOSE $DRY_RUN -m nfs 'nfs_invalidate_page page page_index=page->index page_mapping=page->mapping offset length'
+
+
+
+# perf probe -m nfs -V nfs_readpage
+#Available variables at nfs_readpage
+#        @<nfs_readpage+0>
+#                struct file*    file
+#                struct page*    page
+perf probe $VERBOSE $DRY_RUN -m nfs 'nfs_readpage file file_mapping=file->f_mapping file_ctx_error=+96(+168(%di)):s32 nrpages=file->f_mapping->nrpages page page_index=page->index page_mapping=page->mapping'
+perf probe $VERBOSE $DRY_RUN -m nfs 'nfs_readpage_return=nfs_readpage%return $retval'
+
+# perf probe -m nfs -V nfs_readpage_async
+#Available variables at nfs_readpage_async
+#        @<nfs_readpage_async+0>
+#                struct inode*   inode
+#                struct nfs_open_context*        ctx
+#                struct nfs_pageio_descriptor    pgio
+#                struct page*    page
+perf probe $VERBOSE $DRY_RUN -m nfs 'nfs_readpage_async inode inode_mapping=inode->i_mapping inode_nrpages=inode->i_mapping->nrpages page page_index=page->index page_mapping=page->mapping ctx ctx_error=ctx->error pgio'
+perf probe $VERBOSE $DRY_RUN -m nfs 'nfs_readpage_async_return=nfs_readpage_async%return $retval'
+
+
+# perf probe -m nfs -V nfs_wb_single_page
+#Available variables at nfs_wb_single_page
+#        @<nfs_wb_single_page+0>
+#                bool    launder
+#                struct inode*   inode
+#                struct page*    page
+#                struct writeback_control        wbc
+
+perf probe $VERBOSE $DRY_RUN -m nfs 'nfs_wb_single_page_enter=nfs_wb_single_page inode inode_mapping=inode->i_mapping nrpages=inode->i_mapping->nrpages page page_index=page->index page_mapping=page->mapping'
+#Added new event:
+#  probe:nfs_wb_single_page_enter (on nfs_wb_single_page in nfs with inode inode_mapping=inode->i_mapping nrpages=inode->i_mapping->nrpages page page_index=page->index page_mapping=page->mapping)
+
+
+# perf probe -n -m nfs -V 'nfs_wb_single_page;trace_nfs_writeback_page_exit*'
+#Available variables at nfs_wb_single_page
+#        @<nfs_wb_single_page+187>
+#                bool    launder
+#                int     error
+#                int     ret
+#                struct inode*   inode
+#                struct page*    page
+#                struct writeback_control        wbc
+# trying one for return
+# perf probe -n -m nfs 'nfs_wb_single_page_exit=nfs_wb_single_page;trace_nfs_writeback_page_exit* inode inode_mapping=inode->i_mapping nrpages=inode->i_mapping->nrpages page page_index=page->index page_mapping=page->mapping wbc error launder ret '
+# perf probe -v -n -m nfs 'nfs_wb_1page_exit=nfs_wb_single_page;trace_nfs_writeback_page_exit* inode inode_mapping=inode->i_mapping nrpages=inode->i_mapping->nrpages page page_index=page->index page_mapping=page->mapping error launder ret'
+
+#perf probe -v -n -m nfs 'nfs_wb_single_page_exit=nfs_wb_single_page:32 inode inode_mapping=inode->i_mapping nrpages=inode->i_mapping->nrpages page page_index=page->index page_mapping=page->mapping error ret'
+
+perf probe $VERBOSE $DRY_RUN -m nfs 'nfs_wb_single_page_exit=nfs_wb_single_page:32 inode inode_mapping=inode->i_mapping nrpages=inode->i_mapping->nrpages ret'
+
+
+# perf probe -V generic_error_remove_page
+#Available variables at generic_error_remove_page
+#        @<generic_error_remove_page+0>
+#                struct address_space*   mapping
+#                struct page*    page
+perf probe $VERBOSE $DRY_RUN 'generic_error_remove_page mapping nrpages=mapping->nrpages page page_index=page->index page_mapping=page->mapping'
+
+
+# perf probe -m nfs -V nfs_context_set_write_error
+#Available variables at nfs_context_set_write_error
+#        @<nfs_do_writepage+519>
+#                int     error
+#                struct nfs_open_context*        ctx
+#        @<nfs_commit_release_pages+260>
+#                int     error
+#                struct nfs_open_context*        ctx
+#        @<nfs_write_completion+325>
+#                int     error
+#                struct nfs_open_context*        ctx
+perf probe $VERBOSE $DRY_RUN -m nfs 'nfs_context_set_write_error  ctx ctx_error=ctx->error inode=ctx->dentry->d_inode mapping=ctx->dentry->d_inode->i_mapping nrpages=ctx->dentry->d_inode->i_mapping->nrpages error'
+
+
+# perf probe -m nfs -V nfs_wb_page_cancel
+#Available variables at nfs_wb_page_cancel
+#        @<nfs_wb_page_cancel+0>
+#                struct inode*   inode
+#                struct page*    page
+perf probe $VERBOSE $DRY_RUN -m nfs 'nfs_wb_page_cancel inode inode_mapping=inode->i_mapping nrpages=inode->i_mapping->nrpages page page_index=page->index page_mapping=page->mapping'
+perf probe $VERBOSE $DRY_RUN -m nfs 'nfs_wb_page_cancel_return=nfs_wb_page_cancel%return $retval'
+
+
+# perf probe -m nfs -V nfs_lock_and_join_requests
+#Available variables at nfs_lock_and_join_requests
+#        @<nfs_lock_and_join_requests+0>
+#                bool    nonblock
+#                struct page*    page
+perf probe $VERBOSE $DRY_RUN -m nfs 'nfs_lock_and_join_requests page page_index=page->index page_mapping=page->mapping nonblock'
+perf probe $VERBOSE $DRY_RUN -m nfs 'nfs_lock_and_join_requests_return_A=nfs_lock_and_join_requests%return $retval'
+
+
+# perf probe -m nfs -V nfs_lock_and_join_requests%return
+#Available variables at nfs_lock_and_join_requests%return
+#        @<nfs_lock_and_join_requests+0>
+#                bool    nonblock
+#                struct page*    page
+#perf probe $VERBOSE $DRY_RUN -m nfs 'nfs_lock_and_join_requests%return page page_index=page->index page_mapping=page->mapping nonblock $retval ctx_error=$retval->error'
+#perf probe $VERBOSE $DRY_RUN -m nfs 'nfs_lock_and_join_requests%return $retval'
+# *** problematic
+
+
+# perf probe -m nfs -L nfs_page_async_flush:7
+#<nfs_page_async_flush@/usr/src/debug/kernel-3.10.0-862.11.6.el7/linux-3.10.0-862.11.6.el7.x86_64/fs/nfs/write.c:7>
+#      7         req = nfs_lock_and_join_requests(page, nonblock);
+#      8         if (!req)
+#                        goto out;
+#     10         ret = PTR_ERR(req);
+#     11         if (IS_ERR(req))
+# perf probe -m nfs -V nfs_page_async_flush:8
+#Available variables at nfs_page_async_flush:8
+#        @<nfs_do_writepage+80>
+#                bool    launder
+#                struct nfs_pageio_descriptor*   pgio
+#                struct page*    page
+#        @<nfs_do_writepage+86>
+#                bool    launder
+#                struct nfs_page*        req
+#                struct nfs_pageio_descriptor*   pgio
+#                struct page*    page
+perf probe $VERBOSE $DRY_RUN -m nfs 'nfs_lock_and_join_requests_return_B=nfs_page_async_flush:10 nfs_page=req page page_index=page->index page_mapping=page->mapping ctx_error=req->wb_context->error'
+
+
+
+# perf probe -m nfs -V nfs_write_error_remove_page
+#Available variables at nfs_write_error_remove_page
+#        @<nfs_do_writepage+363>
+#                struct nfs_page*        req
+perf probe $VERBOSE $DRY_RUN -m nfs 'nfs_write_error_remove_page nfs_page=req page=req->wb_page wb_index=req->wb_index page_index=req->wb_page->index page_mapping=req->wb_page->mapping ctx_error=req->wb_context->error'
+
+
+# perf probe -m nfs -V nfs_inode_remove_request
+#Available variables at nfs_inode_remove_request
+#        @<nfs_inode_remove_request+0>
+#                struct nfs_page*        req
+perf probe $VERBOSE $DRY_RUN -m nfs 'nfs_inode_remove_request nfs_page=req page=req->wb_page wb_index=req->wb_index page_index=req->wb_page->index page_mapping=req->wb_page->mapping ctx_error=req->wb_context->error'
+
+
+# perf probe -V cancel_dirty_page
+#Available variables at cancel_dirty_page
+#        @<cancel_dirty_page+0>
+#                struct page*    page
+#                unsigned int    account_size
+#        @<truncate_inode_page+78>
+#                (No matched variables)
+# perf probe -V 'cancel_dirty_page=mm/truncate.c;cancel_dirty_page*'
+#Available variables at @mm/truncate.c
+#        @<truncate_inode_page+65>
+#                struct address_space*   mapping
+#                struct page*    page
+perf probe $VERBOSE $DRY_RUN 'cancel_dirty_page=mm/truncate.c;cancel_dirty_page* page page_index=page->index page_mapping=page->mapping'
+
+
+# perf probe -m nfs -V nfs_release_request
+#Available variables at nfs_release_request
+#        @<nfs_page_group_destroy+25>
+#                struct nfs_page*        req
+#        @<nfs_unlock_and_release_request+18>
+#                struct nfs_page*        req
+#        @<nfs_release_request+0>
+#                struct nfs_page*        req
+perf probe $VERBOSE $DRY_RUN -m nfs 'nfs_release_request nfs_page=req page=req->wb_page wb_index=req->wb_index page_index=req->wb_page->index page_mapping=req->wb_page->mapping ctx_error=req->wb_context->error'
+
+
+# perf probe -m nfs -V nfs_unlock_and_release_request
+#Available variables at nfs_unlock_and_release_request
+#        @<nfs_unlock_and_release_request+0>
+#                struct nfs_page*        req
+perf probe $VERBOSE $DRY_RUN -m nfs 'nfs_unlock_and_release_request nfs_page=req page=req->wb_page wb_index=req->wb_index page_index=req->wb_page->index page_mapping=req->wb_page->mapping ctx_error=req->wb_context->error'
+
+
+# perf probe -m nfs -V nfs_unlock_request
+#Available variables at nfs_unlock_request
+#        @<nfs_unlock_request+0>
+#                struct nfs_page*        req
+perf probe $VERBOSE $DRY_RUN -m nfs 'nfs_unlock_request nfs_page=req page=req->wb_page wb_index=req->wb_index page_index=req->wb_page->index page_mapping=req->wb_page->mapping ctx_error=req->wb_context->error'
+
+
+# perf probe -V delete_from_page_cache
+#Available variables at delete_from_page_cache
+#        @<delete_from_page_cache+0>
+#                struct page*    page
+perf probe $VERBOSE $DRY_RUN 'delete_from_page_cache page page_index=page->index page_mapping=page->mapping'
+
+
+# perf probe -m nfs -V nfs_free_request
+#Available variables at nfs_free_request
+#        @<nfs_free_request+0>
+#                struct nfs_page*        req
+perf probe $VERBOSE $DRY_RUN -m nfs 'nfs_free_request nfs_page=req page=req->wb_page wb_index=req->wb_index page_index=req->wb_page->index page_mapping=req->wb_page->mapping ctx_error=req->wb_context->error'
+
+
+# perf probe -m nfs -V nfs_writepages_callback
+#Available variables at nfs_writepages_callback
+#        @<nfs_writepages_callback+0>
+#                 (unknown_type  data
+#                struct page*    page
+#                struct writeback_control*       wbc
+perf probe $VERBOSE $DRY_RUN -m nfs 'nfs_writepages_callback page page_index=page->index page_mapping=page->mapping wbc'
+
+
+
+# perf probe -m nfs -V nfs_writepages
+#Available variables at nfs_writepages
+#        @<nfs_writepages+0>
+#                struct address_space*   mapping
+#                struct nfs_pageio_descriptor    pgio
+#                struct writeback_control*       wbc
+perf probe $VERBOSE $DRY_RUN -m nfs 'nfs_writepages mapping nrpages=mapping->nrpages pgio inode=pgio.pg_inode pgio_mapping=pgio.pg_inode->i_mapping pgio_nrpages=pgio.pg_inode->i_mapping->nrpages wbc'
+perf probe $VERBOSE $DRY_RUN -m nfs 'nfs_writepages_return=nfs_writepages%return $retval'
+
+
+# perf probe -m nfs -V nfs_end_page_writeback
+#Available variables at nfs_end_page_writeback
+#        @<nfs_end_page_writeback+0>
+#                struct nfs_page*        req
+perf probe $VERBOSE $DRY_RUN -m nfs 'nfs_end_page_writeback nfs_page=req page=req->wb_page wb_index=req->wb_index page_index=req->wb_page->index page_mapping=req->wb_page->mapping ctx_error=req->wb_context->error'
+
+
+# perf probe -m nfs -V nfs_pageio_complete
+#Available variables at nfs_pageio_complete
+#        @<nfs_pageio_complete+0>
+#                struct nfs_pageio_descriptor*   desc
+perf probe $VERBOSE $DRY_RUN -m nfs 'nfs_pageio_complete desc inode=desc->pg_inode mapping=desc->pg_inode->i_mapping nrpages=desc->pg_inode->i_mapping->nrpages'
+
+
+
+# perf probe -m nfs -V nfs_file_fsync
+#Available variables at nfs_file_fsync
+#        @<nfs_file_fsync+0>
+#                int     datasync
+#                loff_t  end
+#                loff_t  start
+#                struct file*    file
+perf probe $VERBOSE $DRY_RUN -m nfs 'nfs_file_fsync file file_mapping=file->f_mapping file_nrpages=file->f_mapping->nrpages file_ctx_error=+96(+168(%di)):s32 start end datasync'
+perf probe $VERBOSE $DRY_RUN -m nfs 'nfs_file_fsync_return=nfs_file_fsync%return $retval'
+
+
+# perf probe -m nfs -V nfs_file_fsync_commit
+#Available variables at nfs_file_fsync_commit
+#        @<nfs_file_fsync_commit+0>
+#                int     datasync
+#                loff_t  end
+#                loff_t  start
+#                struct file*    file
+perf probe $VERBOSE $DRY_RUN -m nfs 'nfs_file_fsync_commit file file_mapping=file->f_mapping file_nrpages=file->f_mapping->nrpages file_ctx_error=+96(+168(%di)):s32 start end datasync'
+perf probe $VERBOSE $DRY_RUN -m nfs 'nfs_file_fsync_commit_return=nfs_file_fsync_commit%return $retval'
+
+
+# perf probe -m nfs -V nfs_commit_inode
+#Available variables at nfs_commit_inode
+#        @<nfs_commit_inode+0>
+#                int     how
+#                struct inode*   inode
+#        @<nfs_wb_all+168>
+#                struct inode*   inode
+#        @<nfs_wb_single_page+165>
+#                struct inode*   inode
+perf probe $VERBOSE $DRY_RUN -m nfs 'nfs_commit_inode inode inode_mapping=inode->i_mapping nrpages=inode->i_mapping->nrpages'
+perf probe $VERBOSE $DRY_RUN -m nfs 'nfs_commit_inode_return=nfs_commit_inode%return $retval'
+
+
+# perf probe -V grab_cache_page_write_begin
+#Available variables at grab_cache_page_write_begin
+#        @<grab_cache_page_write_begin+0>
+#                long unsigned int       index
+#                struct address_space*   mapping
+#                unsigned int    flags
+perf probe $VERBOSE $DRY_RUN 'grab_cache_page_write_begin mapping nrpages=mapping->nrpages index flags'
+perf probe $VERBOSE $DRY_RUN 'grab_cache_page_write_begin_return=grab_cache_page_write_begin%return $retval'
+
+
+
+# perf probe -m nfs -V nfs_create_request
+#Available variables at nfs_create_request
+#        @<nfs_create_request+0>
+#                struct nfs_open_context*        ctx
+#                struct nfs_page*        last
+#                struct page*    page
+#                unsigned int    count
+#                unsigned int    offset
+#        @<__nfs_pageio_add_request+485>
+#                long unsigned int*      addr
+#                struct nfs_open_context*        ctx
+#                struct nfs_page*        last
+#                struct page*    page
+#                unsigned int    count
+#                unsigned int    offset
+#        @<nfs_create_request+0>
+#                struct nfs_open_context*        ctx
+#                struct nfs_page*        last
+#                struct page*    page
+#                unsigned int    count
+#                unsigned int    offset
+#        @<nfs_pageio_add_request+484>
+#                long unsigned int*      addr
+#                struct nfs_open_context*        ctx
+#                struct nfs_page*        last
+#                struct page*    page
+#                unsigned int    count
+#                unsigned int    offset
+
+# original probe isn't working... going with alternate
+# perf probe $VERBOSE $DRY_RUN -m nfs 'nfs_create_request page page_index=page->index page_mapping=page->mapping nfs_page_last=last nfs_page_last_page=last->wb_page nfs_page_wb_index=last->wb_index nfs_page_page_index=last->wb_page->index nfs_page_mapping=last->wb_page->mapping ctx ctx_error=ctx->error offset count'
+perf probe $VERBOSE $DRY_RUN -m nfs 'nfs_create_request page page_index=page->index page_mapping=page->mapping nfs_page_last=last nfs_page_last_page=last->wb_page ctx ctx_error=ctx->error offset count'
+
+
+# perf probe -m nfs -V nfs_pageio_add_request
+#Available variables at nfs_pageio_add_request
+#        @<nfs_pageio_add_request+0>
+#                struct nfs_page*        req
+#                struct nfs_pageio_descriptor*   desc
+
+# maybe too long?
+#perf probe -v $VERBOSE $DRY_RUN -m nfs 'nfs_pageio_add_request nfs_page=req page=req->wb_page wb_index=req->wb_index page_index=req->wb_page->index page_mapping=req->wb_page->mapping nrpages=req->wb_page->mapping->nrpages desc desc_inode=desc->pg_inode desc_mapping=desc->pg_inode->i_mapping desc_nrpages=desc->pg_inode->i_mapping->nrpages'
+perf probe $VERBOSE $DRY_RUN -m nfs 'nfs_pageio_add_request nfs_page=req page=req->wb_page wb_index=req->wb_index page_index=req->wb_page->index page_mapping=req->wb_page->mapping nrpages=req->wb_page->mapping->nrpages desc desc_inode=desc->pg_inode'
+
+
+# perf probe -m nfs -V nfs_pageio_init_read
+#Available variables at nfs_pageio_init_read
+#        @<nfs_pageio_init_read+0>
+#                bool    force_mds
+#                struct inode*   inode
+#                struct nfs_pageio_descriptor*   pgio
+#                struct nfs_pgio_completion_ops* compl_ops
+
+
+
+
+
+
+
+# perf probe -m nfs -V nfs_flush_incompatible
+#Available variables at nfs_flush_incompatible
+#        @<nfs_flush_incompatible+0>
+#                struct file*    file
+#                struct nfs_page*        req
+#                struct page*    page
+#perf probe $VERBOSE $DRY_RUN -m nfs 'nfs_flush_incompatible file file_mapping=file->f_mapping nrpages=file->f_mapping->nrpages file_ctx_error=+96(+168(%di)):s32 nfs_page=req nfs_page_page=req->wb_page wb_index=req->wb_index page_index=req->wb_page->index page_mapping=req->wb_page->mapping nrpages=req->wb_page->mapping->nrpages page page_index=page->index page_mapping=page->mapping'
+
+perf probe $VERBOSE $DRY_RUN -m nfs 'nfs_flush_incompatible_A=nfs_flush_incompatible file file_mapping=file->f_mapping nrpages=file->f_mapping->nrpages file_ctx_error=+96(+168(%di)):s32 nfs_page=req nfs_page_page=req->wb_page wb_index=req->wb_index'
+perf probe $VERBOSE $DRY_RUN -m nfs 'nfs_flush_incompatible_B=nfs_flush_incompatible nfs_page_index=req->wb_page->index nfs_page_mapping=req->wb_page->mapping nrpages=req->wb_page->mapping->nrpages page page_index=page->index page_mapping=page->mapping'
+
+#perf probe $VERBOSE $DRY_RUN -m nfs 'nfs_flush_incompatible file file_mapping=file->f_mapping nrpages=file->f_mapping->nrpages file_ctx_error=+96(+168(%di)):s32 nfs_page=req nfs_page_page=req->wb_page nfs_page_wb_index=req->wb_index nfs_page_index=req->wb_page->index nfs_page_mapping=req->wb_page->mapping page page_index=page->index page_mapping=page->mapping'
+
+
+# perf probe -m nfs -V nfs_page_async_flush
+#Available variables at nfs_page_async_flush
+#        @<nfs_do_writepage+66>
+#                bool    launder
+#                bool    nonblock
+#                struct nfs_pageio_descriptor*   pgio
+#                struct page*    page
+# too long with launder
+perf probe $VERBOSE $DRY_RUN -m nfs 'nfs_page_async_flush pgio pgio_inode=pgio->pg_inode pgio_mapping=pgio->pg_inode->i_mapping pgio_mapping_nrpages=pgio->pg_inode->i_mapping->nrpages page page_index=page->index page_mapping=page->mapping nonblock'
+
+
+
+# perf probe -V generic_file_aio_write
+#Available variables at generic_file_aio_write
+#        @<generic_file_aio_write+0>
+#                loff_t  pos
+#                long unsigned int       nr_segs
+#                struct iovec*   iov
+#                struct kiocb*   iocb
+perf probe $VERBOSE $DRY_RUN 'generic_file_aio_write file=iocb->ki_filp file_ctx_error=+96(+168(+8(%di))):s32 inode=iocb->ki_filp->f_inode mapping=iocb->ki_filp->f_mapping pos'
+
+#      0  ssize_t generic_file_aio_write(struct kiocb *iocb, const struct iovec *iov,
+#                        unsigned long nr_segs, loff_t pos)
+perf probe $VERBOSE $DRY_RUN 'generic_file_aio_write_return=generic_file_aio_write%return $retval'
+
+
+# perf probe -V __generic_file_aio_write
+#Available variables at __generic_file_aio_write
+#        @<__generic_file_aio_write+0>
+#                loff_t* ppos
+#                long unsigned int       nr_segs
+#                size_t  ocount
+#                struct iovec*   iov
+#                struct kiocb*   iocb
+perf probe $VERBOSE $DRY_RUN '__generic_file_aio_write file=iocb->ki_filp file_ctx_error=+96(+168(+8(%di))):s32 inode=iocb->ki_filp->f_inode mapping=iocb->ki_filp->f_mapping ppos ocount'
+
+perf probe $VERBOSE $DRY_RUN '__generic_file_aio_write_return=__generic_file_aio_write%return $retval'
+
+
+
+
+# wait_on_page_writeback #hundreds of these
+
+#wait_for_stable_page
+# perf probe -V wait_for_stable_page
+#Available variables at wait_for_stable_page
+#        @<wait_for_stable_page+0>
+#                struct page*    page
+perf probe $VERBOSE $DRY_RUN 'wait_for_stable_page page page_index=page->index page_mapping=page->mapping'
+
+
+
+#=> generic_error_remove_page (ffffffffb49a6f1a)
+#=> nfs_do_writepage (ffffffffc0b2df56)
+#=> nfs_writepage_locked (ffffffffc0b2e148)
+#=> nfs_wb_single_page (ffffffffc0b2ef66)
+#=> nfs_updatepage (ffffffffc0b2f628)
+#=> nfs_write_end (ffffffffc0b1e531)
+#=> generic_file_buffered_write (ffffffffb4996b08)
+#=> __generic_file_aio_write (ffffffffb4999072)
+#=> generic_file_aio_write (ffffffffb49992e9)
+#=> nfs_file_write (ffffffffc0b1d99b)
+
