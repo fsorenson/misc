@@ -1,0 +1,256 @@
+...
+    generic_write_sync:   (ffffffff9b852fc0) file=0xffff9baed7931900 file_ctx_error=-28 inode=0xffff9baedb7e0e10 mapping=0xffff9baedb7e0f60 pos=19722284 count=9
+   generic_write_sync_return: (ffffffff9b852fc0 <- ffffffff9b799307) arg1=0x0
+       recycle_rp_inst
+          _raw_qspin_lock
+        generic_file_aio_write_return: (ffffffff9b799290 <- ffffffffc0c8e99b) arg1=0x9
+
+here is the trace for pid 15039:
+
+    vfs_fsync
+       nfs_file_fsync:  file=0xffff9baed7931900 file_mapping=0xffff9baedb7e0f60 file_nrpages=0x3 file_ctx_error=-28 start=0 end=9223372036854775807 datasync=0
+          nfs_fsync_enter: fileid=00:29:13 fhandle=0x50736747 version=1661007710071554048
+          inode_dio_wait
+          filemap_write_and_wait_range
+             __filemap_fdatawrite_range
+                do_writepages
+                   nfs_writepages: mapping=0xffff9baedb7e0f60 nrpages=0x3 pgio=0x0 inode=0x7fffffffffffffff pgio_mapping=0x0 pgio_nrpages=0x0 wbc=0xffff9baec1783cd0
+                      nfs_pageio_init_write
+                         nfs_pageio_init
+                      write_cache_pages
+                         tag_pages_for_writeback
+                            _raw_qspin_lock_irq
+                            _cond_resched
+                         pagevec_lookup_tag
+                            find_get_pages_tag
+                         _cond_resched
+                         clear_page_dirty_for_io
+                            page_mapping
+                            page_mkclean
+                            dec_zone_page_state
+                         wbc_writepage:  bdi 0:41: towrt=9223372036854775807 skip=0 mode=1 kupd=0 bgrd=0 reclm=0 cyclic=0 start=0x0 end=0x7fffffffffffffff
+                         nfs_writepages_callback:  page=0xffffdb691ae662c0 page_index=0x12cd page_mapping=0xffff9baedb7e0f60 wbc=0xffff9baec1783cd0
+                            nfs_do_writepage:  pgio=0xffff9baec1783be0 pgio_inode=0xffff9baedb7e0e10 pgio_mapping=0xffff9baedb7e0f60 pgio_mapping_nrpages=0x3 page=0xffffdb691ae662c0 page_index=0x12cd page_mapping=0xffff9baedb7e0f60 wbc=0xffff9baec1783cd0
+                               nfs_pageio_cond_complete
+                                  nfs_page_async_flush:  pgio=0xffff9baec1783be0 pgio_inode=0xffff9baedb7e0e10 pgio_mapping=0xffff9baedb7e0f60 pgio_mapping_nrpages=0x3 page=0xffffdb691ae662c0 page_index=0x12cd page_mapping=0xffff9baedb7e0f60 nonblock=0x1
+                               nfs_lock_and_join_requests:  page=0xffffdb691ae662c0 page_index=0x12cd page_mapping=0xffff9baedb7e0f60 nonblock=0x0
+                                  _raw_qspin_lock
+                                  nfs_page_find_head_request_locked
+                                  nfs_page_group_lock
+                                  nfs_page_group_clear_bits
+                                  nfs_page_group_unlock
+                                     __smp_mb__before_atomic
+                                     __smp_mb__after_atomic
+                                     wake_up_bit
+                                        bit_waitqueue
+                                        __wake_up_bit
+                               nfs_lock_and_join_requests_return: (ffffffffc0c9e980 <- ffffffffc0c9ee10) arg1=0xffff9baecbfc8e00
+                               __test_set_page_writeback
+                                  page_mapping
+                                  _raw_spin_lock_irqsave
+                                  sb_mark_inode_writeback
+                                  _raw_spin_unlock_irqrestore
+                                  inc_zone_page_state
+                               nfs_pageio_add_request:  nfs_page=0xffff9baecbfc8e00 page=0xffffdb691ae662c0 wb_index=0x12cd page_index=0x12cd page_mapping=0xffff9baedb7e0f60 nrpages=0x3 desc=0xffff9baec1783be0 desc_inode=0xffff9baedb7e0e10
+                                  __nfs_pageio_add_request
+                                     nfs_pgio_current_mirror
+                                     nfs_page_group_lock
+                                     nfs_pgio_current_mirror
+                                     nfs_generic_pg_test
+                                        nfs_pgio_current_mirror
+                                     nfs_page_group_unlock
+                                        __smp_mb__before_atomic
+                                        __smp_mb__after_atomic
+                                        wake_up_bit
+                                           bit_waitqueue
+                                           __wake_up_bit
+                           unlock_page
+                               __smp_mb__after_atomic
+                               page_waitqueue
+                               __wake_up_bit
+                         _cond_resched
+                         __lock_page
+                            page_waitqueue
+                            __wait_on_bit_lock
+                               prepare_to_wait_exclusive
+                                  _raw_spin_lock_irqsave
+                                  _raw_spin_unlock_irqrestore
+                               bit_wait_io
+                                  io_schedule
+                                     io_schedule_timeout
+                                        __delayacct_blkio_start
+                                           ktime_get_ts64
+                                        schedule_timeout
+                                           schedule
+                                              __schedule
+
+
+then pid 15036 executes:
+
+    _raw_spin_unlock_irqrestore
+    __test_set_page_writeback
+       page_mapping
+       _raw_spin_lock_irqsave
+       _raw_spin_unlock_irqrestore
+       inc_zone_page_state
+    poke_int3_handler
+    kgdb_ll_trap
+    notifier_call_chain
+  nfs_write_error_remove_page:  nfs_page=0xffff9baecbf5a900 page=0xffffdb691ada7980 wb_index=0x12cf page_index=0x12cf page_mapping=0xffff9baedb7e0f60 ctx_error=-28
+    nfs_unlock_request:    nfs_page=0xffff9baecbf5a900 page=0xffffdb691ada7980 wb_index=0x12cf page_index=0x12cf page_mapping=0xffff9baedb7e0f60 ctx_error=-28
+       __smp_mb__before_atomic
+       __smp_mb__after_atomic
+       wake_up_bit
+          bit_waitqueue
+          __wake_up_bit
+    nfs_end_page_writeback:  nfs_page=0xffff9baecbf5a900 page=0xffffdb691ada7980 wb_index=0x12cf page_index=0x12cf page_mapping=0xffff9baedb7e0f60 ctx_error=-28
+       nfs_page_group_sync_on_bit
+          nfs_page_group_lock
+          nfs_page_group_unlock
+             __smp_mb__before_atomic
+             __smp_mb__after_atomic
+             wake_up_bit
+                bit_waitqueue
+                __wake_up_bit
+       end_page_writeback
+          test_clear_page_writeback
+             page_mapping
+             _raw_spin_lock_irqsave
+             _raw_spin_unlock_irqrestore
+             dec_zone_page_state
+             inc_zone_page_state
+          __smp_mb__after_atomic
+          page_waitqueue
+          __wake_up_bit
+             __wake_up
+                _raw_spin_lock_irqsave
+                __wake_up_common
+                   wake_bit_function_rh
+                _raw_spin_unlock_irqrestore
+       clear_bdi_congested
+          __smp_mb__after_atomic
+    generic_error_remove_page:  mapping=0xffff9baedb7e0f60 nrpages=0x3 page=0xffffdb691ada7980 page_index=0x12cf page_mapping=0xffff9baedb7e0f60
+       truncate_inode_page
+          do_invalidatepage_range
+             nfs_invalidate_page:   page=0xffffdb691ada7980 page_index=0x12cf page_mapping=0xffff9baedb7e0f60 offset=0x0 length=0x1000
+                printk
+                   vprintk_default
+                      vprintk_emit
+                         _raw_qspin_lock
+                         log_store
+                         console_trylock
+                            down_trylock
+                               _raw_spin_lock_irqsave
+                               _raw_spin_unlock_irqrestore
+                         console_unlock
+                            _raw_spin_lock_irqsave
+                            _raw_spin_unlock_irqrestore
+                            _raw_spin_lock_irqsave
+                            msg_print_text
+                               print_prefix
+                                  print_time
+                               print_prefix
+                                  print_time
+                            call_console_drivers.constprop.17
+                            _raw_spin_lock_irqsave
+                            up
+                               _raw_spin_lock_irqsave
+                               _raw_spin_unlock_irqrestore
+                            _raw_qspin_lock
+                            _raw_spin_unlock_irqrestore
+                            wake_up_klogd
+                nfs_wb_page_cancel: 0) inode=0xffff9baedb7e0e10 inode_mapping=0xffff9baedb7e0f60 nrpages=0x3 page=0xffffdb691ada7980 page_index=0x12cf page_mapping=0xffff9baedb7e0f60
+                   nfs_lock_and_join_requests:  page=0xffffdb691ada7980 page_index=0x12cf page_mapping=0xffff9baedb7e0f60 nonblock=0x0
+                      _raw_qspin_lock
+                      nfs_page_find_head_request_locked
+                      nfs_page_group_lock
+                      nfs_page_group_clear_bits
+                      nfs_page_group_unlock
+                         __smp_mb__before_atomic
+                         __smp_mb__after_atomic
+                         wake_up_bit
+                            bit_waitqueue
+                            __wake_up_bit
+                   nfs_lock_and_join_requests_return: (ffffffffc0c9e980 <- ffffffffc0c9fe30) arg1=0xffff9baecbf5a900
+                   nfs_inode_remove_request:  nfs_page=0xffff9baecbf5a900 page=0xffffdb691ada7980 wb_index=0x12cf page_index=0x12cf page_mapping=0xffff9baedb7e0f60 ctx_error=-28
+                      nfs_page_group_sync_on_bit
+                         nfs_page_group_lock
+                         nfs_page_group_unlock
+                            __smp_mb__before_atomic
+                            __smp_mb__after_atomic
+                            wake_up_bit
+                               bit_waitqueue
+                               __wake_up_bit
+                      _raw_qspin_lock
+                      page_waitqueue
+                      __wake_up_bit
+                         __wake_up
+                            _raw_spin_lock_irqsave
+                            __wake_up_common
+                               wake_bit_function_rh
+                            _raw_spin_unlock_irqrestore
+                      nfs_release_request:  nfs_page=0xffff9baecbf5a900 page=0xffffdb691ada7980 wb_index=0x12cf page_index=0x12cf page_mapping=0xffff9baedb7e0f60 ctx_error=-28
+                   cancel_dirty_page
+                   nfs_unlock_and_release_request:  nfs_page=0xffff9baecbf5a900 page=0xffffdb691ada7980 wb_index=0x12cf page_index=0x12cf page_mapping=0xffff9baedb7e0f60 ctx_error=-28
+                      nfs_unlock_request:    nfs_page=0xffff9baecbf5a900 page=0xffffdb691ada7980 wb_index=0x12cf page_index=0x12cf page_mapping=0xffff9baedb7e0f60 ctx_error=-28
+                         __smp_mb__before_atomic
+                         __smp_mb__after_atomic
+                         wake_up_bit
+                            bit_waitqueue
+                            __wake_up_bit
+                      nfs_release_request:  nfs_page=0xffff9baecbf5a900 page=0xffffdb691ada7980 wb_index=0x12cf page_index=0x12cf page_mapping=0xffff9baedb7e0f60 ctx_error=-28
+                nfs_wb_page_cancel_return: (ffffffffc0c9fe00 <- ffffffffc0c8ee72) arg1=0x0
+    cancel_dirty_page:     page=0xffffdb691ada7980 page_index=0x12cf page_mapping=0xffff9baedb7e0f60
+    delete_from_page_cache:  page=0xffffdb691ada7980 page_index=0x12cf page_mapping=0xffff9baedb7e0f60
+       _raw_qspin_lock_irq
+       __delete_from_page_cache
+       mm_filemap_delete_from_page_cache: dev 0:41 ino d page=0xffffdb691ada7980 pfn=18446703843201415552 ofs=19722240
+          __dec_zone_page_state
+             __dec_zone_state
+       mem_cgroup_uncharge_cache_page
+          __mem_cgroup_uncharge_common
+             lookup_page_cgroup
+             mem_cgroup_charge_statistics
+             memcg_check_events
+       put_page
+    nfs_release_request:  nfs_page=0xffff9baecbf5a900 page=0xffffdb691ada7980 wb_index=0x12cf page_index=0x12cf page_mapping=0x0 ctx_error=-28
+       nfs_page_group_destroy
+          nfs_page_group_sync_on_bit
+             nfs_page_group_lock
+             nfs_page_group_unlock
+                __smp_mb__before_atomic
+                __smp_mb__after_atomic
+                wake_up_bit
+                   bit_waitqueue
+                   __wake_up_bit
+          nfs_free_request:      nfs_page=0xffff9baecbf5a900 page=0xffffdb691ada7980 wb_index=0x12cf page_index=0x12cf page_mapping=0x0 ctx_error=-28
+             put_page
+             wake_up_atomic_t
+                bit_waitqueue
+                __wake_up_bit
+             nfs_put_lock_context
+             put_nfs_open_context
+                __put_nfs_open_context
+             kmem_cache_free
+                __slab_free
+    nfs_pageio_complete:   desc=0xffff9bad68aafa18 inode=0xffff9baedb7e0e10 mapping=0xffff9baedb7e0f60 nrpages=0x2
+       nfs_pageio_doio
+          nfs_pgio_current_mirror
+       kfree
+    clear_page_dirty_for_io
+       page_mapping
+  nfs_writeback_page_exit: error=0 fileid=00:29:13 fhandle=0x50736747 type=8 (REG) version=1661007710071554048 size=19722293 cache_validity=4 (INVALID_ATIME) nfs_flags=28 (INVALIDATING|FLUSHING)
+    nfs_wb_single_page_exit:  inode=0xffff9baedb7e0e10 inode_mapping=0xffff9baedb7e0f60 nrpages=0x2 ret=0
+    nfs_page_group_sync_on_bit
+       nfs_create_request:  page=0xffffdb691ada7980 page_index=0x12cf page_mapping=0x0 nfs_page_last=0x0 nfs_page_last_page=0x0 ctx=0xffff9bae87e97000 ctx_error=0 offset=0x688 count=0x6f9
+          kmem_cache_alloc
+             _cond_resched
+          nfs_get_lock_context
+             _raw_qspin_lock
+             __nfs_find_lock_context
+             kfree
+          get_nfs_open_context
+    _raw_qspin_lock
+    nfs_grow_file:        (ffffffffc0ca02f7) addr=0xffffdb691ada7980 page=0xffffdb691ada7980 page_index=0x12cf page_mapping=0x0 offset=0x688 count=0x6f9
+    do_page_fault
+

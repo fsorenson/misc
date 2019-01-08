@@ -1,0 +1,44 @@
+#!/bin/bash
+
+
+set -f
+
+events="syscalls:sys_enter_write syscalls:sys_exit_write syscalls:sys_enter_read syscalls:sys_exit_read syscalls:sys_enter_lseek syscalls:sys_exit_lseek syscalls:sys_enter_truncate syscalls:sys_exit_truncate syscalls:sys_enter_ftruncate syscalls:sys_exit_ftruncate nfs:* writeback:* filemap:* pagemap:*"
+
+#graph_funcs="*nfs* *writeback*"
+
+negative_funcs="*kernfs* *nfsd* *pnfs* *unwind* *stack* *trace* *text_address* *module_address* *extable* *exception* *bad_area* *oops*"
+
+
+events_str=""
+for e in $events ; do
+	events_str="$events_str -e $e"
+done
+
+graph_str=""
+for g in $graph_funcs ; do
+	graph_str="$graph_str -l $g"
+done
+
+negative_str=""
+for n in $negative_funcs ; do
+	negative_str="$negative_str -n $n"
+done
+
+buf="-b 20000"
+
+echo executing: trace-cmd start --date -p function_graph $buf $events_str $graph_str $negative_str
+#trace-cmd start --date --profile -p function_graph $events_str $graph_str $negative_str
+trace-cmd start --date -p function_graph $buf $events_str $graph_str $negative_str
+
+
+# hmm.  not quite right...  manual fixup
+echo '!*kernfs*' >>/sys/kernel/debug/tracing/set_ftrace_filter
+echo '!*pnfs*' >>/sys/kernel/debug/tracing/set_ftrace_filter
+echo '!*nfsd*' >>/sys/kernel/debug/tracing/set_ftrace_filter
+
+echo 20000 > /sys/kernel/debug/tracing/buffer_size_kb
+
+
+#for f in $(grep nfs available_filter_functions | egrep -v 'kernfs|nfsd|pnfs' | awk '{print $1}') ; do echo $f >> set_graph_function ; done
+

@@ -1,0 +1,26 @@
+#!/bin/bash
+
+#disable globbing
+set -f
+
+events="syscalls:sys_enter_write syscalls:sys_exit_write syscalls:sys_enter_read syscalls:sys_exit_read syscalls:sys_enter_lseek syscalls:sys_exit_lseek syscalls:sys_enter_truncate syscalls:sys_exit_truncate syscalls:sys_enter_ftruncate syscalls:sys_exit_ftruncate nfs:* writeback:* filemap:* pagemap:* probe:* syscalls:sys_enter_pread64 syscalls:sys_exit_pread64 syscalls:sys_enter_pwrite64 syscalls:sys_exit_pwrite64"
+
+
+for e in $events ; do
+	echo "$e" >> /sys/kernel/debug/tracing/set_event
+done
+
+echo '*kprobe*' >> /sys/kernel/debug/tracing/set_ftrace_notrace
+echo '*kretprobe*' >> /sys/kernel/debug/tracing/set_ftrace_notrace
+echo '*trampoline*' >> /sys/kernel/debug/tracing/set_ftrace_notrace
+
+
+
+echo 20000 > /sys/kernel/debug/tracing/buffer_size_kb
+
+echo function > /sys/kernel/debug/tracing/current_tracer
+echo 1 > /sys/kernel/debug/tracing/tracing_on
+
+
+
+
