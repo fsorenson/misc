@@ -98,13 +98,14 @@ closedir DIR;
 
 foreach my $clnt (@clnt_contents) {
 	next if ($clnt eq "." || $clnt eq "..");
-	my $clnt_num = int($clnt);
+	my $clnt_num = hex($clnt);
 
-	my $tasks_file = "/sys/kernel/debug/sunrpc/rpc_clnt/" . $clnt_num . "/tasks";
+	my $tasks_file = "/sys/kernel/debug/sunrpc/rpc_clnt/" . $clnt . "/tasks";
 	open (my $fh, $tasks_file) or die("unable to open $tasks_file");
+	my $task_count = 0;
 
-	my $xprt_num = hex(basename(readlink("/sys/kernel/debug/sunrpc/rpc_clnt/" . $clnt_num . "/xprt")));
-	push @{$xprt_info{$xprt_num}{'clnts'}}, $clnt_num;
+	my $xprt_num = hex(basename(readlink("/sys/kernel/debug/sunrpc/rpc_clnt/" . $clnt . "/xprt")));
+	push $xprt_info{$xprt_num}{'clnts'}, $clnt_num;
 
 	while (<$fh>) {
 		chomp;
@@ -144,6 +145,7 @@ foreach my $rpc_xprt_num (sort {$a<=>$b} keys(%xprt_info)) {
 	my @tasks = @{ $rpc_xprt{'tasks'} };
 	my $xprt_task_count = 0;
 	foreach my $task (@tasks) {
+
 		my %rpc_task = %{ $task };
 
 		printf("\n") if ($xprt_task_count++ != 0);
