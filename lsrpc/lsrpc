@@ -10,7 +10,6 @@ use POSIX 'strerror';
 
 my %xprt_info = ();
 
-
 my %rpc_xprt_states = (
 	0 => "XPRT_LOCKED",
 	1 => "XPRT_CONNECTED",
@@ -21,12 +20,6 @@ my %rpc_xprt_states = (
 	6 => "XPRT_CLOSING",
 	9 => "XPRT_CONGESTED",
 );
-sub show_rpc_xprt_states {
-	foreach my $key (sort(keys(%rpc_xprt_states))) {
-		my $name = $rpc_xprt_states{$key};
-		printf("\t0x%x - %s\n", $key, $name);
-	}
-};
 my %rpc_task_flags = (
 	0x0001 => "RPC_TASK_ASYNC",
 	0x0002 => "RPC_TASK_SWAPPER",
@@ -46,12 +39,6 @@ sub indent_str {
 	return "  " x $count;
 }
 
-sub show_rpc_task_flags {
-	foreach my $key (sort {$a<=>$b} keys(%rpc_task_flags)) {
-		my $name = $rpc_task_flags{$key};
-		printf("\t0x%x - %s\n", $key, $name);
-	}
-};
 sub xprt_states_str {
 	my @ret = ();
 	my $val = int(shift);
@@ -64,7 +51,6 @@ sub xprt_states_str {
 	}
 	return join(" | ",@ret);
 };
-
 sub rpc_task_flags_str {
 	my $val = hex(shift);
 	my @ret = ();
@@ -116,25 +102,13 @@ foreach my $clnt (@clnt_contents) {
 
 	my $tasks_file = "/sys/kernel/debug/sunrpc/rpc_clnt/" . $clnt_num . "/tasks";
 	open (my $fh, $tasks_file) or die("unable to open $tasks_file");
-	my $task_count = 0;
 
-#	my $clnt_xprt_link = "/sys/kernel/debug/sunrpc/rpc_clnt/" . $clnt_num . "/xprt";
 	my $xprt_num = hex(basename(readlink("/sys/kernel/debug/sunrpc/rpc_clnt/" . $clnt_num . "/xprt")));
-	push $xprt_info{$xprt_num}{'clnts'}, $clnt_num;
+	push @{$xprt_info{$xprt_num}{'clnts'}}, $clnt_num;
 
 	while (<$fh>) {
 		chomp;
 		if ($_ =~ /^\s*([0-9]+) ([0-9a-f]+) \s*([-0-9]+) (0x[0-9a-f]+) (0x[0-9a-f]+) \s*([0-9]+) ([^ ]+ [^ ]+) ([^ ]+v[^ ]+) ([^ ]+) (a:[^ ]+ \[[^ ]+\]) (q:.+)/) {
-#			my $task_pid = $1;
-#			my $task_flags = $2;
-#			my $task_status = $3;
-#			my $task_xid = $5;
-#			my $task_timeout = $6;
-#			my $task_ops = $7;
-#			my $task_prog = $8;
-#			my $task_proc = $9;
-#			my $task_action = $10;
-#			my $task_queue = $11;
 			my %new_task = (
 				'pid' => $1,
 				'flags' => $2,
@@ -149,13 +123,9 @@ foreach my $clnt (@clnt_contents) {
 				'queue' => $11,
 			);
 			push @{$xprt_info{$xprt_num}{'tasks'}}, \%new_task;
-#				printf("pid: %d, flags: %x, status: %d, clientid: %s, xid: %s\ttimeout: %d, ops: %s, prog: %s, proc: %s, action: %s, queue: %s\n",
-#					$new_task{'pid'}, $new_task{'flags'}, $new_task{'status'}, $new_task{'clientid'},
-#					$new_task{'xid'}, $new_task{'timeout'}, $new_task{'ops'}, $new_task{'prog'}, $new_task{'proc'}, $new_task{'action'}, $new_task{'queue'});
 		}
 	}
 }
-
 
 my $rpc_xprt_count = 0;
 foreach my $rpc_xprt_num (sort {$a<=>$b} keys(%xprt_info)) {
@@ -174,12 +144,7 @@ foreach my $rpc_xprt_num (sort {$a<=>$b} keys(%xprt_info)) {
 	my @tasks = @{ $rpc_xprt{'tasks'} };
 	my $xprt_task_count = 0;
 	foreach my $task (@tasks) {
-
 		my %rpc_task = %{ $task };
-
-#		printf("\tpid: %d, flags: %x, status: %d, clientid: %s, xid: %s\ttimeout: %d, ops: %s, prog: %s, proc: %s, action: %s, queue: %s\n",
-#			$rpc_task{'pid'}, $rpc_task{'flags'}, $rpc_task{'status'}, $rpc_task{'clientid'},
-#			$rpc_task{'xid'}, $rpc_task{'timeout'}, $rpc_task{'ops'}, $rpc_task{'prog'}, $rpc_task{'proc'}, $rpc_task{'action'}, $rpc_task{'queue'});
 
 		printf("\n") if ($xprt_task_count++ != 0);
 
@@ -192,13 +157,9 @@ foreach my $rpc_xprt_num (sort {$a<=>$b} keys(%xprt_info)) {
 		printf(" - status: %d (%s)", $rpc_task{'status'}, strerror(-$rpc_task{'status'})) if ($rpc_task{'status'} != 0);
 		printf("\n");
 
-
-
 		my $task_flags_str = rpc_task_flags_str($rpc_task{'flags'});
 		printf("%sflags: %s\n", indent_str(2), $task_flags_str);
 
 		printf("%s%s, %s\n", indent_str(2), $rpc_task{'queue'}, $rpc_task{'action'});
 	}
-
 }
-
