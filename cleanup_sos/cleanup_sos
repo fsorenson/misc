@@ -23,7 +23,7 @@ cleanup_dir () {
 s/^lsof: avoiding \(stat\|readlink\)(.\+): -b was specified.$//g
 s/^lsof: WARNING: can't stat() .\+ file system .\+//g
 s/^      Output information may be incomplete.//g
-s/ (\(stat\|readlink\): \(No such file or directory\|Resource temporarily unavailable\))$//g
+s/ (\(stat\|readlink\): \(No such file or directory\|Resource temporarily unavailable\|Permission denied\))$//g
 s/ lstat: \(No such file or directory\|Resource temporarily unavailable\))$//g
 /^$/d
 " "$lsof_path" > /tmp/lsof_clean && mv /tmp/lsof_clean "$lsof_path"
