@@ -38,6 +38,9 @@ s/ lstat: \(No such file or directory\|Resource temporarily unavailable\))$//g
 
 	# useless ultra-verbose log
 	[[ -f sos_commands/logs/journalctl_--no-pager_--all_--boot_--output_verbose ]] && rm -f sos_commands/logs/journalctl_--no-pager_--all_--boot_--output_verbose
+
+	# sar is nearly useless... I rarely care
+	[[ -d var/log/sa ]] && rm -rf var/log/sa
 }
 
 if [[ "$#" -eq 0  ]] ; then
