@@ -11,10 +11,13 @@
 
 	in a directory on ext4:
 
-		# ./aio_repro testfile [ *<trunc_size> | <write_size> ][,[ *<trunc_size> | <write_size>]]
+		# ./aio_repro testfile [ *<trunc_size> | <write_size>[@pos] ][,[ *<trunc_size> | <write_size>]]
+
+
 
 	writes given on the command line will generate an IO
 	truncate sizes given will truncate the file to that size, at that particular point in the series
+
 
 	for example:
 		# ./aio_repro testfile *5120,512,512,4096,4096,512,1024
@@ -25,6 +28,10 @@
 		3: 4096 at 5120
 		4: 512 at 9216
 		5: 1024 at 9728
+
+
+	write sizes and positions must be aligned to the minimum IO size for the device (usually 512 bytes)
+
 
 
 	the test file can also be checked with hexdump:
@@ -167,22 +174,30 @@ int parse_sizes(struct test_info *test_info, int argc, char *argv[]) {
 
 			test_info->writes[i].trunc_size = current;
 		} else {
-			unsigned long current = strtoul(p, NULL, 10);
-			if (current) {
-				if (current % test_info->block_size)
-					msg_exit(EXIT_FAILURE, "ERROR: write size '%lu' is not a multiple of the block size '%ld'\n",
-						current, test_info->block_size);
+			char *endptr;
 
-	//printf("got size: %lu\n", current);
-				test_info->writes[i].size = current;
-	//			posix_memalign((void **)&test_info->writes[i].buf, BUF_ALIGN, test_info->writes[i].size);
-				posix_memalign((void **)&test_info->writes[i].buf, BUF_ALIGN, 8192);
+			test_info->writes[i].size = strtoul(p, &endptr, 10);
+			if (test_info->writes[i].size) {
+				if (test_info->writes[i].size % test_info->block_size)
+					msg_exit(EXIT_FAILURE, "ERROR: write size '%lu' is not a multiple of the block size '%ld'\n",
+						test_info->writes[i].size, test_info->block_size);
+
+				if (*endptr == '@') {
+					test_info->writes[i].pos = strtoul(endptr + 1, NULL, 10);
+					if (test_info->writes[i].pos % test_info->block_size)
+						msg_exit(EXIT_FAILURE, "ERROR: write position '%lu' is not a multiple of the block size '%ld'\n",
+							test_info->writes[i].pos, test_info->block_size);
+				} else if (*endptr == '\0') {
+					if (i == 0)
+						test_info->writes[i].pos = 0;
+					else
+						test_info->writes[i].pos = test_info->writes[i - 1].pos + test_info->writes[i - 1].size;
+				} else
+					msg_exit(EXIT_FAILURE, "ERROR: unexpected characters in string: '%s'\n", endptr);
+
+				posix_memalign((void **)&test_info->writes[i].buf, BUF_ALIGN, test_info->writes[i].size);
 				memset(test_info->writes[i].buf, '0' + i, test_info->writes[i].size);
 
-				if (i == 0)
-					test_info->writes[i].pos = 0;
-				else
-					test_info->writes[i].pos = test_info->writes[i - 1].pos + test_info->writes[i - 1].size;
 				i++;
 			}
 		}
@@ -193,8 +208,11 @@ int parse_sizes(struct test_info *test_info, int argc, char *argv[]) {
 	printf("found %d sizes:\n", test_info->write_count);
 	for (i = 0 ; i < test_info->write_count ; i++) {
 		if (test_info->writes[i].trunc_size)
-			printf("\t* TRUNCATE to %lu\n", test_info->writes[i].trunc_size);
+			printf("\t* TRUNCATE to %lu (0x%lx)\n", test_info->writes[i].trunc_size, test_info->writes[i].trunc_size);
 		printf("\t%d: %lu at %lu\n", i, test_info->writes[i].size, test_info->writes[i].pos);
+
+//           printf("%2$*1$d", width, num);
+
 	}
 	return test_info->write_count;
 }
@@ -304,8 +322,9 @@ int main(int argc, char *argv[]) {
 
 		for (j = 0 ; j < test_info.write_count ; j++) {
 			if (iocbs[i] == events[j].obj) {
-				printf(" io %d (returned as event %d): %lu bytes at %lu: ",
-					i, j, test_info.writes[i].size, test_info.writes[i].pos);
+				printf(" io %d (returned as event %d): %lu bytes at %lu: (0x%lx-0x%lx) ",
+					i, j, test_info.writes[i].size, test_info.writes[i].pos,
+					test_info.writes[i].pos, test_info.writes[i].pos + test_info.writes[i].size - 1);
 				if (test_info.writes[i].size == events[j].res) {
 					if (pread(fd, test_info.writes[i].buf, test_info.writes[i].size, test_info.writes[i].pos) != test_info.writes[i].size) {
 						printf("FAILURE\n");
