@@ -39,6 +39,89 @@ my %cap_defs = (
 	24 => "NFS_CAP_COPY",
 );
 
+# $ awk 'BEGIN{word=-1} { if ($1=="#define" && substr($2,0, 11) == "FATTR4_WORD"){ this_word=int(substr($2, 12, 1)) ; if (word != this_word && word != -1) {printf("};\n\n")} ; if (word != this_word) {word = this_word ; printf("my %%nfs4_cap_word%d = (\n", this_word)} ; printf "\tword: %d, this_word: %d, %d => \"%s\",\n", word, this_word, int($5), $2}} END{printf("};\n\n")}' ../../include/linux/nfs4.h 
+# awk -f gen_caps.awk include/linux/nfs4.h
+
+my %nfs4_cap_word0 = (
+	0 => "SUPPORTED_ATTRS",
+	1 => "TYPE",
+	2 => "FH_EXPIRE_TYPE",
+	3 => "CHANGE",
+	4 => "SIZE",
+	5 => "LINK_SUPPORT",
+	6 => "SYMLINK_SUPPORT",
+	7 => "NAMED_ATTR",
+	8 => "FSID",
+	9 => "UNIQUE_HANDLES",
+	10 => "LEASE_TIME",
+	11 => "RDATTR_ERROR",
+	12 => "ACL",
+	13 => "ACLSUPPORT",
+	14 => "ARCHIVE",
+	15 => "CANSETTIME",
+	16 => "CASE_INSENSITIVE",
+	17 => "CASE_PRESERVING",
+	18 => "CHOWN_RESTRICTED",
+	19 => "FILEHANDLE",
+	20 => "FILEID",
+	21 => "FILES_AVAIL",
+	22 => "FILES_FREE",
+	23 => "FILES_TOTAL",
+	24 => "FS_LOCATIONS",
+	25 => "HIDDEN",
+	26 => "HOMOGENEOUS",
+	27 => "MAXFILESIZE",
+	28 => "MAXLINK",
+	29 => "MAXNAME",
+	30 => "MAXREAD",
+	31 => "MAXWRITE",
+);
+my %nfs4_cap_word1 = (
+	0 => "MIMETYPE",
+	1 => "MODE",
+	2 => "NO_TRUNC",
+	3 => "NUMLINKS",
+	4 => "OWNER",
+	5 => "OWNER_GROUP",
+	6 => "QUOTA_HARD",
+	7 => "QUOTA_SOFT",
+	8 => "QUOTA_USED",
+	9 => "RAWDEV",
+	10 => "SPACE_AVAIL",
+	11 => "SPACE_FREE",
+	12 => "SPACE_TOTAL",
+	13 => "SPACE_USED",
+	14 => "SYSTEM",
+	15 => "TIME_ACCESS",
+	16 => "TIME_ACCESS_SET",
+	17 => "TIME_BACKUP",
+	18 => "TIME_CREATE",
+	19 => "TIME_DELTA",
+	20 => "TIME_METADATA",
+	21 => "TIME_MODIFY",
+	22 => "TIME_MODIFY_SET",
+	23 => "MOUNTED_ON_FILEID",
+	30 => "FS_LAYOUT_TYPES",
+);
+my %nfs4_cap_word2 = (
+	0 => "LAYOUT_TYPES",
+	1 => "LAYOUT_BLKSIZE",
+	4 => "MDSTHRESHOLD",
+	11 => "SUPPATTR_EXCLCREAT",
+	13 => "CLONE_BLKSIZE",
+	16 => "SECURITY_LABEL",
+	17 => "MODE_UMASK",
+);
+
+## from the kernel code to output in /proc
+my $code = '
+                seq_printf(m, "\n\tnfsv4:\t");
+                seq_printf(m, "bm0=0x%x", nfss->attr_bitmask[0]);
+                seq_printf(m, ",bm1=0x%x", nfss->attr_bitmask[1]);
+                seq_printf(m, ",bm2=0x%x", nfss->attr_bitmask[2]);
+#                seq_printf(m, ",acl=0x%x", nfss->acl_bitmask);
+';
+
 sub get_caps {
 	my $caps = shift;
 	my @ret = ();
@@ -50,9 +133,77 @@ sub get_caps {
 	}
 	return join " | ", @ret;
 }
+sub decode_nfsv4_word {
+	my $cap_val = shift;
+	my $word = shift;
+	my @ret = ();
+
+	if ($word eq 0) {
+		foreach my $key (sort keys %nfs4_cap_word0) {
+			if ($cap_val & (1 << $key)) { # FATTR4_WORD0_
+				push @ret, $nfs4_cap_word0{$key};
+			}
+		}
+	} elsif ($word eq 1) {
+		foreach my $key (sort keys %nfs4_cap_word1) {
+			if ($cap_val & (1 << $key)) { # FATTR4_WORD1_
+				push @ret, $nfs4_cap_word1{$key};
+			}
+		}
+	} elsif ($word eq 2) {
+		foreach my $key (sort keys %nfs4_cap_word2) {
+			if ($cap_val & (1 << $key)) { # FATTR4_WORD2_
+				push @ret, $nfs4_cap_word2{$key};
+			}
+		}
+	}
+	return join " | ", @ret;
+}
+
+
+#        caps:   caps=0x7fdf,wtmult=512,dtsize=32768,bsize=0,namlen=255
+#        nfsv4:  bm0=0xfdffbfff,bm1=0xf9be3e,bm2=0x0,acl=0x3,pnfs=not configured
+sub parse_input {
+	my $str = shift;
+	my $ret = "";
+
+	if ($str =~ /^caps=(0x[0-9a-f]+)/) {
+		return sprintf("caps=%s - %s", $1, get_caps(hex($1)));
+	}
+
+	if ($str =~ /bm0=(0x[0-9a-f]+)/) {
+		$ret .= sprintf("bm0=%s - %s", $1, decode_nfsv4_word(hex($1), 0));
+	}
+	if ($str =~ /bm1=(0x[0-9a-f]+)/) {
+		$ret .= "\n" if ($ret ne "");
+		$ret .= sprintf("bm1=%s - %s", $1, decode_nfsv4_word(hex($1), 1));
+	}
+	if ($str =~ /bm2=(0x[0-9a-f]+)/) {
+		$ret .= "\n" if ($ret ne "");
+		$ret .= sprintf("bm2=%s - %s", $1, decode_nfsv4_word(hex($1), 2));
+	}
+	if ($str eq "") { # no matches yet
+		if ($str =~ /(0x[0-9a-f]+)/) {
+			$ret = sprintf("caps=%s - %s", $1, get_caps(hex($1)));
+		}
+	}
+	if ($str eq "") { # no matches yet
+		$ret = sprintf("no caps found for '%s'\n", $str);
+	}
+	return $ret;
+}
 
 if ($ARGV[0]) {
-	my $str = get_caps(hex($ARGV[0]));
-	printf("result: %s\n", $str);
-
+	my $str = parse_input($ARGV[0]);
+#	my $str = get_caps(hex($ARGV[0]));
+#	printf("result: %s\n", $str);
+	printf("%s\n", $str);
 }
+
+
+
+
+
+
+
+
