@@ -1,0 +1,33 @@
+#!/bin/bash
+
+args=(${@:-.})
+
+SAVEIFS=$IFS
+IFS=$(echo -en "\t\b")
+
+fmt="%10s %12s %9s %5s %8s %s\n"
+printf "$fmt" "mode" "size" "1KiB" "ext" "hint" "path (->link target)"
+
+list_dir () {
+	d="$1"
+
+	find "$d" -printf "%y\t%M\t%s\t%k\t%p\t%l\n" | \
+	while read ftype mode size kb path ltarg ; do
+		extents=
+		hint=
+		if [[ $ftype == "f" || $ftype == "d" ]] ; then
+			extents=$(( $(IFS=$SAVEIFS xfs_bmap $path | wc -l) - 1))
+			IFS=$SAVEIFS hint=( $(IFS=$SAVEIFS xfs_io -c extsize $path) )
+			hint=${hint[0]}
+			printf "$fmt" "$mode" "$size" "$kb" "$extents" "${hint:1:-1}" "$path"
+		else
+			[[ $ftype == "l" ]] && link_str=" -> $ltarg" || link_str=""
+			printf "$fmt" "$mode" "$size" "$kb" "-" "-" "$path$link_str"
+		fi
+	done
+}
+
+for d in ${args[*]} ; do
+	list_dir "$d"
+done
+IFS=$SAVEIFS
