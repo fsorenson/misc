@@ -17,7 +17,7 @@ list_dir () {
 		hint=
 		if [[ $ftype == "f" || $ftype == "d" ]] ; then
 			extents=$(( $(IFS=$SAVEIFS xfs_bmap $path | wc -l) - 1))
-			IFS=$SAVEIFS hint=( $(IFS=$SAVEIFS xfs_io -c extsize $path) )
+			IFS=$SAVEIFS hint=( $(IFS=$SAVEIFS xfs_io -r -c extsize $path) )
 			hint=${hint[0]}
 			printf "$fmt" "$mode" "$size" "$kb" "$extents" "${hint:1:-1}" "$path"
 		else
