@@ -1,33 +1,144 @@
-#!/bin/bash
+#!/usr/bin/perl -w
 
-args=(${@:-.})
+use strict;
+use warnings;
 
-SAVEIFS=$IFS
-IFS=$(echo -en "\t\b")
+use File::Find;
+use Fcntl ':mode';
+use POSIX;
 
-fmt="%10s %12s %9s %5s %8s %s\n"
-printf "$fmt" "mode" "size" "1KiB" "ext" "hint" "path (->link target)"
+#my $fmt = "%10s %12s %9s %5s %9s %s\n";
+my $fmt = "%10s %12s %8s %6s %s%s\n";
 
-list_dir () {
-	d="$1"
-
-	find "$d" -printf "%y\t%M\t%s\t%k\t%p\t%l\n" | \
-	while read ftype mode size kb path ltarg ; do
-		extents=
-		hint=
-		if [[ $ftype == "f" || $ftype == "d" ]] ; then
-			extents=$(( $(IFS=$SAVEIFS xfs_bmap $path | wc -l) - 1))
-			IFS=$SAVEIFS hint=( $(IFS=$SAVEIFS xfs_io -r -c extsize $path) )
-			hint=${hint[0]}
-			printf "$fmt" "$mode" "$size" "$kb" "$extents" "${hint:1:-1}" "$path"
-		else
-			[[ $ftype == "l" ]] && link_str=" -> $ltarg" || link_str=""
-			printf "$fmt" "$mode" "$size" "$kb" "-" "-" "$path$link_str"
-		fi
-	done
+if (!defined($ARGV[0])) {
+	$ARGV[0] = ".";
 }
 
-for d in ${args[*]} ; do
-	list_dir "$d"
-done
-IFS=$SAVEIFS
+sub logn {
+	my $val = shift;
+	my $base = shift;
+	return log($val)/log($base);
+}
+my @unit_strings;
+$unit_strings[1000] = [ " bytes", "KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB" ];
+$unit_strings[1024] = [ " bytes", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB", "ZiB", "YiB" ];
+sub byte_units {
+	my $size = shift;
+	my $base = shift;
+	my $sigfigs = shift;
+
+	if (!defined($sigfigs)) { $sigfigs = 2; }
+
+	if ($size < $base || !defined($unit_strings[$base])) {
+		return sprintf("%d bytes", $size);
+	}
+	my $i = POSIX::floor(logn($size,$base));
+	my $divider = POSIX::pow($base, $i);
+	return sprintf("%.*f %s",
+		(int($size / $divider) eq ($size / $divider)) ? 0 : $sigfigs, $size / $divider, $unit_strings[$base][$i]);
+}
+
+#my @mode_bits = ('---', '--x', '-w-', '-wx', 'r--', 'r-x', 'rw-', 'rwx');
+my @mode_bits = (
+	['-', '-', '-'], ['-', '-', 'x'], ['-', 'w', '-'], ['-', 'w', 'x'],
+	['r', '-', '-'], ['r', '-', 'x'], ['r', 'w', '-'], ['r', 'w', 'x']);
+sub mode_bits_string {
+	my $mode = shift;
+
+	my $u = ($mode & S_IRWXU) >> 6;
+	my $g = ($mode & S_IRWXG) >> 3;
+	my $o = $mode & S_IRWXO;
+
+	my @usr = @{$mode_bits[($mode & S_IRWXU) >> 6]};
+	my @grp = @{$mode_bits[($mode & S_IRWXG) >> 3]};
+	my @oth = @{$mode_bits[$mode & S_IRWXO]};
+
+	if ($mode & S_ISUID) { $usr[2] = $usr[2] == 'x' ? 's' : 'S'; }
+	if ($mode & S_ISGID) { $grp[2] = $grp[2] == 'x' ? 's' : 'S'; }
+	if ($mode & S_ISVTX) { $oth[2] = $oth[2] == 'x' ? 't' : 'T'; }
+	return join("", @usr, @grp, @oth);
+}
+sub mode_type_char {
+	my $mode = shift;
+	return S_ISREG($mode) ? "-" :
+		S_ISDIR($mode) ? "d" :
+		S_ISLNK($mode) ? "l" :
+		S_ISBLK($mode) ? "b" :
+		S_ISCHR($mode) ? "c" :
+		S_ISFIFO($mode) ? "p" :
+		S_ISSOCK($mode) ? "s" : "?";
+}
+
+sub get_extent_count {
+	my $path = shift;
+	my $extents = -1;
+	my $holes = 0;
+
+	open(EXEC, '-|', "/usr/sbin/xfs_bmap", $path) or die "Can't exec: $!\n";
+	while (my $line = <EXEC>) {
+		chomp $line;
+		if ($line =~ /.+hole$/) { $holes++; }
+		else { $extents ++; }
+	}
+	close(EXEC);
+	return ($extents, $holes);
+}
+sub get_hint {
+	my $path = shift;
+
+	my $cmd = "/usr/sbin/xfs_io -r -c extsize $path";
+	my $out = `$cmd` or die "Couldn't exec: $!\n";
+	if ($out =~ /^\[([0-9]+)\].+/) { return $1; }
+	return 0;
+}
+
+sub file_stats {
+	my ($extents, $holes, $hint, $hint_str, $ltarg);
+	my $path = $File::Find::name;
+	my @stats = lstat($path);
+	my $mode = $stats[2];
+	my $size = $stats[7];
+
+my $stat_fields ="
+             0 dev      device number of filesystem
+             1 ino      inode number
+             2 mode     file mode  (type and permissions)
+             3 nlink    number of (hard) links to the file
+             4 uid      numeric user ID of file's owner
+             5 gid      numeric group ID of file's owner
+             6 rdev     the device identifier (special files only)
+             7 size     total size of file, in bytes
+             8 atime    last access time in seconds since the epoch
+             9 mtime    last modify time in seconds since the epoch
+            10 ctime    inode change time in seconds since the epoch (*)
+            11 blksize  preferred I/O size in bytes for interacting with the
+                        file (may vary from file to file)
+            12 blocks   actual number of system-specific blocks allocated
+                        on disk (often, but not always, 512 bytes each)
+";
+
+	my $suid = $mode & S_ISUID ? 1 : 0;
+	my $sgid = $mode & S_ISGID ? 1 : 0;
+	my $sticky = $mode & S_ISVTX ? 1 : 0;
+#	my $svtext = $mode & S_ISTXT ? 1 : 0;
+
+	my $symbolic = mode_type_char($mode) . mode_bits_string($mode);
+	my $size_str = byte_units($size, 1024);
+
+	if (S_ISLNK($mode)) {
+		$ltarg = " => " . readlink($path);
+		$extents = $holes = $hint = 0;
+		$hint_str = "";
+	} else {
+		$ltarg = "";
+		($extents, $holes) = get_extent_count($path);
+		$hint = get_hint($path);
+	}
+	if ($hint ne 0) { $hint_str = byte_units($hint, 1024, 0); }
+	else { $hint_str = "0"; }
+
+	printf($fmt, $symbolic, $size_str, $extents + $holes, $hint_str, $path, $ltarg);
+}
+
+printf($fmt, "mode", "size", "extents", "hint", "path", " (=>link target)");
+find({ wanted => \&file_stats, no_chdir => 1}, @ARGV);
