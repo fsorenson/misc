@@ -10,7 +10,8 @@ use Fcntl ':mode';
 use POSIX;
 
 #my $fmt = "%10s %12s %9s %5s %9s %s\n";
-my $fmt = "%10s %12s %8s %6s %s%s\n";
+#my $fmt = "%10s %12s %8s %6s %s%s\n";
+my $fmt = "%10s %12s %8s %8s %6s %s%s\n";
 
 if (!defined($ARGV[0])) {
 	$ARGV[0] = ".";
@@ -139,8 +140,11 @@ my $stat_fields ="
 	if ($hint ne 0) { $hint_str = byte_units($hint, 1024, 0); }
 	else { $hint_str = "0"; }
 
-	printf($fmt, $symbolic, $size_str, $extents + $holes, $hint_str, $path, $ltarg);
+	printf($fmt, $symbolic, $size_str, $extents, $holes, $hint_str, $path, $ltarg);
 }
 
-printf($fmt, "mode", "size", "extents", "hint", "path", " (=>link target)");
+printf($fmt, "mode", "size", "extents", "holes", "hint", "path", " (=>link target)");
 find({ wanted => \&file_stats, no_chdir => 1}, @ARGV);
+
+
+
