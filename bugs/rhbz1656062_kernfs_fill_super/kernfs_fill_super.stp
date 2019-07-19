@@ -1,0 +1,49 @@
+# set to:
+#	0 - allow mount to complete
+#	1 - fail the 'kernfs_get_inode'
+#	2 - fail the 'd_make_root'
+global fail_mount = 0
+
+function output(msg) {
+	printk(1, msg)
+	printf("%s\n", msg)
+}
+
+#kernel.function("kernfs_get_inode@fs/kernfs/inode.c:344") $sb:struct super_block* $kn:struct kernfs_node*
+probe kernel.function("kernfs_get_inode").return {
+	sb = &@cast(@entry($sb), "super_block")
+	type = sb->s_type
+	type_name = kernel_string(type->name)
+
+	if (type_name == "sysfs") {
+		output(sprintf("%s returning while mounting %s type; return value: %p\n",
+			ppfunc(), type_name, $return))
+		output(sprint_backtrace())
+		if (fail_mount == 1) {
+			output("munging return value to return NULL\n")
+
+			mdelay(100) /* hopefully long enough to allow the messages to reach output */
+			$return = 0
+		}
+	}
+}
+
+# struct dentry *d_make_root(struct inode *root_inode)
+probe kernel.function("d_make_root").return {
+	root_ino = &@cast(@entry($root_inode), "struct inode")
+	sb = root_ino->i_sb
+	type = sb->s_type
+	type_name = kernel_string(type->name)
+
+	if (type_name == "sysfs") {
+		output(sprintf("%s returning while mounting %s type; return value: %p\n",
+			ppfunc(), type_name, $return))
+		output(sprint_backtrace())
+		if (fail_mount == 2) {
+			output("munging return value to return NULL\n")
+
+			mdelay(100) /* hopefully long enough to allow the messages to reach output */
+			$return = 0
+		}
+	}
+}
