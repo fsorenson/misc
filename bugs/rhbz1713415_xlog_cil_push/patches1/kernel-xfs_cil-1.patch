@@ -1,0 +1,163 @@
+--- a/fs/xfs/xfs_log_cil.c	2019-07-16 17:45:24.802435615 -0400
++++ b/fs/xfs/xfs_log_cil.c	2019-07-16 17:45:05.870435615 -0400
+@@ -31,6 +31,112 @@
+ #include "xfs_log.h"
+ #include "xfs_log_priv.h"
+ 
++
++#define DEF_BURN_CYCLES 10
++
++static void cil_burn_cycles(unsigned long loops) {
++	while (loops--)
++		nop();
++}
++
++static inline void __cil_list_del(struct list_head * prev, struct list_head * next) {
++	cil_burn_cycles(DEF_BURN_CYCLES);
++        next->prev = prev;
++	cil_burn_cycles(DEF_BURN_CYCLES);
++        prev->next = next;
++}
++
++/*
++	slow down some list operations
++*/
++void __cil_list_del_entry(struct list_head *entry)
++{
++        struct list_head *prev, *next;
++
++	cil_burn_cycles(DEF_BURN_CYCLES);
++        prev = entry->prev;
++	cil_burn_cycles(DEF_BURN_CYCLES);
++        next = entry->next;
++	cil_burn_cycles(DEF_BURN_CYCLES);
++
++        if (WARN(next == LIST_POISON1,
++                "list_del corruption, %p->next is LIST_POISON1 (%p)\n",
++                entry, LIST_POISON1) ||
++            WARN(prev == LIST_POISON2,
++                "list_del corruption, %p->prev is LIST_POISON2 (%p)\n",
++                entry, LIST_POISON2) ||
++            WARN(prev->next != entry,
++                "list_del corruption. prev->next should be %p, "
++                "but was %p; prev: %p, next: %p\n", entry, prev->next, prev, next) ||
++            WARN(next->prev != entry,
++                "list_del corruption. next->prev should be %p, "
++                "but was %p; prev: %p, next: %p\n", entry, next->prev, prev, next))
++                return;
++
++        __cil_list_del(prev, next);
++}
++void cil_list_del(struct list_head *entry) {
++	__cil_list_del_entry(entry);
++}
++static inline void __cil_list_add(struct list_head *new,
++                              struct list_head *prev,
++                              struct list_head *next) {
++	cil_burn_cycles(DEF_BURN_CYCLES);
++        next->prev = new;
++	cil_burn_cycles(DEF_BURN_CYCLES);
++        new->next = next;
++	cil_burn_cycles(DEF_BURN_CYCLES);
++        new->prev = prev;
++	cil_burn_cycles(DEF_BURN_CYCLES);
++        prev->next = new;
++}
++static inline void cil_list_add(struct list_head *new, struct list_head *head) {
++        __cil_list_add(new, head, head->next);
++}
++
++
++static inline void cil_list_add_tail(struct list_head *new, struct list_head *head) {
++        __cil_list_add(new, head->prev, head);
++}
++
++static inline void cil_list_move_tail(struct list_head *list,
++                                  struct list_head *head)
++{
++        __cil_list_del_entry(list);
++        cil_list_add_tail(list, head);
++}
++static inline void __cil_list_splice(const struct list_head *list,
++                                 struct list_head *prev,
++                                 struct list_head *next)
++{
++        struct list_head *first = list->next;
++        struct list_head *last = list->prev;
++
++	cil_burn_cycles(DEF_BURN_CYCLES);
++        first->prev = prev;
++	cil_burn_cycles(DEF_BURN_CYCLES);
++        prev->next = first;
++
++	cil_burn_cycles(DEF_BURN_CYCLES);
++        last->next = next;
++	cil_burn_cycles(DEF_BURN_CYCLES);
++        next->prev = last;
++}
++
++static inline void cil_list_splice_init(struct list_head *list,
++                                    struct list_head *head) {
++        if (!list_empty(list)) {
++                __cil_list_splice(list, head, head->next);
++                INIT_LIST_HEAD(list);
++        }
++}
++#define cil_list_first_entry(ptr, type, member) \
++        list_entry((ptr)->next, type, member)
++static inline void cil_list_del_init(struct list_head *entry) {
++        __cil_list_del_entry(entry);
++        INIT_LIST_HEAD(entry);
++}
++
+ /*
+  * Allocate a new ticket. Failing to get a new ticket makes it really hard to
+  * recover, so we don't allow failure here. Also, we allocate in a context that
+@@ -426,7 +529,7 @@
+ 
+ 	/* attach the transaction to the CIL if it has any busy extents */
+ 	if (!list_empty(&tp->t_busy))
+-		list_splice_init(&tp->t_busy, &ctx->busy_extents);
++		cil_list_splice_init(&tp->t_busy, &ctx->busy_extents);
+ 
+ 	/*
+ 	 * Now transfer enough transaction reservation to the context ticket
+@@ -489,7 +592,7 @@
+ 		 * an item that is already the only item in the CIL.
+ 		 */
+ 		if (!list_is_last(&lip->li_cil, &cil->xc_cil))
+-			list_move_tail(&lip->li_cil, &cil->xc_cil);
++			cil_list_move_tail(&lip->li_cil, &cil->xc_cil);
+ 	}
+ 
+ 	spin_unlock(&cil->xc_cil_lock);
+@@ -540,7 +643,7 @@
+ 	spin_lock(&ctx->cil->xc_push_lock);
+ 	if (abort)
+ 		wake_up_all(&ctx->cil->xc_commit_wait);
+-	list_del(&ctx->committing);
++	cil_list_del(&ctx->committing);
+ 	spin_unlock(&ctx->cil->xc_push_lock);
+ 
+ 	xlog_cil_free_logvec(ctx->lv_chain);
+@@ -642,7 +745,7 @@
+ 	 * sequence may fully commit between the attempts the wait makes to wait
+ 	 * on the commit sequence.
+ 	 */
+-	list_add(&ctx->committing, &cil->xc_committing);
++	cil_list_add(&ctx->committing, &cil->xc_committing);
+ 	spin_unlock(&cil->xc_push_lock);
+ 
+ 	/*
+@@ -656,9 +759,9 @@
+ 	while (!list_empty(&cil->xc_cil)) {
+ 		struct xfs_log_item	*item;
+ 
+-		item = list_first_entry(&cil->xc_cil,
++		item = cil_list_first_entry(&cil->xc_cil,
+ 					struct xfs_log_item, li_cil);
+-		list_del_init(&item->li_cil);
++		cil_list_del_init(&item->li_cil);
+ 		if (!ctx->lv_chain)
+ 			ctx->lv_chain = item->li_lv;
+ 		else

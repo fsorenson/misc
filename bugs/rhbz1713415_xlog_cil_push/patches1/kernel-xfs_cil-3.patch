@@ -1,0 +1,265 @@
+--- a/fs/xfs/xfs_log_cil.c	2019-07-29 10:18:31.416306554 -0400
++++ b/fs/xfs/xfs_log_cil.c	2019-07-31 11:35:52.691438035 -0400
+@@ -35,6 +35,26 @@
+ unsigned long cil_cycles_to_burn = DEFAULT_CIL_CYCLES_TO_BURN;
+ unsigned long cil_burn_divider = DEFAULT_CIL_BURN_DIVIDER;
+ 
++unsigned long cil_cycles_to_burn_list_del1 = DEFAULT_CIL_CYCLES_TO_BURN;
++unsigned long cil_cycles_to_burn_list_del2 = DEFAULT_CIL_CYCLES_TO_BURN;
++
++unsigned long cil_cycles_to_burn_list_del_entry1 = DEFAULT_CIL_CYCLES_TO_BURN;
++unsigned long cil_cycles_to_burn_list_del_entry2 = DEFAULT_CIL_CYCLES_TO_BURN;
++unsigned long cil_cycles_to_burn_list_del_entry3 = DEFAULT_CIL_CYCLES_TO_BURN;
++unsigned long cil_cycles_to_burn_list_del_entry4 = DEFAULT_CIL_CYCLES_TO_BURN;
++
++unsigned long cil_cycles_to_burn_list_add1 = DEFAULT_CIL_CYCLES_TO_BURN;
++unsigned long cil_cycles_to_burn_list_add2 = DEFAULT_CIL_CYCLES_TO_BURN;
++unsigned long cil_cycles_to_burn_list_add3 = DEFAULT_CIL_CYCLES_TO_BURN;
++unsigned long cil_cycles_to_burn_list_add4 = DEFAULT_CIL_CYCLES_TO_BURN;
++
++unsigned long cil_cycles_to_burn_list_splice1 = DEFAULT_CIL_CYCLES_TO_BURN;
++unsigned long cil_cycles_to_burn_list_splice2 = DEFAULT_CIL_CYCLES_TO_BURN;
++unsigned long cil_cycles_to_burn_list_splice3 = DEFAULT_CIL_CYCLES_TO_BURN;
++unsigned long cil_cycles_to_burn_list_splice4 = DEFAULT_CIL_CYCLES_TO_BURN;
++unsigned long cil_cycles_to_burn_list_splice5 = DEFAULT_CIL_CYCLES_TO_BURN;
++unsigned long cil_cycles_to_burn_list_splice6 = DEFAULT_CIL_CYCLES_TO_BURN;
++
+ static void cil_burn_cycles(unsigned long loops) {
+ 	unsigned long divider = cil_burn_divider;
+ 	if (divider && loops && (current_pid() % divider == 1))
+@@ -43,10 +62,10 @@
+ }
+ 
+ static inline void __cil_list_del(struct list_head * prev, struct list_head * next) {
+-	cil_burn_cycles(cil_cycles_to_burn);
+-        next->prev = prev;
+-	cil_burn_cycles(cil_cycles_to_burn);
+-        prev->next = next;
++	cil_burn_cycles(cil_cycles_to_burn_list_del1);
++	next->prev = prev;
++	cil_burn_cycles(cil_cycles_to_burn_list_del2);
++	prev->next = next;
+ }
+ 
+ /*
+@@ -54,90 +73,106 @@
+ */
+ void __cil_list_del_entry(struct list_head *entry)
+ {
+-        struct list_head *prev, *next;
++	struct list_head *prev, *next;
+ 
+-	cil_burn_cycles(cil_cycles_to_burn);
+-        prev = entry->prev;
+-	cil_burn_cycles(cil_cycles_to_burn);
+-        next = entry->next;
+-	cil_burn_cycles(cil_cycles_to_burn);
+-
+-        if (WARN(next == LIST_POISON1,
+-                "list_del corruption, %p->next is LIST_POISON1 (%p)\n",
+-                entry, LIST_POISON1) ||
+-            WARN(prev == LIST_POISON2,
+-                "list_del corruption, %p->prev is LIST_POISON2 (%p)\n",
+-                entry, LIST_POISON2) ||
+-            WARN(prev->next != entry,
+-                "list_del corruption. prev->next should be %p, "
+-                "but was %p; prev: %p, next: %p\n", entry, prev->next, prev, next) ||
+-            WARN(next->prev != entry,
+-                "list_del corruption. next->prev should be %p, "
+-                "but was %p; prev: %p, next: %p\n", entry, next->prev, prev, next))
+-                return;
++	cil_burn_cycles(cil_cycles_to_burn_list_del_entry1);
++	prev = entry->prev;
++	cil_burn_cycles(cil_cycles_to_burn_list_del_entry2);
++	next = entry->next;
++	cil_burn_cycles(cil_cycles_to_burn_list_del_entry3);
++
++	if (WARN(next == LIST_POISON1,
++		"list_del corruption, %p->next is LIST_POISON1 (%p)\n",
++		entry, LIST_POISON1) ||
++	WARN(prev == LIST_POISON2,
++		"list_del corruption, %p->prev is LIST_POISON2 (%p)\n",
++		entry, LIST_POISON2) ||
++	WARN(prev->next != entry,
++		"list_del corruption. prev->next should be %p, "
++		"but was %p; prev: %p, next: %p\n", entry, prev->next, prev, next) ||
++	WARN(next->prev != entry,
++		"list_del corruption. next->prev should be %p, "
++		"but was %p; prev: %p, next: %p\n", entry, next->prev, prev, next))
++		return;
+ 
+-        __cil_list_del(prev, next);
++	__cil_list_del(prev, next);
+ }
+ void cil_list_del(struct list_head *entry) {
+ 	__cil_list_del_entry(entry);
+ }
+ static inline void __cil_list_add(struct list_head *new,
+-                              struct list_head *prev,
+-                              struct list_head *next) {
+-	cil_burn_cycles(cil_cycles_to_burn);
+-        next->prev = new;
+-	cil_burn_cycles(cil_cycles_to_burn);
+-        new->next = next;
+-	cil_burn_cycles(cil_cycles_to_burn);
+-        new->prev = prev;
+-	cil_burn_cycles(cil_cycles_to_burn);
+-        prev->next = new;
++				struct list_head *prev,
++				struct list_head *next) {
++
++	WARN(next->prev != prev,
++		"list_add corruption. next->prev should be "
++		"prev (%p), but was %p. (next=%p).\n",
++		prev, next->prev, next);
++	WARN(prev->next != next,
++		"list_add corruption. prev->next should be "
++		"next (%p), but was %p. (prev=%p).\n",
++		next, prev->next, prev);
++	WARN(new == prev || new == next,
++		"list_add double add: new=%p, prev=%p, next=%p.\n",
++		new, prev, next);
++
++	cil_burn_cycles(cil_cycles_to_burn_list_add1);
++	next->prev = new;
++	cil_burn_cycles(cil_cycles_to_burn_list_add2);
++	new->next = next;
++	cil_burn_cycles(cil_cycles_to_burn_list_add3);
++	new->prev = prev;
++	cil_burn_cycles(cil_cycles_to_burn_list_add4);
++	prev->next = new;
+ }
+ static inline void cil_list_add(struct list_head *new, struct list_head *head) {
+-        __cil_list_add(new, head, head->next);
++	__cil_list_add(new, head, head->next);
+ }
+ 
+-
+ static inline void cil_list_add_tail(struct list_head *new, struct list_head *head) {
+-        __cil_list_add(new, head->prev, head);
++	__cil_list_add(new, head->prev, head);
+ }
+ 
+ static inline void cil_list_move_tail(struct list_head *list,
+-                                  struct list_head *head)
++				struct list_head *head)
+ {
+-        __cil_list_del_entry(list);
+-        cil_list_add_tail(list, head);
++	__cil_list_del_entry(list);
++	cil_list_add_tail(list, head);
+ }
+ static inline void __cil_list_splice(const struct list_head *list,
+-                                 struct list_head *prev,
+-                                 struct list_head *next)
++				struct list_head *prev,
++				struct list_head *next)
+ {
+-        struct list_head *first = list->next;
+-        struct list_head *last = list->prev;
++	struct list_head *first, *last;
+ 
+-	cil_burn_cycles(cil_cycles_to_burn);
+-        first->prev = prev;
+-	cil_burn_cycles(cil_cycles_to_burn);
+-        prev->next = first;
+-
+-	cil_burn_cycles(cil_cycles_to_burn);
+-        last->next = next;
+-	cil_burn_cycles(cil_cycles_to_burn);
+-        next->prev = last;
++	cil_burn_cycles(cil_cycles_to_burn_list_splice1);
++	first = list->next;
++	cil_burn_cycles(cil_cycles_to_burn_list_splice2);
++	last = list->prev;
++
++	cil_burn_cycles(cil_cycles_to_burn_list_splice3);
++	first->prev = prev;
++	cil_burn_cycles(cil_cycles_to_burn_list_splice4);
++	prev->next = first;
++
++	cil_burn_cycles(cil_cycles_to_burn_list_splice5);
++	last->next = next;
++	cil_burn_cycles(cil_cycles_to_burn_list_splice6);
++	next->prev = last;
+ }
+ 
+ static inline void cil_list_splice_init(struct list_head *list,
+-                                    struct list_head *head) {
+-        if (!list_empty(list)) {
+-                __cil_list_splice(list, head, head->next);
+-                INIT_LIST_HEAD(list);
+-        }
++					struct list_head *head) {
++	if (!list_empty(list)) {
++		__cil_list_splice(list, head, head->next);
++		INIT_LIST_HEAD(list);
++	}
+ }
+ #define cil_list_first_entry(ptr, type, member) \
+-        list_entry((ptr)->next, type, member)
++	list_entry((ptr)->next, type, member)
+ static inline void cil_list_del_init(struct list_head *entry) {
+-        __cil_list_del_entry(entry);
+-        INIT_LIST_HEAD(entry);
++	__cil_list_del_entry(entry);
++	INIT_LIST_HEAD(entry);
+ }
+ 
+ /*
+--- a/fs/xfs/xfs_linux.h	2019-07-29 09:58:48.355637336 -0400
++++ b/fs/xfs/xfs_linux.h	2019-07-31 10:54:42.912057779 -0400
+@@ -294,4 +294,24 @@
+ extern unsigned long cil_cycles_to_burn;
+ extern unsigned long cil_burn_divider;
+ 
++extern unsigned long cil_cycles_to_burn_list_del1;
++extern unsigned long cil_cycles_to_burn_list_del2;
++
++extern unsigned long cil_cycles_to_burn_list_del_entry1;
++extern unsigned long cil_cycles_to_burn_list_del_entry2;
++extern unsigned long cil_cycles_to_burn_list_del_entry3;
++extern unsigned long cil_cycles_to_burn_list_del_entry4;
++
++extern unsigned long cil_cycles_to_burn_list_add1;
++extern unsigned long cil_cycles_to_burn_list_add2;
++extern unsigned long cil_cycles_to_burn_list_add3;
++extern unsigned long cil_cycles_to_burn_list_add4;
++
++extern unsigned long cil_cycles_to_burn_list_splice1;
++extern unsigned long cil_cycles_to_burn_list_splice2;
++extern unsigned long cil_cycles_to_burn_list_splice3;
++extern unsigned long cil_cycles_to_burn_list_splice4;
++extern unsigned long cil_cycles_to_burn_list_splice5;
++extern unsigned long cil_cycles_to_burn_list_splice6;
++
+ #endif /* __XFS_LINUX__ */
+--- a/fs/xfs/xfs_super.c	2019-07-29 10:15:08.510448621 -0400
++++ b/fs/xfs/xfs_super.c	2019-07-31 10:54:27.592840953 -0400
+@@ -2140,6 +2140,26 @@
+ 		"(<PID> %% cil_burn_divider) == 1; disable entirely with cil_burn_divider=0;  (default: "
+ 		__stringify(DEFAULT_CIL_BURN_DIVIDER) ")");
+ 
++module_param_named(cil_cycles_to_burn_list_del1, cil_cycles_to_burn_list_del1, ulong, 0644);
++module_param_named(cil_cycles_to_burn_list_del2, cil_cycles_to_burn_list_del2, ulong, 0644);
++
++module_param_named(cil_cycles_to_burn_list_del_entry1, cil_cycles_to_burn_list_del_entry1, ulong, 0644);
++module_param_named(cil_cycles_to_burn_list_del_entry2, cil_cycles_to_burn_list_del_entry2, ulong, 0644);
++module_param_named(cil_cycles_to_burn_list_del_entry3, cil_cycles_to_burn_list_del_entry3, ulong, 0644);
++module_param_named(cil_cycles_to_burn_list_del_entry4, cil_cycles_to_burn_list_del_entry4, ulong, 0644);
++
++module_param_named(cil_cycles_to_burn_list_add1, cil_cycles_to_burn_list_add1, ulong, 0644);
++module_param_named(cil_cycles_to_burn_list_add2, cil_cycles_to_burn_list_add2, ulong, 0644);
++module_param_named(cil_cycles_to_burn_list_add3, cil_cycles_to_burn_list_add3, ulong, 0644);
++module_param_named(cil_cycles_to_burn_list_add4, cil_cycles_to_burn_list_add4, ulong, 0644);
++
++module_param_named(cil_cycles_to_burn_list_splice1, cil_cycles_to_burn_list_splice1, ulong, 0644);
++module_param_named(cil_cycles_to_burn_list_splice2, cil_cycles_to_burn_list_splice2, ulong, 0644);
++module_param_named(cil_cycles_to_burn_list_splice3, cil_cycles_to_burn_list_splice3, ulong, 0644);
++module_param_named(cil_cycles_to_burn_list_splice4, cil_cycles_to_burn_list_splice4, ulong, 0644);
++module_param_named(cil_cycles_to_burn_list_splice5, cil_cycles_to_burn_list_splice5, ulong, 0644);
++module_param_named(cil_cycles_to_burn_list_splice6, cil_cycles_to_burn_list_splice6, ulong, 0644);
++
+ module_init(init_xfs_fs);
+ module_exit(exit_xfs_fs);
+ 
