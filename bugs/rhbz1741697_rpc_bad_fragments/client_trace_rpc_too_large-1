@@ -1,0 +1,276 @@
+#!/bin/bash
+
+orig_dir=$(pwd)
+self=$(readlink -f $0)
+
+case=2433188
+host=$(hostname -s)
+tstamp=$(date +"%F_%H.%M.%S")
+
+trace_str="nfs_trace-$case-$host-$tstamp"
+tmpdir="/tmp/$trace_str"
+log="$tmpdir/trace.out"
+completion_program=rcv_completion
+completion_port=4242
+
+# default buffer size is 2 MiB (specified in KiB)
+tcpdump_files=4
+tcpdump_file_size=1024
+tcpdump_buffer_size=16384
+
+tcpdump_pid=""
+dmesg_pid=""
+
+output() {
+	echo "$(date +"%F %H:%M:%S.%N") $*" | tee -a $log
+}
+
+exit_cleanup() {
+	trap - SIGTERM SIGINT EXIT
+
+	output "cleaning up and exiting"
+	[[ -n $tcpdump_pid ]] && kill $tcpdump_pid 2>/dev/null && wait $tcpdump_pid 2>/dev/null
+	[[ -n $dmesg_pid ]] && kill $dmesg_pid && wait $dmesg_pid 2>/dev/null
+
+	date --rfc-3339=ns >$tmpdir/stop_time
+
+	cd /tmp
+	echo "compressing the collected data"
+	tar cJf $trace_str.tar.xz $trace_str
+	rm -rf $tmpdir
+
+	cd $orig_dir
+	echo "Trace data collected in /tmp/$trace_str.tar.xz"
+}
+
+# check for any already-running dmesg
+try=0
+dmesg_pid=$(pgrep -f '^dmesg -wT')
+while [[ -n $dmesg_pid ]] ; do
+	kill $dmesg_pid
+	sleep 0.25
+	dmesg_pid=$(pgrep -f '^dmesg -wT')
+	try=$(($try + 1))
+	if [[ -n $dmesg_pid && $try -ge 3 ]] ; then
+		output "Unable to stop already-running dmesg process"
+		exit 1
+	fi
+done
+
+# check for any already-listening completion program
+try=0
+pids=$(pidof $completion_program)
+while [[ -n $pids ]] ; do
+	kill $pids
+	sleep 0.25
+	pids=$(pidof $completion_program)
+	try=$(($try + 1))
+	if [[ -n $pids && $try -ge 3 ]] ; then
+		output "Unable to stop already-running completion program"
+		exit 1
+	fi
+done
+# check for any processes already listening on our port -- it's not us, so bomb out
+pids=$(lsof -i :$completion_port -Fp | tr -d p)
+if [[ -n $pids ]] ; then
+	output "A process is already listening on port $completion_port"
+	lsof -i :$completion_port
+	output "Halting data collection; stop the process or free up port $completion port, then re-run this script"
+	exit 1
+fi
+
+# check for any already-running tcpdump
+try=0
+tcpdump_pid=$(pgrep tcpdump)
+while [[ -n $tcpdump_pid ]] ; do
+	kill $tcpdump_pid
+	sleep 0.25
+	tcpdump_pid=$(pgrep tcpdump)
+	try=$(($try + 1))
+	if [[ -n $tcpdump_pid && $try -ge 3 ]] ; then
+		output "Unable to stop already-running tcpdump process"
+		exit 1
+	fi
+done
+
+mkdir -p $tmpdir
+cd $tmpdir
+
+# create & compile the program to receive the completion signal from the server
+completion_c_start_line=$(egrep -m2 -n COMPLETION_C_BEGIN $self | tail -1 | awk -F: '{print $1}')
+tail -n +$completion_c_start_line $self > $tmpdir/$completion_program.c
+gcc $tmpdir/$completion_program.c -o $tmpdir/$completion_program | tee -a $log
+ret=${PIPESTATUS[0]}
+if [[ $ret -ne 0 ]] ; then
+	output "error occurred while compiling the completion program: $tmpdir/$completion_program.c"
+	exit 1
+fi
+
+# start tcpdump
+for iface in bond1 bond0 eth0 eno1 eno2 any ; do
+	tcpdump -D | egrep -qw "[0-9]+\.$iface\b" && break
+done
+tcpdump -i $iface -s 0 -w $tmpdir/tcpdump.pcap -W $tcpdump_files -C $tcpdump_file_size -B $tcpdump_buffer_size tcp port 2049 >$tmpdir/tcpdump.out 2>&1 &
+tcpdump_pid=$!
+output "tcpdump started as $tcpdump_pid"
+
+dmesg -wT > $tmpdir/dmesg.out 2>&1 &
+dmesg_pid=$!
+output "collecting kernel messages with pid $dmesg_pid"
+
+date --rfc-3339=ns >$tmpdir/start_time
+uname -a >$tmpdir/uname
+readlink -f /etc/localtime >$tmpdir/localtime
+
+trap exit_cleanup SIGTERM SIGINT EXIT
+
+# this program will exit when it receives the completion message from the server
+$tmpdir/$completion_program 2>&1 | tee $tmpdir/completion.out
+ret=${PIPESTATUS[0]}
+if [[ $ret -ne 0 ]] ; then
+	output "completion program exited with $ret"
+fi
+
+sleep 1
+
+exit $ret
+
+/* COMPLETION_C_BEGIN */
+#define _GNU_SOURCE
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
+#include <arpa/inet.h>
+#include <errno.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <netdb.h>
+#include <string.h>
+#include <time.h>
+
+#define LISTEN_PORT 4242
+#define LISTEN_BACKLOG 5
+#define BUF_SIZE 1024
+
+/* completion message expected to contain remote timestamp string followed by the completion message below */
+#define TSTAMP_STRING "YYYY-MM-DD HH:MM:SS:NNNNNNNNN ZZZZ"
+// now=$(date +"%F %H:%M:%S.%N %4Z") ; echo -n "$now Data collection complete" >/dev/tcp/CLIENT/4242
+// 2019-08-22 07:23:21.915416896  CDT
+
+#define COMPLETION_MSG "Data collection complete"
+
+#define ADDR_STR_LEN (INET6_ADDRSTRLEN * 2 + 20)
+
+char *tstamp(void) {
+	struct timespec now;
+	char time_buffer[32];
+	struct tm tm_info;
+	char tzbuf[8];
+	char *tstamp;
+
+	clock_gettime(CLOCK_REALTIME, &now);
+
+	localtime_r(&now.tv_sec, &tm_info);
+	strftime(time_buffer, sizeof(time_buffer), "%F %T", &tm_info);
+	strftime(tzbuf, 8, "%4Z", &tm_info);
+	asprintf(&tstamp, "%s.%09ld %s", time_buffer, now.tv_nsec, tzbuf);
+
+	return tstamp;
+}
+
+#define tstamp_printf(args...) do { \
+	char *ts_str = tstamp(); \
+	printf("%s: ", ts_str); \
+	printf(args); \
+	free(ts_str); \
+	fflush(stdout); \
+} while (0)
+
+#define exit_fail(args...) do { \
+	tstamp_printf(args); \
+	exit(EXIT_FAILURE); \
+} while (0)
+
+int main(int argc, char *argv[]) {
+	struct sockaddr_in6 me, peer;
+	const int yes_flag = 1;
+	int sock_fd, conn_fd;
+	socklen_t addr_size;
+
+	if ((sock_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+		exit_fail("error '%m' opening socket");
+	if (setsockopt(sock_fd, SOL_SOCKET, SO_REUSEADDR, &yes_flag, sizeof(int)) < 0)
+		exit_fail("error '%m' calling setsockopt(SO_REUSEADDR)");
+	if (setsockopt(sock_fd, SOL_SOCKET, SO_REUSEPORT, &yes_flag, sizeof(int)) < 0)
+		exit_fail("error '%m' calling setsockopt(SO_REUSEPORT)");
+
+	addr_size = sizeof(me);
+	memset(&me, 0, addr_size);
+	((struct sockaddr_in *)&me)->sin_family = AF_INET;
+	((struct sockaddr_in *)&me)->sin_port = htons(LISTEN_PORT);
+
+	if (bind(sock_fd, (struct sockaddr *)&me, addr_size) < 0)
+		exit_fail("error '%m' calling bind");
+	if (listen(sock_fd, LISTEN_BACKLOG) < 0)
+		exit_fail("error '%m' calling listen");
+
+	tstamp_printf("monitoring starting\n");
+
+	while ((conn_fd = accept(sock_fd, (struct sockaddr *)&peer, &addr_size)) >= 0) {
+		char addr_str[ADDR_STR_LEN];
+		char rcvbuf[BUF_SIZE];
+		int str_len = 0;
+		int ret;
+
+		getsockname(conn_fd, (struct sockaddr *)&me, &addr_size);
+		getpeername(conn_fd, (struct sockaddr *)&peer, &addr_size);
+
+		if (((struct sockaddr *)&peer)->sa_family == AF_INET) {
+			struct sockaddr_in *me4 = (struct sockaddr_in *)&me;
+			struct sockaddr_in *peer4 = (struct sockaddr_in *)&peer;
+
+			inet_ntop(AF_INET, &peer4->sin_addr, addr_str, ADDR_STR_LEN);
+			str_len = strlen(addr_str);
+			snprintf(addr_str + str_len, ADDR_STR_LEN - str_len, ":%d => ", ntohs(peer4->sin_port));
+
+			str_len = strlen(addr_str);
+			inet_ntop(AF_INET, &me4->sin_addr, addr_str + str_len, ADDR_STR_LEN - str_len);
+			str_len = strlen(addr_str);
+			snprintf(addr_str + str_len, ADDR_STR_LEN - str_len, ":%d", ntohs(me4->sin_port));
+		} else { // AF_INET6
+			inet_ntop(AF_INET6, &peer.sin6_addr, addr_str, sizeof(addr_str));
+			str_len = strlen(addr_str);
+			snprintf(addr_str + str_len, ADDR_STR_LEN - str_len, ":%d => ", ntohs(peer.sin6_port));
+
+			str_len = strlen(addr_str);
+			inet_ntop(AF_INET6, &me.sin6_addr, addr_str + str_len, ADDR_STR_LEN - str_len);
+			str_len = strlen(addr_str);
+			snprintf(addr_str + str_len, ADDR_STR_LEN - str_len, ":%d", ntohs(me.sin6_port));
+		}
+		tstamp_printf("accepted connection: %s\n", addr_str);
+
+		ret = read(conn_fd, rcvbuf, BUF_SIZE);
+		if (ret >= BUF_SIZE)
+			ret = BUF_SIZE - 1;
+		rcvbuf[ret] = '\0';
+
+
+		if (ret == (sizeof(COMPLETION_MSG) + sizeof(TSTAMP_STRING) - 1 ) && !strcmp(COMPLETION_MSG, rcvbuf + sizeof(TSTAMP_STRING))) {
+			tstamp_printf("received success notification from remote system\n");
+			tstamp_printf("\tmessage: '%s'\n", rcvbuf);
+			tstamp_printf("exiting successfully\n");
+			return EXIT_SUCCESS;
+		}
+
+		tstamp_printf("  received bad message: '%s' (%d bytes)\n", rcvbuf, ret);
+		tstamp_printf("  expected '" TSTAMP_STRING " %s' (%ld bytes)\n", COMPLETION_MSG, sizeof(COMPLETION_MSG) + sizeof(TSTAMP_STRING) - 1);
+		close(conn_fd); /* close the fd & try to listen again */
+	}
+	exit_fail("error '%m' with accept\n");
+
+	return EXIT_FAILURE;
+}

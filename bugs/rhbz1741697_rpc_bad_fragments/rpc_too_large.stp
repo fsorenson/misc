@@ -1,0 +1,203 @@
+##### STAP_BEGIN #####
+#
+# module("sunrpc").statement("svc_tcp_recv_record@net/sunrpc/svcsock.c:988") $iov:struct kvec $serv:struct svc_serv* $want:unsigned int $len:int $rqstp:struct svc_rqst* $svsk:struct svc_sock*
+
+%{
+#include <include/linux/in.h>
+#include <linux/tcp.h>
+#include <net/sock.h>
+#include <net/tcp.h>
+#include <net/ip.h>
+#include <linux/skbuff.h>
+#include <linux/sunrpc/svcsock.h>
+%}
+global hitcount = 0
+
+function tstamp:string(epochsecs:long, nsec:long) %{ /* pure */
+	const time_t epochsecs = STAP_ARG_epochsecs;
+	unsigned long nsec = STAP_ARG_nsec;
+	struct tm gmt;
+
+	time_to_tm(epochsecs, -tz_gmtoff, &gmt);
+	snprintf(STAP_RETVALUE, MAXSTRINGLEN, "%04ld-%02d-%02d %02d:%02d:%02d.%06lu",
+		gmt.tm_year + 1900, gmt.tm_mon + 1, gmt.tm_mday,
+		gmt.tm_hour, gmt.tm_min, gmt.tm_sec, nsec / 1000);
+%}
+function tstamp_now() {
+	s = gettimeofday_ns()
+	ns = s % 1000000000
+	s = s / 1000000000
+	return tstamp(s, ns)
+}
+function output(msg) {
+	tmp_msg = sprintf("%s %s(%d) %s()%s", tstamp_now(), execname(), tid(), ppfunc(), msg) # with timestamp
+	printk(3, tmp_msg)
+}
+
+function isprint(ch) %{ /* pure */
+	char ch = (char)STAP_ARG_ch;
+	STAP_RETVALUE = isprint(ch);
+%}
+
+function print_hex_str(start_addr, len) {
+	offset = 0
+
+	if (len > 512)
+		len = 512
+
+	output(sprintf(": memory dump - addr: %p, length: %d", start_addr, len))
+	while (offset < len) {
+		this_count = len - offset;
+		if (this_count > 16)
+			this_count = 16
+
+		ret = ""
+		chars = ""
+		i = 0
+		try {
+			for (i = 0 ; i < 16 ; i++) {
+				if (i < this_count) {
+					ch = kernel_char(start_addr + offset + i) & 0xff
+					ret .= sprintf("%02x ", ch)
+					if (i < this_count) {
+						if (ch < 0x80 && isprint(ch))
+							chars .= sprintf("%c", 0xff & ch)
+						else
+							chars .= "."
+					}
+				} else {
+					ret .= "   "
+				}
+				if (i == 7)
+					ret .= "| "
+			}
+		} catch {
+			output(sprintf(" could not output memory dump at offset %d (0x%016x)", offset + i, start_addr + offset + 1))
+			return 0
+		}
+		output(sprintf(":  0x%08lx: %s |%s|", offset, ret, chars))
+		offset += this_count
+	}
+}
+
+function skb_peek:long(list_:long) %{
+	struct sk_buff_head *list_ = (struct sk_buff_head *)STAP_ARG_list_;
+	struct sk_buff *skb = (struct sk_buff *)list_->next;
+
+	if (skb == (struct sk_buff *)list_)
+		STAP_RETVALUE = (long)NULL;
+	STAP_RETVALUE = (long)skb;
+%}
+
+function skb_queue_len:long(list_:long) %{
+	struct sk_buff_head *list_ = (struct sk_buff_head *)STAP_ARG_list_;
+	STAP_RETVALUE = list_->qlen;
+%}
+
+function svc_sock_reclen(svsk) %{ /* pure */
+	struct svc_sock *svsk = (struct svc_sock *)STAP_ARG_svsk;
+	STAP_RETVALUE = ntohl(svsk->sk_reclen) & RPC_FRAGMENT_SIZE_MASK;
+%}
+
+# inet_connection_sock: 
+#   tcp_sock->inet_conn
+# inet_sock_t:
+#   inet_connection_sock->icsk_inet
+# sock:
+#   inet_sock->sk
+# sock_common:
+#   sock->__sk_common
+
+# module("sunrpc").statement("svc_tcp_recv_record@net/sunrpc/svcsock.c:988") $iov:struct kvec $serv:struct svc_serv* $want:unsigned int $len:int $rqstp:struct svc_rqst* $svsk:struct svc_sock*
+probe module("sunrpc").statement("svc_tcp_recv_record@net/sunrpc/svcsock.c+23") {
+	if (svc_sock_reclen($svsk) + $svsk->sk_datalen <= $serv->sv_max_mesg)
+		next
+
+	hitnum = ++hitcount
+
+	sk_sk = $svsk->sk_sk
+	tcp_sk = &@cast($svsk->sk_sk, "struct tcp_sock")
+	sk = &@cast(&tcp_sk->inet_conn->icsk_inet->sk, "struct sock")
+
+	output(sprintf(": overlength RPC: %d (0x%08x), max_mesg: %d\n", ntohl($svsk->sk_reclen),  ntohl($svsk->sk_reclen), $serv->sv_max_mesg))
+	output(sprintf(": rpc program: %s (%d)", kernel_string($serv->sv_program->pg_name), $serv->sv_program->pg_prog))
+#	output(sprintf(": max_mesg: %d, reclen: %d (0x%08x)", $serv->sv_max_mesg, ntohl($svsk->sk_reclen),  ntohl($svsk->sk_reclen)))
+	output(sprintf(": len: %d; want: %d", $len, $want))
+
+
+#	output(sprintf(": bytes received: %d, acked: %d", tcp_sk->bytes_received, tcp_sk->bytes_acked))
+
+	### only peeking the first skb in the receive_queue, for now
+	skb_peeked = &@cast(skb_peek(&sk->sk_receive_queue), "struct sk_buff")
+
+#	output(sprintf("        skb_queue_len: %d", skb_queue_len(kernel_pointer(skb_peeked))))
+	if (skb_peeked != NULL) {
+		mac_header_len = skb_peeked->mac_len
+#		ip_header_len = skb_peeked->hdr_len # TODO: can we get this natively, rather than calculating it later?
+		tcp_header_len = tcp_sk->tcp_header_len
+		data_len = skb_peeked->len
+#		frame_len = mac_header_len + ip_header_len + tcp_header_len + data_len
+		frame_len = skb_peeked->data - skb_peeked->head - skb_peeked->mac_header + skb_peeked->len
+		ip_header_len = frame_len - mac_header_len - tcp_header_len - data_len # hmm.  where can we get this natively?
+
+		frame_addr = skb_peeked->head + skb_peeked->mac_header # offset into the buffer
+		mac_header_addr = frame_addr
+		ip_header_addr = frame_addr + mac_header_len
+		tcp_header_addr = ip_header_addr + ip_header_len
+		data_addr = tcp_header_addr + tcp_header_len
+
+		output(sprintf(": mac header len: %d, ip header len: %d, tcp header len: %d, data len: %d, frame len: %d",
+			mac_header_len, ip_header_len, tcp_header_len, data_len, frame_len))
+
+		dst_mac_addr = mac_header_addr
+		dst_mac = sprintf("%02x:%02x:%02x:%02x:%02x:%02x",
+			kernel_char(dst_mac_addr) & 0xff, kernel_char(dst_mac_addr + 1) & 0xff,
+			kernel_char(dst_mac_addr + 2) & 0xff, kernel_char(dst_mac_addr + 3) & 0xff,
+			kernel_char(dst_mac_addr + 4) & 0xff, kernel_char(dst_mac_addr + 5) & 0xff)
+		src_mac_addr = mac_header_addr + 6
+		src_mac = sprintf("%02x:%02x:%02x:%02x:%02x:%02x",
+			kernel_char(src_mac_addr) & 0xff, kernel_char(src_mac_addr + 1) & 0xff,
+			kernel_char(src_mac_addr + 2) & 0xff, kernel_char(src_mac_addr + 3) & 0xff,
+			kernel_char(src_mac_addr + 4) & 0xff, kernel_char(src_mac_addr + 5) & 0xff)
+
+		output(sprintf(": %s -> %s", src_mac, dst_mac))
+
+#		output(sprintf("        skb_queue_len: %d", skb_queue_len(&sk->sk_receive_queue)))
+		print_hex_str(frame_addr, frame_len)
+	}
+
+	family = sk_sk->__sk_common->skc_family
+	/* addresses and ports */
+	skc_addr = sk_sk->__sk_common->skc_rcv_saddr
+	skc_port = sk_sk->__sk_common->skc_num
+	skc_daddr = sk_sk->__sk_common->skc_daddr
+	skc_dport = sk_sk->__sk_common->skc_dport
+	addr_port = sprintf("%s:%d", format_ipaddr(skc_addr, family), skc_port)
+	daddr_dport = sprintf("%s:%d", format_ipaddr(skc_daddr, family), skc_dport)
+
+	output(sprintf(": remote: %s -> local: %s (proto: %s)",
+		daddr_dport, addr_port, kernel_string(sk_sk->__sk_common->skc_prot->name)))
+	output(sprintf(": TCP parameters"))
+	output(sprintf(":  .snd_wl1:    %d (** SEQ **)", tcp_sk->snd_wl1)) /* sequence for window update */
+	output(sprintf(":  .copied_seq: %d", tcp_sk->copied_seq)) /* Head of yet unread data  */
+	output(sprintf(":  .rcv_nxt:    %d", tcp_sk->rcv_nxt)) /* What we want to receive next */
+	output(sprintf(":  .rcv_wup:    %d", tcp_sk->rcv_wup)) /* rcv_nxt on last window update sent */
+
+	output(sprintf(":  .snd_una:    %d (** ACK **)", tcp_sk->snd_una)) /* First byte we want an ack for */
+	output(sprintf(":  .snd_nxt:    %d", tcp_sk->snd_nxt)) /* Next sequence we send */
+	output(sprintf(":  .snd_sml:    %d", tcp_sk->snd_sml)) /* Last byte of the most recently transmitted small packet */
+
+	if (hitnum >= 5) {
+		output(sprintf(" hit the probe %d times; exiting", hitnum))
+		exit()
+	}
+}
+
+probe begin {
+	output(sprintf(": probe starting"))
+}
+probe end {
+	output(sprintf(": probe exiting"))
+}
+
+

@@ -1,0 +1,482 @@
+#!/bin/bash
+
+orig_dir=$(pwd)
+self=$(readlink -f $0)
+
+case=2433188
+host=$(hostname -s)
+tstamp=$(date +"%F_%H.%M.%S")
+
+trace_str="nfs_trace-$case-$host-$tstamp"
+tmpdir="/tmp/$trace_str"
+stap_name="rpc_too_large"
+completion_message="Data collection complete"
+completion_target="10.45.58.26/4242"
+
+# default buffer size is 2 MiB (specified in KiB)
+tcpdump_files=4
+tcpdump_file_size=1024
+tcpdump_buffer_size=16304
+
+tcpdump_pid=""
+stap_pid=""
+dmesg_pid=""
+
+output() {
+	echo "$(date +"%F %H:%M:%S.%N") $*" | tee -a $log
+}
+
+exit_cleanup() {
+	trap - SIGTERM SIGINT EXIT
+
+	output "cleaning up and exiting"
+	# signal to the other end that we're done
+	msg=$(echo -n "$(date +"%F %H:%M:%S.%N %4Z") $completion_message")
+	out=$( (echo -en "$msg" >/dev/tcp/$completion_target) 2>&1) || {
+		output "error occurred while sending completion message to the client:"
+		output "$(echo -e \"$out\" | sed 's/^/ERR:  /g')"
+		output ""
+		output "was the client script running?"
+	}
+	sleep 0.25
+
+	[[ -n $tcpdump_pid ]] && kill $tcpdump_pid 2>/dev/null && wait $tcpdump_pid 2>/dev/null
+#	[[ -n $stap_pid ]] && kill $stap_pid && wait $stap_pid 2>/dev/null
+	[[ -n $stap_pid ]] && kill $stap_pid 2>/dev/null && wait $stap_pid 2>/dev/null
+	stap_pid=$(pgrep -f "^stap.+$stap_name")
+	[[ -n $stap_pid ]] && kill $stap_pid 2>/dev/null && wait $stap_pid 2>/dev/null
+	rmmod $stap_name >/dev/null 2>&1 # likely unnecessary
+	[[ -n $dmesg_pid ]] && kill $dmesg_pid 2>/dev/null && wait $dmesg_pid 2>/dev/null
+
+	date --rfc-3339=ns >$tmpdir/stop_time
+
+	cd /tmp
+	echo "compressing the collected data"
+	tar cJf $trace_str.tar.xz $trace_str
+	rm -rf $trace_str
+
+	cd $orig_dir
+	echo "Trace data collected in /tmp/$trace_str.tar.xz"
+}
+
+
+# check for already-running systemtap
+try=0
+stap_pid=$(pgrep -f "^stap.+$stap_name")
+while [[ -n $stap_pid ]] ; do
+	kill $stap_pid
+	sleep 0.25
+	stap_pid=$(pgrep -f "stap.+$stap_name")
+	try=$(($try + 1))
+	if [[ -n $stap_pid && $try -ge 3 ]] ; then
+		output "Unable to stop already-running systemtap processes for $stap_name"
+		exit 1
+	fi
+done
+
+# check for already-loaded module
+try=0
+stap_count=$(egrep -c "^$stap_name " /proc/modules)
+while [[ $stap_count -gt 0 ]] ; do
+	rmmod $stap_name
+	sleep 0.25
+	stap_count=$(egrep -c "^$stap_name " /proc/modules)
+	try=$(($try + 1))
+	if [[ $stap_count -gt 0 && $try -ge 3 ]] ; then
+		output "Unable to unload already-loaded systemtap module $stap_name"
+		exit 1
+	fi
+done
+
+# check for any already-running dmesg
+try=0
+dmesg_pid=$(pgrep -f '^dmesg -wT')
+while [[ -n $dmesg_pid ]] ; do
+	kill $dmesg_pid
+	sleep 0.25
+	dmesg_pid=$(pgrep -f '^dmesg -wT')
+	try=$(($try + 1))
+	if [[ -n $dmesg_pid && $try -ge 3 ]] ; then
+		output "Unable to stop already-running dmesg process"
+		exit 1
+	fi
+done
+
+# check for any already-running tcpdump
+try=0
+tcpdump_pid=$(pgrep tcpdump)
+while [[ -n $tcpdump_pid ]] ; do
+	kill $tcpdump_pid
+	sleep 0.25
+	tcpdump_pid=$(pgrep tcpdump)
+	try=$(($try + 1))
+	if [[ -n $tcpdump_pid && $try -ge 3 ]] ; then
+		output "Unable to stop already-running tcpdump process"
+		exit 1
+	fi
+done
+
+mkdir -p $tmpdir
+cp $self $tmpdir
+cd $tmpdir
+
+
+output "building and loading systemtap"
+
+# create the systemtap .stp file
+stap_start_line=$(egrep -m2 -n STAP_BEGIN $self | tail -1 | awk -F: '{print $1}')
+tail -n +$stap_start_line $self > $tmpdir/$stap_name.stp
+
+# load the systemtap
+#stap_pid=$(stap -k -F -o $tmpdir/stap.stdout -vg $tmpdir/$stap_name.stp -m $stap_name -D MAXSTRINGLEN=10240 -d nfsd -d kernel -d sunrpc --suppress-handler-errors --suppress-time-limits --skip-badvars 2>$tmpdir/stap.out)
+stap_pid=$(stap -k -F -o $tmpdir/stap.stdout -vg $tmpdir/$stap_name.stp -m $stap_name -D MAXSTRINGLEN=10240 -d nfsd -d kernel -d sunrpc --suppress-handler-errors --skip-badvars 2>$tmpdir/stap.out)
+if [[ $? -ne 0 ]] ; then
+	output "Error occurred while compiling and loading systemtap"
+	tail $tmpdir/stap.out | sed 's/^/ERR:  /g'
+	output ""
+	output "full error message can be found in $tmpdir/stap.out"
+	exit 1
+fi
+output "systemtap started as pid $stap_pid"
+
+
+# start tcpdump
+for iface in bond0 bond1 eth0 eno1 eno2 any ; do
+	tcpdump -D | egrep -qw "[0-9]+\.$iface\b" && break
+done
+tcpdump -i $iface -s 0 -w $tmpdir/tcpdump.pcap -W $tcpdump_files -C $tcpdump_file_size -B $tcpdump_buffer_size tcp port 2049 >$tmpdir/tcpdump.out 2>&1 &
+tcpdump_pid=$!
+output "tcpdump started as pid $tcpdump_pid"
+
+# start dmesg
+dmesg -Tc >$tmpdir/dmesg.begin 2>&1
+dmesg -wT >$tmpdir/dmesg.out 2>&1 &
+dmesg_pid=$!
+output "watching kernel messages with pid $dmesg_pid"
+
+date --rfc-3339=ns >$tmpdir/start_time
+uname -a >$tmpdir/uname
+readlink -f /etc/localtime >$tmpdir/localtime
+
+trap exit_cleanup SIGTERM SIGINT EXIT
+
+# make sure the file got created, so we can watch it
+while [[ ! -f $tmpdir/dmesg.out ]] ; do
+	sleep 0.25
+done
+output "collecting trace data in $tmpdir"
+
+tail -n 0 -f $tmpdir/dmesg.out | egrep -m 2 'overlength RPC' >/dev/null 2>&1 ## will return once we've seen the message twice
+output "'overlength RPC' message seen; stopping"
+
+sleep 2
+# let exit_cleanup do its job
+exit
+
+
+##### STAP_BEGIN #####
+#
+# module("sunrpc").statement("svc_tcp_recv_record@net/sunrpc/svcsock.c:988") $iov:struct kvec $serv:struct svc_serv* $want:unsigned int $len:int $rqstp:struct svc_rqst* $svsk:struct svc_sock*
+
+%{
+#include <include/linux/in.h>
+#include <linux/tcp.h>
+#include <net/sock.h>
+#include <net/tcp.h>
+#include <net/ip.h>
+#include <linux/skbuff.h>
+#include <linux/sunrpc/svcsock.h>
+%}
+global hitcount = 0
+
+function tstamp:string(epochsecs:long, nsec:long) %{ /* pure */
+	const time_t epochsecs = STAP_ARG_epochsecs;
+	unsigned long nsec = STAP_ARG_nsec;
+	struct tm gmt;
+
+	time_to_tm(epochsecs, -tz_gmtoff, &gmt);
+	snprintf(STAP_RETVALUE, MAXSTRINGLEN, "%04ld-%02d-%02d %02d:%02d:%02d.%06lu",
+		gmt.tm_year + 1900, gmt.tm_mon + 1, gmt.tm_mday,
+		gmt.tm_hour, gmt.tm_min, gmt.tm_sec, nsec / 1000);
+%}
+function tstamp_now() {
+	s = gettimeofday_ns()
+	ns = s % 1000000000
+	s = s / 1000000000
+	return tstamp(s, ns)
+}
+function output(msg) {
+	tmp_msg = sprintf("%s %s(%d) %s()%s", tstamp_now(), execname(), tid(), ppfunc(), msg) # with timestamp
+	printk(3, tmp_msg)
+}
+
+function isprint(ch) %{ /* pure */
+	char ch = (char)STAP_ARG_ch;
+	STAP_RETVALUE = isprint(ch);
+%}
+
+function print_hex_str(start_addr, len) {
+	offset = 0
+
+	if (len > 512)
+		len = 512
+
+	output(sprintf(": memory dump - addr: %p, length: %d", start_addr, len))
+	while (offset < len) {
+		this_count = len - offset;
+		if (this_count > 16)
+			this_count = 16
+
+		ret = ""
+		chars = ""
+		i = 0
+		try {
+			for (i = 0 ; i < 16 ; i++) {
+				if (i < this_count) {
+					ch = kernel_char(start_addr + offset + i) & 0xff
+					ret .= sprintf("%02x ", ch)
+					if (i < this_count) {
+						if (ch < 0x80 && isprint(ch))
+							chars .= sprintf("%c", 0xff & ch)
+						else
+							chars .= "."
+					}
+				} else {
+					ret .= "   "
+				}
+				if (i == 7)
+					ret .= "| "
+			}
+		} catch {
+			output(sprintf(" could not output memory dump at offset %d (0x%016x)", offset + i, start_addr + offset + 1))
+			return 0
+		}
+		output(sprintf(":  0x%08lx: %s |%s|", offset, ret, chars))
+		offset += this_count
+	}
+}
+
+function skb_peek:long(list_:long) %{
+	struct sk_buff_head *list_ = (struct sk_buff_head *)STAP_ARG_list_;
+	struct sk_buff *skb = (struct sk_buff *)list_->next;
+
+	if (skb == (struct sk_buff *)list_)
+		STAP_RETVALUE = (long)NULL;
+	STAP_RETVALUE = (long)skb;
+%}
+
+function skb_queue_len:long(list_:long) %{
+	struct sk_buff_head *list_ = (struct sk_buff_head *)STAP_ARG_list_;
+	STAP_RETVALUE = list_->qlen;
+%}
+
+function svc_sock_reclen(svsk) %{ /* pure */
+	struct svc_sock *svsk = (struct svc_sock *)STAP_ARG_svsk;
+	STAP_RETVALUE = ntohl(svsk->sk_reclen) & RPC_FRAGMENT_SIZE_MASK;
+%}
+
+function get_mac_str:string(addr) %{
+	char buf[40], *buf_p;
+	char *p = (char *)STAP_ARG_addr;
+	int i;
+
+	buf_p = buf;
+	snprintf(STAP_RETVALUE, 50, "%02x:%02x:%02x:%02x:%02x:%02x => %02x:%02x:%02x:%02x:%02x:%02x",
+		p[0] & 0xff, p[1]& 0xff, p[2] & 0xff,
+		p[3] & 0xff, p[4]& 0xff, p[5] & 0xff,
+		p[6] & 0xff, p[7]& 0xff, p[8] & 0xff,
+		p[9] & 0xff, p[10]& 0xff, p[11] & 0xff);
+%}
+
+function tcp_sk_header_len(tcp_sk) {
+	tcp_sk = &@cast(tcp_sk, "struct tcp_sock")
+	return tcp_sk->tcp_header_len
+}
+
+function display_mac(skb_peeked, tcp_sk) {
+	skb_peeked = &@cast(skb_peeked, "struct sk_buff")
+
+#	tcp_sk = &@cast(tcp_sk, "struct tcp_sock")
+
+
+	mac_header_len = skb_peeked->mac_len
+#		ip_header_len = skb_peeked->hdr_len # TODO: can we get this natively, rather than calculating it later?
+#	tcp_header_len = tcp_sk->tcp_header_len
+#	tcp_header_len = @cast(
+#$svsk->sk_sk)
+#tcp_sk->tcp_header_len
+	tcp_header_lan = tcp_sk_header_len(tcp_sk)
+
+	data_len = skb_peeked->len
+#		frame_len = mac_header_len + ip_header_len + tcp_header_len + data_len
+	frame_len = skb_peeked->data - skb_peeked->head - skb_peeked->mac_header + skb_peeked->len
+	ip_header_len = frame_len - mac_header_len - tcp_header_len - data_len # hmm.  where can we get this natively?
+
+	frame_addr = skb_peeked->head + skb_peeked->mac_header # offset into the buffer
+#	mac_header_addr = frame_addr
+#		ip_header_addr = frame_addr + mac_header_len
+#		tcp_header_addr = ip_header_addr + ip_header_len
+#		data_addr = tcp_header_addr + tcp_header_len
+
+	output(sprintf(": mac header len: %d, ip header len: %d, tcp header len: %d, data len: %d, frame len: %d",
+		mac_header_len, ip_header_len, tcp_header_len, data_len, frame_len))
+
+/*
+	dst_mac_addr = mac_header_addr
+	dst_mac = sprintf("%02x:%02x:%02x:%02x:%02x:%02x",
+		kernel_char(dst_mac_addr) & 0xff, kernel_char(dst_mac_addr + 1) & 0xff,
+		kernel_char(dst_mac_addr + 2) & 0xff, kernel_char(dst_mac_addr + 3) & 0xff,
+		kernel_char(dst_mac_addr + 4) & 0xff, kernel_char(dst_mac_addr + 5) & 0xff)
+	src_mac_addr = mac_header_addr + 6
+	src_mac = sprintf("%02x:%02x:%02x:%02x:%02x:%02x",
+		kernel_char(src_mac_addr) & 0xff, kernel_char(src_mac_addr + 1) & 0xff,
+		kernel_char(src_mac_addr + 2) & 0xff, kernel_char(src_mac_addr + 3) & 0xff,
+		kernel_char(src_mac_addr + 4) & 0xff, kernel_char(src_mac_addr + 5) & 0xff)
+	output(sprintf(": %s -> %s", src_mac, dst_mac))
+*/
+/*
+	output(sprintf(": %02x:%02x:%02x:%02x:%02x:%02x => %02x:%02x:%02x:%02x:%02x:%02x",
+		kernel_char(mac_header_addr) & 0xff, kernel_char(dst_mac_addr + 1) & 0xff,
+		kernel_char(mac_header_addr + 2) & 0xff, kernel_char(dst_mac_addr + 3) & 0xff,
+		kernel_char(mac_header_addr + 4) & 0xff, kernel_char(dst_mac_addr + 5) & 0xff,
+		kernel_char(mac_header_addr + 6) & 0xff, kernel_char(dst_mac_addr + 7) & 0xff,
+		kernel_char(mac_header_addr + 8) & 0xff, kernel_char(dst_mac_addr + 9) & 0xff,
+		kernel_char(mac_header_addr + 10) & 0xff, kernel_char(dst_mac_addr + 11) & 0xff
+	))
+*/
+
+	output(sprintf(": %s\n", get_mac_str(frame_addr)))
+
+#		output(sprintf("        skb_queue_len: %d", skb_queue_len(&sk->sk_receive_queue)))
+	print_hex_str(frame_addr, frame_len)
+}
+
+@define _sock_fam_num(sock) %( ( @sock ? ( @sock->ops ? @sock->ops->family : -1 ) : -1 ) %)
+
+function proto_num_to_str(proto) {
+	if (proto == 6)
+		return "tcp"
+	if (proto == 17)
+		return "udp"
+	return "unknown"
+}
+
+function display_tcpip_details(sk) {
+	sk = &@cast(sk, "struct sock")
+
+	/* addresses and ports */
+
+	family = @_sock_fam_num(sk)
+        saddr   = format_ipaddr(__ip_sock_saddr(sk), __ip_sock_family(sk))
+        daddr   = format_ipaddr(__ip_sock_daddr(sk), __ip_sock_family(sk))
+        sport   = __tcp_sock_sport(sk)
+        dport   = __tcp_sock_dport(sk)
+
+	proto_str = kernel_string(sk->__sk_common->skc_prot->name)
+
+	output(sprintf(": remote: %s:%d => local: %s:%d (proto: %s)",
+		daddr, dport, saddr, sport, proto_str))
+
+	tcp_sk = &@cast(tcp_sk, "struct tcp_sock")
+	output(sprintf(": TCP parameters"))
+	output(sprintf(":  .snd_wl1:    %d (** SEQ **)", tcp_sk->snd_wl1)) /* sequence for window update */
+	output(sprintf(":  .copied_seq: %d", tcp_sk->copied_seq)) /* Head of yet unread data  */
+	output(sprintf(":  .rcv_nxt:    %d", tcp_sk->rcv_nxt)) /* What we want to receive next */
+	output(sprintf(":  .rcv_wup:    %d", tcp_sk->rcv_wup)) /* rcv_nxt on last window update sent */
+
+	output(sprintf(":  .snd_una:    %d (** ACK **)", tcp_sk->snd_una)) /* First byte we want an ack for */
+	output(sprintf(":  .snd_nxt:    %d", tcp_sk->snd_nxt)) /* Next sequence we send */
+	output(sprintf(":  .snd_sml:    %d", tcp_sk->snd_sml)) /* Last byte of the most recently transmitted small packet */
+}
+
+# svc_sock
+# struct svc_sock {
+#	struct svc_xprt         sk_xprt;
+#	struct socket *         sk_sock;        /* berkeley socket layer */
+#	struct sock *           sk_sk;          /* INET layer */
+
+# struct socket {
+#	socket_state            state;
+#
+#	kmemcheck_bitfield_begin(type);
+#	short                   type;
+#	kmemcheck_bitfield_end(type);
+#
+#	unsigned long           flags;
+#
+#	struct socket_wq __rcu  *wq;
+#
+#	struct file             *file;
+#	struct sock             *sk;
+#	const struct proto_ops  *ops;
+# };
+
+# struct sock {
+#	/*
+#	* Now struct inet_timewait_sock also uses sock_common, so please just
+#	* don't add nothing before this first member (__sk_common) --acme
+#	*/
+#	struct sock_common      __sk_common;
+
+# inet_connection_sock: 
+#   tcp_sock->inet_conn
+# inet_sock_t:
+#   inet_connection_sock->icsk_inet
+# sock:
+#   inet_sock->sk
+# sock_common:
+#   sock->__sk_common
+
+
+function peek_receive_queue(sk) {
+	sk = &@cast(sk, "struct sock")
+	skb_peeked = &@cast(skb_peek(&sk->sk_receive_queue), "struct sk_buff")
+
+#	output(sprintf("        skb_queue_len: %d", skb_queue_len(kernel_pointer(skb_peeked))))
+
+	if (skb_peeked != NULL) {
+#		display_mac(skb_peeked, $svsk->sk_sk)
+		display_mac(skb_peeked, sk)
+	}
+}
+function display_serv_details(serv) {
+	serv = &@cast(serv, "struct svc_serv", "sunrpc")
+
+	output(sprintf(": rpc program: %s (%d)", kernel_string(serv->sv_program->pg_name), serv->sv_program->pg_prog))
+}
+
+# module("sunrpc").statement("svc_tcp_recv_record@net/sunrpc/svcsock.c:988") $iov:struct kvec $serv:struct svc_serv* $want:unsigned int $len:int $rqstp:struct svc_rqst* $svsk:struct svc_sock*
+probe module("sunrpc").statement("svc_tcp_recv_record@net/sunrpc/svcsock.c+23") {
+	serv = &@cast(@choose_defined($serv, $svsk->sk_xprt->xpt_server), "struct svc_serv", "sunrpc")
+
+	if (svc_sock_reclen($svsk) + $svsk->sk_datalen <= serv->sv_max_mesg)
+		next
+
+	hitnum = ++hitcount
+
+#	sk_sk = $svsk->sk_sk
+
+	output(sprintf(": overlength RPC: %d (0x%08x), max_mesg: %d\n", ntohl($svsk->sk_reclen),  ntohl($svsk->sk_reclen), serv->sv_max_mesg))
+	display_serv_details($svsk->sk_xprt->xpt_server)
+
+	if (@defined($len) && @defined($want)) {
+		output(sprintf(": len: %d; want: %d", $len, $want))
+	}
+
+#	output(sprintf(": bytes received: %d, acked: %d", tcp_sk->bytes_received, tcp_sk->bytes_acked))
+
+	peek_receive_queue($svsk->sk_sk)
+#	display_ip_details(&sk_sk->__sk_common)
+#	display_tcp_details($svsk->sk_sk)
+	display_tcpip_details($svsk->sk_sk)
+	if (hitnum >= 2) {
+		exit()
+	}
+}
+
+probe begin {
+	output(sprintf(": probe starting"))
+}
+probe end {
+	output(sprintf(": probe exiting after hitting the probe %d time(s)", hitcount))
+}
