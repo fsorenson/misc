@@ -1,0 +1,69 @@
+--- a/net/sunrpc/svcsock.c	2019-08-20 12:48:43.325632588 -0500
++++ b/net/sunrpc/svcsock.c	2019-08-20 23:22:42.987217463 -0500
+@@ -910,6 +909,51 @@
+ 	svsk->sk_datalen = 0;
+ }
+ 
++static int svc_fragment_too_large(struct svc_sock *svsk, int sv_max_mesg)
++{
++	if (svc_sock_reclen(svsk) + svsk->sk_datalen > sv_max_mesg) {
++		const char *proto_name = svsk->sk_sk->sk_protocol == IPPROTO_UDP ?
++			"udp" : "tcp";
++		char buf[128];
++
++		switch (svsk->sk_sk->sk_family) {
++			case AF_LOCAL:
++				{
++				snprintf(buf, sizeof(buf), "local:%s",
++					((struct rpc_xprt *)svsk)->address_strings[RPC_DISPLAY_ADDR]);
++				break;
++				}
++			case AF_INET:
++				{
++				const struct sockaddr_in *loc_sin = (struct sockaddr_in *)&svsk->sk_xprt.xpt_local;
++				const struct sockaddr_in *rmt_sin = (struct sockaddr_in *)&svsk->sk_xprt.xpt_remote;
++
++				snprintf(buf, sizeof(buf), "%s %pI4:%u => %pI4:%u", proto_name,
++					&rmt_sin->sin_addr, ntohs(rmt_sin->sin_port),
++					&loc_sin->sin_addr, ntohs(loc_sin->sin_port));
++				break;
++				}
++			case AF_INET6:
++				{
++				const struct sockaddr_in6 *loc_sin6 = (struct sockaddr_in6 *)&svsk->sk_xprt.xpt_local;
++				const struct sockaddr_in6 *rmt_sin6 = (struct sockaddr_in6 *)&svsk->sk_xprt.xpt_remote;
++
++				snprintf(buf, sizeof(buf), "%s %pI6:%u => %pI6:%u", proto_name,
++					&rmt_sin6->sin6_addr, ntohs(rmt_sin6->sin6_port),
++					&loc_sin6->sin6_addr, ntohs(loc_sin6->sin6_port));
++				break;
++				}
++			default:
++				snprintf(buf, sizeof(buf), "unknown AF: %d", svsk->sk_sk->sk_family);
++				break;
++                }
++		net_notice_ratelimited("RPC: fragment too large: %d (%s)\n",
++			svc_sock_reclen(svsk), buf);
++		return 1;
++	}
++	return 0;
++}
++
+ /*
+  * Receive fragment record header.
+  * If we haven't gotten the record length yet, get the next four bytes.
+@@ -938,12 +987,9 @@
+ 		}
+ 
+ 		dprintk("svc: TCP record, %d bytes\n", svc_sock_reclen(svsk));
+-		if (svc_sock_reclen(svsk) + svsk->sk_datalen >
+-							serv->sv_max_mesg) {
+-			net_notice_ratelimited("RPC: fragment too large: %d\n",
+-					svc_sock_reclen(svsk));
++
++		if (svc_fragment_too_large(svsk, serv->sv_max_mesg))
+ 			goto err_delete;
+-		}
+ 	}
+ 
+ 	return svc_sock_reclen(svsk);
