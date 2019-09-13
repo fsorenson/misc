@@ -1,0 +1,14 @@
+#!/bin/bash
+
+
+
+#egrep --color=auto -e '(getdents)' kpr01sasg1_strace.out | sed -e 's/}, {'/\\n\\t/g -e s/'{{d_'/{\\n\\td_/g -e s/}},/}\\n},/g | less
+
+#egrep --color=auto -e '(getdents)' $1 | sed -e "s/\(DT_[A-Z]\+\)}\(,\|\) {/\1\\n\\t/g"  \
+#	-e "s/} {d_ino=/\\n\\td_ino=/g" \
+#	-e s/'{{d_'/{\\n\\td_/g -e s/}},/}\\n},/g
+
+
+sed -e '/getdents/!d' -e "s/\(DT_[A-Z]\+\)}\(,\|\) {/\1\\n\\t/g" -e "s/} {d_ino=/\\n\\td_ino=/g" -e s/'{{d_'/{\\n\\td_/g -e s/}},/}\\n},/g $1
+
+
