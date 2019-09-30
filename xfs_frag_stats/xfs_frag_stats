@@ -153,10 +153,25 @@ sub file_stats {
 	printf($fmt, $symbolic, $size_str, $extents, $holes, $hint_str, $path, $ltarg);
 }
 
+sub is_xfs_fs {
+	my $path = shift;
+
+	open(my $fh, "/usr/bin/stat $path -f -c \"%T\" 2>&1 |") || die "Failed to stat $path: $!\n";
+	my $fstype = <$fh>;
+	close($fh);
+	$fstype =~ s/^\s+|\s+$//g;
+	return 1 if ($fstype eq "xfs");
+	return 0;
+}
+
 printf($fmt, "mode", "size", "extents", "holes", "hint", "path", " (=>link target)");
 for my $dir (@ARGV) {
-	my $stats = lstat($dir);
-	$search_maj_min = $stats->dev;
+	if (is_xfs_fs($dir)) {
+		my $stats = lstat($dir);
+		$search_maj_min = $stats->dev;
 
-	find({ wanted => \&file_stats, no_chdir => 1}, $dir);
+		find({ wanted => \&file_stats, no_chdir => 1}, $dir);
+	} else {
+		printf("skipping non-xfs filesystem $dir\n");
+	}
 }
