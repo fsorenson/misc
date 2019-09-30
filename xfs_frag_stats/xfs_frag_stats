@@ -6,8 +6,11 @@ use strict;
 use warnings;
 
 use File::Find;
+use File::stat;
 use Fcntl ':mode';
 use POSIX;
+
+my $search_maj_min;
 
 #my $fmt = "%10s %12s %9s %5s %9s %s\n";
 #my $fmt = "%10s %12s %8s %6s %s%s\n";
@@ -71,7 +74,6 @@ sub mode_type_char {
 		S_ISFIFO($mode) ? "p" :
 		S_ISSOCK($mode) ? "s" : "?";
 }
-
 sub get_extent_count {
 	my $path = shift;
 	my $extents = -1;
@@ -98,11 +100,19 @@ sub get_hint {
 sub file_stats {
 	my ($extents, $holes, $hint, $hint_str, $ltarg);
 	my $path = $File::Find::name;
-	my @stats = lstat($path);
-	my $mode = $stats[2];
-	my $size = $stats[7];
+	#	my @stats = lstat($path);
+	my $stats = lstat($path);
+	my $maj_min = $stats->dev;
 
-my $stat_fields ="
+	if ($search_maj_min ne $stats->dev) {
+		$File::Find::prune = 1;
+		return;
+	}
+
+	my $mode = $stats->mode;
+	my $size = $stats->size;
+
+	my $stat_fields ="
              0 dev      device number of filesystem
              1 ino      inode number
              2 mode     file mode  (type and permissions)
@@ -118,7 +128,7 @@ my $stat_fields ="
                         file (may vary from file to file)
             12 blocks   actual number of system-specific blocks allocated
                         on disk (often, but not always, 512 bytes each)
-";
+	";
 
 	my $suid = $mode & S_ISUID ? 1 : 0;
 	my $sgid = $mode & S_ISGID ? 1 : 0;
@@ -144,7 +154,9 @@ my $stat_fields ="
 }
 
 printf($fmt, "mode", "size", "extents", "holes", "hint", "path", " (=>link target)");
-find({ wanted => \&file_stats, no_chdir => 1}, @ARGV);
+for my $dir (@ARGV) {
+	my $stats = lstat($dir);
+	$search_maj_min = $stats->dev;
 
-
-
+	find({ wanted => \&file_stats, no_chdir => 1}, $dir);
+}
