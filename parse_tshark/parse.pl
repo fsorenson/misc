@@ -9,11 +9,6 @@ use warnings;
 
 use Data::Dumper;
 
-my @replacement_field_names = [ "nfs.opcode", "nfs.status" ];
-
-my %replacements = ();
-
-
 sub elab_nfs_client_id4 {
 	my $val = shift;
 	my $ret = "";
@@ -129,20 +124,6 @@ sub elab_nfs_open {
 	}
 	return sprintf("key=*%s*  value=*%s*\n", $key, $value);
 }
-sub elab_nfs_layout {
-	my $key = shift;
-	my $value = shift;
-
-	if ($key eq "nfs.layouttype") {
-		# $ tshark -G values | grep nfs.layouttype | awk '($1=="V"){printf "\t\treturn \"%s\" if ($value == 0x%x);\n", $4, $3}'
-		return "LAYOUT4_NFSV4_1_FILES" if ($value == 0x1);
-		return "LAYOUT4_OSD2_OBJECTS" if ($value == 0x2);
-		return "LAYOUT4_BLOCK_VOLUME" if ($value == 0x3);
-		return "LAYOUT4_FLEX_FILES" if ($value == 0x4);
-		return "LAYOUT4_SCSI" if ($value == 0x5);
-	}
-	return $value;
-}
 
 sub lookup_kv {
 	my $fields_ref = shift;
@@ -202,7 +183,7 @@ sub elaborate_nfs {
 			0x1 => "GUARDED4",
 			0x2 => "EXCLUSIVE4",
 			0x3 => "EXCLUSIVE4_1"},
-		"nfs.layout" => {
+		"nfs.layouttype" => {
 			0x1 => "LAYOUT4_NFSV4_1_FILES",
 			0x2 => "LAYOUT4_OSD2_OBJECTS",
 			0x3 => "LAYOUT4_BLOCK_VOLUME",
