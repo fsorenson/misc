@@ -321,7 +321,28 @@ sub elaborate_kerberos {
 
 
 }
+sub elaborate_stat {
+	my $key = shift;
+	my $value = shift;
 
+	my %stat_fields = (
+		"stat.procedure_v1" => {
+			0 => "NULL",
+			1 => "STAT",
+			2 => "MON",
+			3 => "UNMON",
+			4 => "UNMON_ALL",
+			5 => "SIMU_CRASH",
+			6 => "NOTIFY" },
+	);
+
+	if (defined($stat_fields{$key})) {
+		if (defined($stat_fields{$key}{$value})) {
+			$value = $stat_fields{$key}{$value};
+		}
+	}
+	return $value;
+}
 
 
 
@@ -333,6 +354,8 @@ sub elaborate {
 		$value = elaborate_nfs($key, $value);
 	} elsif (substr($key, 0, 5) eq "smb2.") {
 		$value = elaborate_smb2($key, $value);
+	} elsif (substr($key, 0, 5) eq "stat.") {
+		$value = elaborate_stat($key, $value);
 	} else {
 		#
 	}
