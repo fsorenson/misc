@@ -232,6 +232,40 @@ sub elaborate_nfs {
 	my $key = shift;
 	my $value = shift;
 
+	my %nfs_fields = (
+		"nfs.nfs_ftype4" => {
+			1 => "NF4REG",
+			2 => "NF4DIR",
+			3 => "NF4BLK",
+			4 => "NF4CHR",
+			5 => "NF4LNK",
+			6 => "NF4SOCK",
+			7 => "NF4FIFO",
+			8 => "NF4ATTRDIR",
+			9 => "NF4NAMEDATTR"},
+		"nfs.createmode4" => {
+			0x0 => "UNCHECKED4",
+			0x1 => "GUARDED4",
+			0x2 => "EXCLUSIVE4",
+			0x3 => "EXCLUSIVE4_1"},
+		"nfs.layout" => {
+			0x1 => "LAYOUT4_NFSV4_1_FILES",
+			0x2 => "LAYOUT4_OSD2_OBJECTS",
+			0x3 => "LAYOUT4_BLOCK_VOLUME",
+			0x4 => "LAYOUT4_FLEX_FILES",
+			0x5 => "LAYOUT4_SCSI"},
+		"nfs.iomode" => {
+			0x1 => "IOMODE_READ",
+			0x2 => "IOMODE_RW",
+			0x3 => "IOMODE_ANY"},
+		"nfs.locktype4" => {
+			0x1 => "READ_LT",
+			0x2 => "WRITE_LT",
+			0x3 => "READW_LT",
+			0x4 => "WRITEW_LT",
+			0x5 => "RELEASE_STATE"},
+	);
+
 	if ($key eq "nfs.nfs_client_id4.id") {
 		$value = elab_nfs_client_id4($value)
 	} elsif ($key eq "nfs.scope") {
@@ -248,16 +282,6 @@ sub elaborate_nfs {
 		$value = elab_to_hex($value);
 	} elsif (substr($key, 0, 8) eq "nfs.open") {
 		$value = elab_nfs_open($key, $value);
-	} elsif (substr($key, 0, 10) eq "nfs.layout") {
-		$value = elab_nfs_layout($key, $value);
-	} elsif ($key eq "nfs.iomode") {
-		$value = elab_nfs_iomode($value);
-	} elsif ($key eq "nfs.createmode4") {
-		$value = elab_nfs_createmode4($value);
-	} elsif ($key eq "nfs.nfs_ftype4") {
-		$value = elab_nfs_ftype4($value);
-	} elsif ($key eq "nfs.locktype4") {
-		$value = elab_nfs_locktype4($value);
 	} elsif ($key eq "nfs.mode") {
 		$value = elab_nfs_mode($value);
 	} elsif ($key eq "nfs.set_it") {
@@ -268,7 +292,11 @@ sub elaborate_nfs {
 		$value = elab_nfs_open_owner4($value)
 	} else {
 #		printf("key = '%s', value = '%s'\n", $key, $value);
+		$value = lookup_kv(\%nfs_fields, $key, $value);
 	}
+
+
+
 
 	return ($key, $value);
 }
