@@ -177,6 +177,18 @@ sub elab_nfs_ftype4 {
 	return $ft;
 }
 
+sub lookup_kv {
+	my $fields_ref = shift;
+	my %fields = %$fields_ref;
+	my $key = shift;
+	my $value = shift;
+
+	if (defined($fields{$key}) && defined($fields{$key}{$value})) {
+		$value = $fields{$key}{$value};
+	}
+	return $value;
+}
+
 sub elab_nfs_locktype4 {
 	my $lt = shift;
 	return "READ_LT" if ($lt == 0x1);
