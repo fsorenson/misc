@@ -144,39 +144,6 @@ sub elab_nfs_layout {
 	return $value;
 }
 
-sub elab_nfs_iomode {
-	my $value = shift;
-
-	# $ tshark -G values | grep nfs.iomode | awk '($1=="V"){printf "\t\treturn \"%s\" if ($value == 0x%x);\n", $4, $3} END{ printf("\t\treturn $value\n")}'
-	return "IOMODE_READ" if ($value == 0x1);
-	return "IOMODE_RW" if ($value == 0x2);
-	return "IOMODE_ANY" if ($value == 0x3);
-	return $value;
-}
-
-#$ tshark -G values | grep nfs.createmode4 | awk '($1=="V"){printf "\t\treturn \"%s\" if ($value == 0x%x);\n", $4, $3}'
-sub elab_nfs_createmode4 {
-	my $value = shift;
-	return "UNCHECKED4" if ($value == 0x0);
-	return "GUARDED4" if ($value == 0x1);
-	return "EXCLUSIVE4" if ($value == 0x2);
-	return "EXCLUSIVE4_1" if ($value == 0x3);
-	return $value;
-}
-sub elab_nfs_ftype4 {
-	my $ft = shift;
-	return "NF4REG" if ($ft == 1);
-	return "NF4DIR" if ($ft == 2);
-	return "NF4BLK" if ($ft == 3);
-	return "NF4CHR" if ($ft == 4);
-	return "NF4LNK" if ($ft == 5);
-	return "NF4SOCK" if ($ft == 6);
-	return "NF4FIFO" if ($ft == 7);
-	return "NF4ATTRDIR" if ($ft == 8);
-	return "NF4NAMEDATTR" if ($ft == 9);
-	return $ft;
-}
-
 sub lookup_kv {
 	my $fields_ref = shift;
 	my %fields = %$fields_ref;
@@ -189,19 +156,6 @@ sub lookup_kv {
 	return $value;
 }
 
-sub elab_nfs_locktype4 {
-	my $lt = shift;
-
-	my %nfs_fields = (
-		"nfs.locktype4" => {
-			0x1 => "READ_LT",
-			0x2 => "WRITE_LT",
-			0x3 => "READW_LT",
-			0x4 => "WRITEW_LT",
-			0x5 => "RELEASE_STATE"}
-	);
-	return lookup_kv(\%nfs_fields, "nfs.locktype4", $lt);
-}
 sub elab_nfs_lock_owner4 {
 	my $lo = shift;
 	if (substr($lo, 0, 23) eq "6c:6f:63:6b:20:69:64:3a") {
