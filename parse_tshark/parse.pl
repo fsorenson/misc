@@ -191,12 +191,16 @@ sub lookup_kv {
 
 sub elab_nfs_locktype4 {
 	my $lt = shift;
-	return "READ_LT" if ($lt == 0x1);
-	return "WRITE_LT" if ($lt == 0x2);
-	return "READW_LT" if ($lt == 0x3);
-	return "WRITEW_LT" if ($lt == 0x4);
-	return "RELEASE_STATE" if ($lt == 0x5);
-	return $lt;
+
+	my %nfs_fields = (
+		"nfs.locktype4" => {
+			0x1 => "READ_LT",
+			0x2 => "WRITE_LT",
+			0x3 => "READW_LT",
+			0x4 => "WRITEW_LT",
+			0x5 => "RELEASE_STATE"}
+	);
+	return lookup_kv(\%nfs_fields, "nfs.locktype4", $lt);
 }
 sub elab_nfs_lock_owner4 {
 	my $lo = shift;
