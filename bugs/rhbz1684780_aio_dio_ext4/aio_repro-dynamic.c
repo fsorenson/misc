@@ -216,6 +216,12 @@ int parse_sizes(struct test_info *test_info, int argc, char *argv[]) {
 	}
 	return test_info->write_count;
 }
+int file_exists(const char *path) {
+	struct stat st;
+
+	return stat(path, &st) == 0;
+}
+
 
 void get_blocksize(struct test_info *test_info) {
 	char *syspath;
@@ -228,6 +234,20 @@ void get_blocksize(struct test_info *test_info) {
 	/* would be nice to BLKSSZGET, but can't be done as non-root, and would require determining the block device path under /dev... this is just easier */
 	/* potential sysfs files: hw_sector_size logical_block_size minimum_io_size physical_block_size */
 	asprintf(&syspath, "/sys/dev/block/%d:%d/queue/minimum_io_size", major(st.st_dev), minor(st.st_dev));
+	if (!file_exists(syspath)) {
+		if (errno == ENOENT) { /* try again with a slighly different path */
+			free(syspath);
+			asprintf(&syspath, "/sys/dev/block/%d:%d/../queue/minimum_io_size", major(st.st_dev), minor(st.st_dev));
+			if (!file_exists(syspath)) {
+				printf("couldn't determine minimum_io_size for device %d:%d: %m\n", major(st.st_dev), minor(st.st_dev));
+				exit(EXIT_FAILURE);
+			}
+		} else {
+			printf("couldn't determine minimum_io_size for device %d:%d: %m\n", major(st.st_dev), minor(st.st_dev));
+			exit(EXIT_FAILURE);
+		}
+	}
+
 
 	if ((fd = open(syspath, O_RDONLY)) < 0)
 		msg_exit(EXIT_FAILURE, "ERROR: could not open device path '%s' to determine blocksize for '%s': %m\n",
