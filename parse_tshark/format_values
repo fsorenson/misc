@@ -1,0 +1,12 @@
+#!/usr/bin/awk -f
+# used as: tshark -G values | grep procedure_v3 | format_values
+	{ if ($1 == "V") {
+			if (last_field != $2 && last_field != "") { printf("},\n") }
+			if (last_field!=$2) { # starting a new field name
+				printf("\"%s\" => {\n", $2) ; last_field = $2
+			} else { printf(",\n") }
+			printf("%s => \"%s\"", $3, $4)
+		}
+	}
+	END{ if (last_field!=""){printf "},\n"} }
+#'
