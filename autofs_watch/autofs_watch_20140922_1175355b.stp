@@ -1,0 +1,277 @@
+%{
+
+#include <linux/namei.h>
+#include <linux/sched.h>
+#include <linux/auto_fs4.h>
+
+%}
+
+function output(msg) {
+	printk(1, msg);
+	printf("%s\n", msg);
+}
+
+probe begin {
+	output("probe started");
+}
+
+function IS_ROOT:long(dentry:long) {
+	return (@cast(dentry, "dentry")->d_parent == dentry)
+}
+
+function d_name:string(dentry:long) {
+	len = @cast(dentry, "dentry")->d_name->len;
+	return kernel_string_n(@cast(dentry, "dentry")->d_name->name, len);
+}
+
+function prepend:string(dentry:long, name:string) {
+	dname = d_name(dentry)
+
+	/*
+	 * In case we are following down a mount point trigger, we can get
+	 * multiple instances of a root mount.
+	 */
+	c = substr(name, strlen(name)-1, strlen(name)-1)
+	if (dname == "/" && c == "/")
+		return name;
+
+	return sprintf("%s/%s", dname, name);
+}
+
+function get_current_root:long() {
+	current = task_current();
+	root = &@cast(current,"task_struct")->fs->root;
+
+	return root;
+}
+
+function autofs_type_indirect(type) %{
+	unsigned int type = (unsigned int)STAP_ARG_type;
+
+	STAP_RETVALUE = (long)autofs_type_indirect(type);
+%}
+function autofs_type_direct(type) %{
+	unsigned int type = (unsigned int)STAP_ARG_type;
+
+	STAP_RETVALUE = (long)autofs_type_direct(type);
+%}
+function autofs_type_offset(type) %{
+	unsigned int type = (unsigned int)STAP_ARG_type;
+
+	STAP_RETVALUE = (long)autofs_type_offset(type);
+%}
+
+global autofs4_d_manage_last[1000];
+
+function nameidata_to_dentry:long(nd:long) %{
+	struct nameidata *nd = (struct nameidata *)(long)STAP_ARG_nd;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,25)
+	STAP_RETVALUE = (long)nd->dentry;
+#else
+	STAP_RETVALUE = (long)nd->path.dentry;
+#endif
+%}
+
+function nameidata_to_vfsmount:long(nd:long) %{
+	struct nameidata *nd = (struct nameidata *)(long)STAP_ARG_nd;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,25)
+	STAP_RETVALUE = (long)nd->mnt;
+#else
+	STAP_RETVALUE = (long)nd->path.mnt;
+#endif
+%}
+
+function reverse_path_walk:string(dentry:long) {
+	while(1) {
+		name = prepend(dentry, name);
+		dentry = @cast(dentry, "dentry")->d_parent;
+		if (IS_ROOT(dentry))
+			return name;
+	}
+}
+
+function root_dentry_mnt__get_path:string(root:long, dentry:long, vfsmnt:long) {
+	name = "";
+
+	while (1) {
+		if (dentry == @cast(root, "path")->dentry &&
+		    vfsmnt == @cast(root, "path")->mnt)
+			break;
+
+		if (dentry == @cast(vfsmnt, "vfsmount")->mnt_root ||
+		    IS_ROOT(dentry)) {
+			/* Global root? */
+			if (@cast(vfsmnt, "vfsmount")->mnt_parent == vfsmnt)
+				return sprintf("/%s", name);
+
+			dentry = @cast(vfsmnt, "vfsmount")->mnt_mountpoint;
+			vfsmnt = @cast(vfsmnt, "vfsmount")->mnt_parent;
+			continue;
+		}
+		name = prepend(dentry, name);
+		dentry = @cast(dentry, "dentry")->d_parent;
+	}
+
+	return sprintf("/%s", name);
+}
+
+function dentry_mnt__get_path:string(dentry:long, vfsmnt:long) {
+	root = get_current_root();
+
+	return root_dentry_mnt__get_path(root, dentry, vfsmnt);
+}
+
+function dentry_try_really_hard_to_get_path:string(dentry:long) {
+	d_sb = @cast(dentry, "dentry")->d_sb;
+	file1 = @cast(d_sb, "super_block")->s_files->next;
+
+	vfsmount = @cast(file1, "file")->f_path->mnt;
+
+	return dentry_mnt__get_path(dentry, vfsmount);
+}
+
+
+function d_path:string(nd:long) {
+	dentry = nameidata_to_dentry(nd)
+	vfsmnt = nameidata_to_vfsmount(nd)
+
+	return dentry_mnt__get_path(dentry, vfsmnt);
+}
+
+probe module("autofs4").function("autofs4_lookup") {
+	sbi = $dentry->d_sb->s_fs_info;
+	type = @cast(sbi, "autofs_sb_info", "autofs4")->type;
+
+	type_string = "";
+	if (autofs_type_indirect(type))
+		type_string = "indirect";
+	else if (autofs_type_direct(type))
+		type_string = "direct";
+	else if (autofs_type_offset(type))
+		type_string = "offset";
+
+	if (!isinstr(execname(), "automount")) {
+		path = dentry_try_really_hard_to_get_path($dentry);
+		output(sprintf("%s: (probe autofs4_lookup) %s(%d) -> %s(%d): looking up %s %s, (inode=%p,dentry=%p,nameidata=%p)",
+		       ctime(gettimeofday_s()),
+		       pexecname(), ppid(),
+		       execname(), tid(),
+		       type_string,
+		       path,
+		       $dir, $dentry, $nd
+		       ));
+	}
+}
+
+probe module("autofs4").function("autofs4_follow_link") {
+	if (!isinstr(execname(), "automount")) {
+		output(sprintf("%s: (probe autofs4_follow_link) %s(%d) -> %s(%d): following mount trigger %s",
+			ctime(gettimeofday_s()),
+			pexecname(), ppid(),
+			execname(), tid(),
+			d_path($nd)));
+	}
+}
+
+probe module("autofs4").function("autofs4_expire_indirect").return {
+	if ($return != 0) {
+		relative_path = reverse_path_walk($return);
+		root_path = reverse_path_walk($mnt->mnt_mountpoint);
+		output(sprintf("%s: (probe autofs4_expire_indirect) %s(%d) -> %s(%d): expiring indirect mount /%s%s",
+		       ctime(gettimeofday_s()),
+		       pexecname(), ppid(),
+		       execname(), tid(),
+		       root_path, relative_path));
+	}
+}
+
+probe module("autofs4").function("autofs4_wait").return {
+	if ($notify > 0) {
+		path = dentry_try_really_hard_to_get_path($dentry);
+
+		timeout_string = "";
+		if ($notify == 1 && $return == 0)
+			timeout_string = sprintf(", (timeout %d.%.03d)",
+			$sbi->exp_timeout / 1000, $sbi->exp_timeout % 1000
+			);
+
+		output(sprintf("%s: (probe autofs4_wait) %s(%d) -> %s(%d '%s'): %s of '%s' %s%s",
+		       ctime(gettimeofday_s()),
+		       pexecname(), ppid(),
+		       execname(), tid(),
+		       cmdline_str(),
+		       ($notify == 1 ? "mount" : "unmount"),
+		       path,
+		       $return == 0 ? "succeeded" : "failed",
+		       timeout_string));
+
+		if ($notify != 1 && $return == 0) { /* successful unmount */
+			autofs4_d_manage_last[$dentry] = 0;
+		}
+	}
+}
+
+probe module("autofs4").function("autofs4_d_manage") {
+	s_fs = $dentry->d_sb->s_fs_info;
+	autofs_info = $dentry->d_fsdata;
+
+	timeout = @cast(s_fs, "autofs_sb_info", "autofs4")->exp_timeout;
+
+	mounted = $dentry->d_mounted;
+
+	if (!mounted) /* don't need to report every filesystem check */
+		next;
+
+
+	last_used = @cast(autofs_info, "autofs_info", "autofs4")->last_used;
+	last_used_ago = jiffies() - last_used;
+
+	path = dentry_try_really_hard_to_get_path($dentry);
+
+	autofs4_d_manage_last_ago = jiffies() - autofs4_d_manage_last[$dentry];
+	if (autofs4_d_manage_last_ago > 20) { /* don't flood */
+
+		/* // some verbose debugging
+		d_count = $dentry->d_count->counter;
+		active_count = @cast(autofs_info, "autofs_info", "autofs4")->active_count;
+		output(sprintf("autofs4_d_manage: dentry 0x%016lx, autofs_sb_info 0x%016lx, autofs_info 0x%016lx, path %s, mounted %d, d_count %d, active_count %d",
+			$dentry, s_fs, autofs_info, path, mounted, d_count, active_count));
+		*/
+
+		if (execname() == "automount")
+			calling_program = sprintf("automount checking '%s'",
+				path);
+		else
+			calling_program = sprintf("%s(%d) -> %s(%d '%s') accessing '%s'",
+				pexecname(), ppid(),
+				execname(), tid(), cmdline_str(),
+				path);
+
+		output(sprintf("%s: (probe autofs4_d_manage) %s (dentry 0x%016lx), timeout=%d.%.03d/%d.%.03d",
+			ctime(gettimeofday_s()),
+			calling_program, $dentry,
+			last_used_ago / 1000, last_used_ago % 1000, timeout / 1000, timeout % 1000));
+	}
+	autofs4_d_manage_last[$dentry] = jiffies();
+}
+
+probe module("autofs4").function("autofs4_d_automount") {
+	dentry = $path->dentry;
+#	sbi = $path->dentry->d_sb->s_fs_info;
+#	type = @cast(sbi, "autofs_sb_info", "autofs4")->type;
+
+#	if (autofs_type_direct(type)) {
+#		path = dentry_mnt__get_path($path->dentry, $path->mnt);
+#		dentry_paths[dentry] = path;
+#	} else
+#		path = dentry_paths[dentry];
+#	if (path == "")
+		path = dentry_try_really_hard_to_get_path(dentry);
+
+
+	output(sprintf("%s: (probe autofs4_d_automount) %s(%d) -> %s(%d - '%s'): attempting mount of %s",
+		ctime(gettimeofday_s()),
+		pexecname(), ppid(),
+		execname(), tid(), cmdline_str(),
+		path));
+}

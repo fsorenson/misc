@@ -1,0 +1,312 @@
+%{
+
+#include <linux/namei.h>
+#include <linux/sched.h>
+
+
+char pathname[1024];
+
+%}
+
+function output(msg) {
+	printk(1, msg);
+	printf("%s\n", msg);
+}
+
+probe begin {
+	output("probe started");
+}
+
+
+function IS_ROOT:long(dentry:long) {
+	return (@cast(dentry, "dentry")->d_parent == dentry)
+}
+
+function d_name:string(dentry:long) {
+	len = @cast(dentry, "dentry")->d_name->len;
+	return kernel_string_n(@cast(dentry, "dentry")->d_name->name, len);
+}
+
+function prepend:string(dentry:long, name:string) {
+	dname = d_name(dentry)
+
+	/*
+	 * In case we are following down a mount point trigger, we can get
+	 * multiple instances of a root mount.
+	 */
+	c = substr(name, strlen(name)-1, strlen(name)-1)
+	if (dname == "/" && c == "/")
+		return name;
+
+	return sprintf("%s/%s", dname, name);
+}
+
+function get_current_root:long() {
+	current = task_current();
+	root = &@cast(current,"task_struct")->fs->root;
+
+	return root;
+}
+
+%{
+
+/*int autofs4_getpath(struct autofs_sb_info *sbi, struct dentry *dentry, char **name) { */
+int stap_autofs4_getpath(struct dentry *root, struct dentry *dentry, char **name) {
+	struct dentry *tmp;
+	char *buf = *name;
+	char *p;
+	int len = 0;
+
+	spin_lock(&dcache_lock);
+	for (tmp = dentry ; tmp != root ; tmp = tmp->d_parent)
+		len += tmp->d_name.len + 1;
+
+	if (!len || --len > NAME_MAX) {
+		spin_unlock(&dcache_lock);
+		return 0;
+	}
+
+	*(buf + len) = '\0';
+	p = buf + len - dentry->d_name.len;
+	strncpy(p, dentry->d_name.name, dentry->d_name.len);
+
+	for (tmp = dentry->d_parent ; tmp != root ; tmp = tmp->d_parent) {
+		*(--p) = '/';
+		p -= tmp->d_name.len;
+		strncpy(p, tmp->d_name.name, tmp->d_name.len);
+	}
+	spin_unlock(&dcache_lock);
+
+	return len;
+}
+
+%}
+
+function autofs4_getpath_helper:string(root:long, dentry:long) %{
+	int len;
+	char *pname = pathname;
+	struct dentry *root = (struct dentry *)STAP_ARG_root;
+	struct dentry *dentry = (struct dentry *)STAP_ARG_dentry;
+
+	len = stap_autofs4_getpath(root, dentry, &pname);
+
+	snprintf(STAP_RETVALUE, len + 1, "%s", pathname);
+%}
+
+
+function autofs4_getpath:string(sbi:long, dentry:long) {
+	root = @cast(sbi, "autofs_sb_info", "autofs4")->sb->s_root;
+
+
+	name = autofs4_getpath_helper(root, dentry);
+	return name;
+}
+
+
+
+
+function nameidata_to_dentry:long(nd:long) %{
+	struct nameidata *nd = (struct nameidata *)(long)STAP_ARG_nd;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,25)
+	STAP_RETVALUE = (long)nd->dentry;
+#else
+	STAP_RETVALUE = (long)nd->path.dentry;
+#endif
+%}
+
+function nameidata_to_vfsmount:long(nd:long) %{
+	struct nameidata *nd = (struct nameidata *)(long)STAP_ARG_nd;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,25)
+	STAP_RETVALUE = (long)nd->mnt;
+#else
+	STAP_RETVALUE = (long)nd->path.mnt;
+#endif
+%}
+
+/*
+ * This function walks backwards from dentry and constructs a path name.
+ * It will *not* cross mount points.
+ */
+function reverse_path_walk:string(dentry:long) {
+	while(1) {
+		name = prepend(dentry, name);
+		dentry = @cast(dentry, "dentry")->d_parent;
+		if (IS_ROOT(dentry))
+			return name;
+	}
+}
+
+/*
+ * This function mimcs the kernel's internal d_path function.
+ */
+function d_path:string(nd:long) {
+	root = get_current_root()
+	dentry = nameidata_to_dentry(nd)
+	vfsmnt = nameidata_to_vfsmount(nd)
+
+	while (1) {
+		if (dentry == @cast(root, "path")->dentry &&
+		    vfsmnt == @cast(root, "path")->mnt)
+			break;
+
+		if (dentry == @cast(vfsmnt, "vfsmount")->mnt_root ||
+		    IS_ROOT(dentry)) {
+			/* Global root? */
+			if (@cast(vfsmnt, "vfsmount")->mnt_parent == vfsmnt)
+				return sprintf("/%s", name);
+
+			dentry = @cast(vfsmnt, "vfsmount")->mnt_mountpoint;
+			vfsmnt = @cast(vfsmnt, "vfsmount")->mnt_parent;
+			continue;
+		}
+		name = prepend(dentry, name);
+		dentry = @cast(dentry, "dentry")->d_parent;
+	}
+
+	return sprintf("/%s", name);
+}
+
+probe module("autofs4").function("autofs4_lookup") {
+	/*
+	 * Don't log automounts travels in its own directory hierarchy, as
+	 * they are treated differently, and certainly not something that is
+	 * useful for admins to see.
+	 */
+	if (!isinstr(execname(), "automount")) {
+		output(sprintf("%s: (probe autofs4_lookup) %s(%d) -> %s(%d): looking up %s%s",
+		       ctime(gettimeofday_s()),
+		       pexecname(), ppid(),
+		       execname(), tid(),
+		       d_path($nd), d_name($dentry)));
+	}
+}
+
+probe module("autofs4").function("autofs4_follow_link") {
+	if (!isinstr(execname(), "automount")) {
+		/*
+		 * dentry->d_name will be '/' for the mount trigger.  Thus,
+		 * the path that the trigger lives on is one level up the
+		 * directory stack, and the root of that is yet another level
+		 * up.
+		 */
+		output(sprintf("%s: (probe autofs4_follow_link) %s(%d) -> %s(%d): following mount trigger %s",
+			ctime(gettimeofday_s()),
+			pexecname(), ppid(),
+			execname(), tid(),
+			d_path($nd)));
+	}
+}
+
+/*
+probe module("autofs4").function("autofs4_expire_direct").return {
+	if ($return != 0) {
+		relative_path =	reverse_path_walk($mnt->mnt_mountpoint)
+		root_path = reverse_path_walk($mnt->mnt_parent->mnt_mountpoint)
+		printf("%s process %s[%d] expiring direct mount /%s/%s\n",
+		       ctime(gettimeofday_s()), execname(), pid(),
+		       root_path, relative_path)
+	}
+}
+probe module("autofs4").statement("autofs4_expire_direct@fs/autofs4/expire.c+17") ? {
+	relative_path =	reverse_path_walk($mnt->mnt_mountpoint)
+	root_path = reverse_path_walk($mnt->mnt_parent->mnt_mountpoint)
+	printf("%s process %s[%d] expiring direct mount /%s/%s\n",
+	       ctime(gettimeofday_s()), execname(), pid(),
+	       root_path, relative_path)
+}
+*/
+
+probe module("autofs4").function("autofs4_expire_indirect").return {
+	if ($return != 0) {
+		relative_path = reverse_path_walk($return);
+		root_path = reverse_path_walk($mnt->mnt_mountpoint);
+		output(sprintf("%s: (probe autofs4_expire_indirect) %s(%d) -> %s(%d): expiring indirect mount /%s%s",
+		       ctime(gettimeofday_s()),
+		       pexecname(), ppid(),
+		       execname(), tid(),
+		       root_path, relative_path));
+	}
+}
+
+/*
+ * The struct dentry's name may be '/' if this is a mount trigger, which
+ * is not really something that is useful to print out.  Instead, we just
+ * indicate whether a mount or umount succeeded or failed.  Coupled with the
+ * messages printed out when looking up a directory and traversing a symlink,
+ * this should be relatively easy to correlate to the appropriate directory.
+ */
+probe module("autofs4").function("autofs4_wait").return {
+	if ($notify > 0) {
+#		dpath = reverse_path_walk($sbi->sb->s_root);
+		dpath = autofs4_getpath($sbi, $dentry);
+		dname = d_name($dentry);
+
+		timeout_string = "";
+		if ($notify == 1 && $return == 0)
+			timeout_string = sprintf(" (timeout %d)",
+				$sbi->exp_timeout);
+
+		output(sprintf("%s: (probe autofs4_wait) %s(%d) -> %s(%d): %s of %s %s%s (path %s, sb = %p)",
+		       ctime(gettimeofday_s()),
+		       pexecname(), ppid(),
+		       execname(), tid(),
+		       ($notify == 1 ? "mount" : "unmount"),
+		       dname,
+		       $return == 0 ? "succeeded" : "failed",
+		       timeout_string, dpath, $sbi->sb));
+	}
+}
+
+probe module("nfs").function("nfs_d_automount") {
+	partial_path = reverse_path_walk($path->dentry);
+
+
+		output(sprintf("%s: (probe nfs_d_automount) %s(%d) -> %s(%d): of %s",
+		       ctime(gettimeofday_s()),
+		       pexecname(), ppid(),
+		       execname(), tid(),
+		       partial_path));
+
+
+}
+
+
+probe module("autofs4").function("autofs4_d_manage") {
+	name = kernel_string_n($dentry->d_name->name, $dentry->d_name->len);
+	output(sprintf("%s: (probe autofs4_d_manage) %s(%d) -> %s(%d) - dentry %p - %s: %s",
+	       ctime(gettimeofday_s()),
+	       pexecname(), ppid(),
+	       execname(), tid(),
+	       $dentry, name, $$parms));
+}
+
+
+probe module("nfs").function("nfs_expire_automounts") {
+		output(sprintf("%s: (probe nfs_expire_automounts) %s(%d) -> %s(%d)",
+		       ctime(gettimeofday_s()),
+		       pexecname(), ppid(),
+		       execname(), tid()));
+
+
+}
+
+probe module("autofs4").function("do_expire_wait") {
+		output(sprintf("%s: (probe do_expire_wait) %s(%d) -> %s(%d) %s",
+		       ctime(gettimeofday_s()),
+		       pexecname(), ppid(),
+		       execname(), tid(), $$parms));
+
+
+}
+
+/*
+probe module("autofs4").function("*") {
+	output(sprintf("in function %s *****", probefunc()));
+
+}
+*/
+
+#in function autofs4_expire_wait *****
+#in function autofs4_d_manage *****
+#in function do_expire_wait *****
+
