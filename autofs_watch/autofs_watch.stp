@@ -1,0 +1,222 @@
+%{
+#include <linux/namei.h>
+#include <linux/sched.h>
+#include <linux/auto_fs4.h>
+#include <linux/dcache.h>
+%}
+
+global autofs4_d_manage_last%[5000]
+global skipped_d_manage_last%[5000]
+global autofs4_d_manage_last_report%[5000]
+
+function output(msg) {
+	printk(1, msg)
+	printf("%s\n", msg)
+}
+function tstamp() {
+	return ctime(gettimeofday_s())
+}
+function task_details() {
+	return sprintf("%s(%d) -> %s(%d - '%s' %d:%d)",
+		pexecname(), ppid(), execname(), tid(),
+		cmdline_str(), uid(), gid())
+}
+
+probe begin {
+	output(sprintf("%s: autofs monitor probe started", tstamp()))
+}
+probe end {
+	output(sprintf("%s: autofs monitor probe exiting", tstamp()))
+}
+function autofs_type_indirect(type) %{
+	unsigned int type = (unsigned int)STAP_ARG_type;
+
+	STAP_RETVALUE = (long)autofs_type_indirect(type);
+%}
+function autofs_type_direct(type) %{
+	unsigned int type = (unsigned int)STAP_ARG_type;
+
+	STAP_RETVALUE = (long)autofs_type_direct(type);
+%}
+function autofs_type_offset(type) %{
+	unsigned int type = (unsigned int)STAP_ARG_type;
+
+	STAP_RETVALUE = (long)autofs_type_offset(type);
+%}
+
+# from /usr/share/systemtap/tapset/linux/dentry.stp
+function __inode_first_dentry:long(inode:long) {
+	/* i_dentry is an hlist_head on 3.6+, or a list_head before that. */
+	d_alias = @choose_defined(
+		@cast(inode, "struct inode")->i_dentry->first,
+		@cast(inode, "struct inode")->i_dentry->next)
+
+	if (@type_member_defined("struct dentry", d_alias))
+		return &@container_of(d_alias, "struct dentry", d_alias)
+	else
+		return &@container_of(d_alias, "struct dentry", d_u->d_alias)
+}
+# from /usr/share/systemtap/tapset/linux/dentry.stp
+function __inode_vfsmount:long(inode:long) {
+	/* s_mounts was added in kernel 3.6, commit b3d9b7a3c.  */
+	if (@type_member_defined("struct super_block", s_mounts)) {
+		mnt_ns = @cast(task_current(), "struct task_struct")->nsproxy->mnt_ns
+		sb = @cast(inode, "struct inode")->i_sb
+
+		/* Look for the mount which matches the current namespace */
+		head = &sb->s_mounts
+		for (pos = head->next ; pos != head ; pos = pos->next) {
+			mount = &@container_of(pos, "struct mount", mnt_instance)
+			if (mount->mnt_ns == mnt_ns)
+				return &mount->mnt
+		}
+	}
+	return 0
+}
+
+function inode_dentry_path:string(inode:long, dentry:long) {
+	vfsmount = __inode_vfsmount(inode)
+
+	if (! dentry)
+		dentry = __inode_first_dentry(inode)
+
+	if (vfsmount != 0)
+		return task_dentry_path(task_current(), dentry, vfsmount)
+	return reverse_path_walk(dentry)
+}
+
+function d_mountpoint(dentry) %{
+	struct dentry *dentry = (struct dentry *)STAP_ARG_dentry;
+
+	STAP_RETVALUE = d_mountpoint(dentry);
+%}
+
+# kernel.function("autofs4_lookup@fs/autofs4/root.c:503") $dir:struct inode* $dentry:struct dentry* $flags:unsigned int $__func__:char[] const
+probe kernel.function("autofs4_lookup") {
+	if (!isinstr(execname(), "automount")) {
+		sbi = $dentry->d_sb->s_fs_info
+		type = @cast(sbi, "autofs_sb_info")->type
+
+		type_str = ""
+		if (autofs_type_indirect(type))
+			type_str = "indirect"
+		else if (autofs_type_direct(type))
+			type_str = "direct"
+		else if (autofs_type_offset(type))
+			type_str = "offset"
+
+		path_str = inode_dentry_path($dir, $dentry)
+		output(sprintf("%s: (probe autofs4_lookup) %s: looking up %s path '%s', (inode=%p, dentry=%p)",
+			tstamp(), task_details(), type_str, path_str, $dir, $dentry))
+	}
+}
+
+# kernel.function("autofs4_follow_link@fs/autofs4/symlink.c:11") $dentry:struct dentry* $nd:struct nameidata*
+probe kernel.function("autofs4_follow_link") {
+	if (!isinstr(execname(), "automount")) {
+		output(sprintf("%s: (probe autofs4_follow_link) %s: following mount trigger %s",
+			tstamp(), task_details(), d_path($nd)))
+	}
+}
+
+# kernel.function("autofs4_expire_indirect@fs/autofs4/expire.c:430").return $return:struct dentry* $sb:struct super_block* $mnt:struct vfsmount* $sbi:struct autofs_sb_info* $how:int $__func__:char[] const
+probe kernel.function("autofs4_expire_indirect").return {
+	mnt = &@cast(@entry($mnt), "struct vfsmount")
+	if ($return != 0) {
+		relative_path = reverse_path_walk($return)
+		mount = &@container_of(mnt, "struct mount", mnt)
+		root_path = reverse_path_walk(mount->mnt_mountpoint)
+		output(sprintf("%s: (probe autofs4_expire_indirect) %s: expiring indirect mount /%s%s",
+		       tstamp(), task_details(), root_path, relative_path))
+	}
+}
+# kernel.function("autofs4_expire_direct@fs/autofs4/expire.c:297").return $return:struct dentry* $sb:struct super_block* $mnt:struct vfsmount* $sbi:struct autofs_sb_info* $how:int
+probe kernel.function("autofs4_expire_direct").return {
+	mnt = &@cast(@entry($mnt), "struct vfsmount")
+	if ($return != 0) {
+		relative_path = reverse_path_walk($return)
+		mount = &@container_of(mnt, "struct mount", mnt)
+		root_path = reverse_path_walk(mount->mnt_mountpoint)
+		output(sprintf("%s: (probe autofs4_expire_direct) %s: expiring direct mount /%s%s",
+		       tstamp(), task_details(), root_path, relative_path))
+	}
+}
+
+
+# kernel.function("autofs4_wait@fs/autofs4/waitq.c:351").return $return:int $sbi:struct autofs_sb_info* $path:struct path const* $notify:enum autofs_notify $qstr:struct qstr $__func__:char[] const
+probe kernel.function("autofs4_wait").return {
+	notify = @entry($notify)
+	if (notify > 0) {
+		path = &@cast(@entry($path), "struct path")
+		dentry = path->dentry
+		path_str = task_dentry_path(task_current(), path->dentry, path->mnt)
+		sbi = &@cast(@entry($sbi), "struct autofs_sb_info")
+
+		if (notify == 1 && $return == 0)
+			timeout_str = sprintf(", (timeout %d.%.03d)",
+			sbi->exp_timeout / 1000, sbi->exp_timeout % 1000)
+		else
+			timeout_str = ""
+
+		output(sprintf("%s: (probe autofs4_wait) %s: %s of '%s' %s%s",
+			tstamp(), task_details(),
+			(notify == 1 ? "mount" : "unmount"),
+			path_str,
+			$return == 0 ? "succeeded" : "failed",
+			timeout_str))
+
+		if (notify != 1 && $return == 0) /* successful unmount */
+			autofs4_d_manage_last[dentry] = 0
+	}
+}
+
+probe kernel.function("autofs4_d_manage") {
+	mounted = d_mountpoint($path->dentry)
+
+	if (!mounted) /* don't need to report every filesystem check */
+		next
+
+	timeout = @cast($path->dentry->d_sb->s_fs_info, "struct autofs_sb_info")->exp_timeout
+
+	last_used_ago = jiffies() - @cast($path->dentry->d_fsdata, "autofs_info")->last_used
+	path_str = task_dentry_path(task_current(), $path->dentry, $path->mnt)
+
+	autofs4_d_manage_last_ago = jiffies() - autofs4_d_manage_last[$path->dentry]
+	autofs4_d_manage_last_report_ago = jiffies() - autofs4_d_manage_last_report[$path->dentry]
+#	if (autofs4_d_manage_last_ago > 20) { /* don't flood */
+	if (autofs4_d_manage_last_report_ago > 20 || autofs4_d_manage_last_ago > 20) { /* don't flood */
+		/* // some extra-verbose debugging
+		d_count = $dentry->d_count->counter
+		active_count = @cast(autofs_info, "autofs_info", "autofs4")->active_count
+		output(sprintf("autofs4_d_manage: dentry 0x%016lx, autofs_sb_info 0x%016lx, autofs_info 0x%016lx, path %s, mounted %d, d_count %d, active_count %d",
+			$dentry, &@cast($path->dentry->d_sb->s_fs_info, "struct autofs_sb_info"), $path->dentry->d_fsdata, path, mounted, d_count, active_count))
+		*/
+
+		skipped = skipped_d_manage_last[$path->dentry]
+		delete skipped_d_manage_last[$path->dentry]
+		autofs4_d_manage_last_report[$path->dentry] = jiffies()
+
+		if (execname() == "automount")
+			calling_program = "automount checking"
+		else
+			calling_program = sprintf("%s accessing", task_details())
+		if (skipped)
+			skipped_str = sprintf(", %d messages dropped", skipped)
+		else
+			skipped_str = ""
+
+		output(sprintf("%s: (probe autofs4_d_manage) %s '%s' (dentry %016p%s), timeout=%d.%.03d/%d.%.03d",
+			tstamp(), calling_program, path_str, $path->dentry, skipped_str,
+			last_used_ago / 1000, last_used_ago % 1000, timeout / 1000, timeout % 1000))
+	} else {
+		skipped_d_manage_last[$path->dentry]++
+	}
+	autofs4_d_manage_last[$path->dentry] = jiffies()
+}
+
+probe kernel.function("autofs4_d_automount") {
+	path_str = task_dentry_path(task_current(), $path->dentry, $path->mnt)
+
+	output(sprintf("%s: (probe autofs4_d_automount) %s: attempting mount of '%s'",
+		tstamp(), task_details(), path_str))
+}
