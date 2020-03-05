@@ -1,0 +1,120 @@
+#!/bin/bash
+
+# make a sparse file
+
+MAX_FILESIZE=2G
+MAX_FILESIZE_BYTES=2147483648
+ALLOC_SIZE=1048576
+
+NUM_ALLOCS=$(($MAX_FILESIZE_BYTES / $ALLOC_SIZE))
+testfile=testfile
+
+
+
+show_stats() {
+	xfs_bmap -l $testfile | awk '{if ($1 ~ /^[0-9]+:/) {if ($3 == "hole") {holes++} else {extents++}}} END{ printf("extents: %d, holes: %d\n", extents, holes)}'
+	echo "    $(sha1sum $testfile)"
+	echo "    $(ls -lsn testfile)"
+	echo
+}
+
+
+rm -f $testfile
+#fallocate -l $MAX_FILESIZE $testfile
+
+echo "making $NUM_ALLOCS allocations of $ALLOC_SIZE"
+
+#echo -n "file created, but nothing else: "
+#show_stats
+
+i=0
+while [[ $i -lt $(( $NUM_ALLOCS - 1 )) ]] ; do
+	offset=$(($i * $ALLOC_SIZE))
+#	fallocate -o $offset -l $ALLOC_SIZE -n $testfile
+#	echo "writing $ALLOC_SIZE '0' bytes at offset $offset ($offset - $(($offset + $ALLOC_SIZE)))"
+	perl -e "printf '%s', 'a'x$ALLOC_SIZE" | dd of=$testfile bs=$ALLOC_SIZE seek=$offset oflag=seek_bytes conv=notrunc 2>/dev/null
+
+	i=$(($i + 1))
+	offset=$(($i * $ALLOC_SIZE))
+#	fallocate -o $offset -l $ALLOC_SIZE -p $testfile
+#	dd if=/dev/zero of=testfile seek=$(($offset/512)) count=$(($ALLOC_SIZE/512)) conv=notrunc 2>/dev/null
+#	echo "writing $ALLOC_SIZE NULL bytes at offset $offset ($offset - $(($offset + $ALLOC_SIZE)))"
+	dd if=/dev/zero of=testfile bs=$ALLOC_SIZE seek=$offset count=1 oflag=seek_bytes conv=notrunc 2>/dev/null
+
+	i=$(($i + 1))
+done
+
+echo -n "before punching holes: "
+show_stats
+
+#exit
+
+i=0
+while [[ $i -le $NUM_ALLOCS ]] ; do
+#	offset=$(($i * $ALLOC_SIZE))
+#	fallocate -o $offset -l $ALLOC_SIZE -n $testfile
+#	perl -e "printf '%s', 'a'x$ALLOC_SIZE" | dd of=$testfile seek=$(($offset/512)) conv=notrunc 2>/dev/null
+
+	i=$(($i + 1))
+	offset=$(($i * $ALLOC_SIZE))
+	fallocate -o $offset -l $ALLOC_SIZE -p $testfile
+#	dd if=/dev/zero of=testfile seek=$(($offset/512)) conv=notrunc 2>/dev/null
+
+	i=$(($i + 1))
+done
+
+
+[[ 42 -ne 42 ]] && {
+
+echo -n "after punching holes: "
+show_stats
+
+# make unholy
+xfs_bmap -l $testfile | awk '{
+	if ($3 == "hole") {
+
+#		$2 = gensub("/\\[([0-9]+)\\.\\.([0-9]+)\\]:/", "\\1 \\2", "g", $2)
+$2 = gensub(/\[([0-9]+)\.\.([0-9]+)\]:/, "\\1 \\2", "g", $2)
+		$0 = $0
+
+		cmd = sprintf("fallocate -z -o %d -l %d -n testfile", $2*512, ($3-$2 +1)*512)
+#		printf "block %d .. %d - %s\n", $2, $3, cmd
+		system(cmd)
+
+	}
+}'
+}
+
+/var/tmp/make_unsparse $testfile
+
+
+echo -n "after making unholy: "
+show_stats
+
+
+sudo xfs_fsr $testfile
+
+echo -n "after xfs_fsr: "
+show_stats
+
+
+fallocate -d $testfile
+
+echo -n "after auto-holing: "
+show_stats
+
+
+cp --sparse=always $testfile $testfile.new
+mv -f $testfile.new $testfile
+echo -n "after copying sparsely: "
+show_stats
+
+/var/tmp/make_unsparse $testfile
+echo -n "after making unholy again: "
+show_stats
+
+
+cp --sparse=never $testfile $testfile.new
+mv -f $testfile.new $testfile
+echo -n "after copying non-sparsely: "
+show_stats
