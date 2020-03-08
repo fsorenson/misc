@@ -1,0 +1,77 @@
+#!/bin/bash
+
+auto_path="/test"
+base_path="/tmp/foo"
+bind_path="$auto_path/foo"
+
+
+show_state() {
+	[[ -n $now_st_str ]] && echo -e "\t$now_st_str"
+	[[ -n $now_auto_st_str ]] && echo -e "\t$now_auto_st_str"
+#	344 97 0:52 / /test rw,relatime shared:180 - autofs /etc/auto.test rw,fd=23,pgrp=11860,timeout=300,minproto=5,maxproto=5,indirect,pipe_ino=14374733
+	awk -vbp="$bind_path" -vap="$auto_path" -vdev="$now_dev" '{if ($5 == bp || $3 == dev || ($5 == ap && $9 == "autofs")) {print "\t"$0}}' /proc/self/mountinfo
+}
+
+
+echo "initial state at $(date --rfc-3339=ns)"
+
+echo "base path: $base_path"
+echo "autofs path: $auto_path"
+echo "bind path: $bind_path"
+
+base_st_str=$(./do_fstatat $base_path)
+echo -e "\t$base_st_str"
+auto_st_str=$(./do_fstatat $auto_path)
+echo -e "\t$auto_st_str"
+bind_st_str=$(./do_fstatat $bind_path)
+echo -e "\t$bind_st_str"
+
+
+#echo "$base_path: $(./do_fstatat $base_path)"
+#base_st_str=$(./do_fstatat $base_path)
+
+#orig_st_str=$(./do_fstatat $bind_path)
+#echo "$bind_path: $orig_st_str"
+#/test/foo  dev: 253:0  mode: 40755  inode: 202256778  uid: 1000  gid: 1000
+#dev: fd:0  mode: 40755  inode: 202256778  uid: 1000  gid: 1000
+
+orig_st_str="$bind_st_str"
+orig_st=( $orig_st_str )
+
+orig_auto_st_str="$auto_st_str"
+
+echo
+
+now_dev=${orig_st[2]}
+show_state
+
+
+#awk -vbp="$bind_path" '{if ($5 == bp || $9 == "autofs") {print "\t"$0}}' /proc/self/mountinfo
+
+echo
+echo "monitoring $bind_path"
+
+
+#i=95
+last_date=$(date --rfc-3339=ns)
+while true ; do
+	now_date=$(date --rfc-3339=ns)
+
+	now_st_str=$(./do_fstatat $bind_path)
+	now_auto_st_str=$(./do_fstatat $auto_path)
+	if [[ ! $orig_st_str == $now_st_str || ! $orig_auto_st_str == $now_auto_st_str ]] ; then
+
+		[[ -n $last_date ]] && echo "$last_date: OKAY"
+
+		echo "$now_date:"
+		show_state
+
+		last_date=""
+	else
+		[[ -z $last_date ]] && {
+			echo "$now_date: OKAY"
+#			show_state
+		}
+		last_date="$now_date"
+	fi
+done
