@@ -1,0 +1,73 @@
+#!/bin/bash
+
+auto_path="/test"
+base_path="/tmp/foo"
+bind_path="$auto_path/foo"
+
+echo "initial state at $(date --rfc-3339=ns)"
+#echo "$base_path: $(stat -c '%a %A  %t:%T  %u %g' $base_path)"
+#echo "$bind_path: $(stat -c '%a %A  %t:%T  %u %g' $bind_path)"
+# stat -c '%a %A  %t:%T  %u %g' /test/foo
+# 755 drwxr-xr-x  0:0  1000 1000
+
+echo "$base_path: $(./do_fstatat $base_path)"
+orig_st_str=$(./do_fstatat $bind_path)
+echo "$bind_path: $orig_st_str"
+orig_st=( $orig_st_str )
+#dev: fd:0  mode: 40755  inode: 202256778  uid: 1000  gid: 1000
+
+awk -vbp="$bind_path" '{if ($5 == bp || $9 == "autofs") {print "\t"$0}}' /proc/self/mountinfo
+
+echo
+echo "monitoring $bind_path"
+
+
+#i=95
+last_date=$(date --rfc-3339=ns)
+while true ; do
+	now_date=$(date --rfc-3339=ns)
+
+#	t=$(printf "%d.%02d" $(($i / 100)) $(($i % 100)) )
+#	[[ 
+#	cmd=$(printf "sleep 1.%02d" $i)
+
+	# trigger on whether the uid has changed
+#	now_st=( $(stat -c '%a %A  %t:%T  %u %g' $bind_path) )
+#	if [[ ${orig_st[3]} -ne ${now_st[3]} ]] ; then
+
+	now_st_str=$(./do_fstatat $bind_path)
+#	now_st=( $now_st_str )
+#	if [[ ${orig_st[7]} -ne ${now_st[7]} ]] ; then
+	if [[ ! $orig_st_str == $now_st_str ]] ; then
+#		now_st=( $now_st_str )
+
+		[[ -n $last_date ]] && echo "$last_date: OKAY"
+
+		echo "$now_date:"
+#		echo -e "\t${now_st[1]} (${now_st[0]}) - maj:min ${now_st[2]}; uid: ${now_st[3]}; gid: ${now_st[4]}"
+
+#		ls -ld $bind_path | sed 's/^/\t/g'
+		echo -e "\t$now_st_str"
+
+#		awk -vbp="$bind_path" '{if ($5 == bp || $9 == "autofs") {print "\t"$0}}' /proc/self/mountinfo
+		awk -vbp="$bind_path" -vap="$auto_path" '{if ($5 == bp || ($5 == ap && $9 == "autofs")) {print "\t"$0}}' /proc/self/mountinfo
+
+
+		last_date=""
+	else
+		[[ -z $last_date ]] && echo "$now_date: OKAY"
+		last_date="$now_date"
+	fi
+#        (
+#		
+#                ls -ld /tmp/foo /test/foo
+#                egrep 'foo|auto' /proc/self/mountinfo
+#		echo "$cmd"
+#        ) | sed 's/^/\t/g'
+
+#	echo "sleeping $t"
+#	sleep $t
+#	sleep 1.$i
+#	i=$(($i + 1))
+#	[[ $i -gt 110 ]] && i=0
+done
