@@ -5,6 +5,7 @@
 use strict;
 use warnings;
 
+use Getopt::Long;
 use File::Find;
 use File::stat;
 use Fcntl ':mode';
@@ -12,9 +13,54 @@ use POSIX;
 
 my $search_maj_min;
 
-#my $fmt = "%10s %12s %9s %5s %9s %s\n";
-#my $fmt = "%10s %12s %8s %6s %s%s\n";
-my $fmt = "%10s %12s %8s %8s %6s %s%s\n";
+my $fmt = "";
+my $fmt_LNK = "";
+my $fmt_IGNORED = "";
+my $skip_field_width = 0;
+
+my @field_widths = ( 10, 12, 8, 8, 6, 0 );
+
+sub center_str {
+	my $str = shift;
+	my $len = shift;
+
+	$str = " "x int(($len - length($str))/2 - 1) . $str;
+	$len = $len - 1;
+	return sprintf("%-${len}s", $str);
+}
+
+for (my $i = 0 ; $i < (scalar @field_widths) ; $i++) {
+	my $w = $field_widths[$i];
+	my $tmp_s = "";
+
+	$tmp_s .= " " if ($i != 0);
+	if ($w > 0) { $tmp_s .= "%${w}s"; }
+	else { $tmp_s .= "%s"; }
+
+	$fmt .= $tmp_s;
+	if ($i < 2 || $i > 4) {
+		$fmt_LNK .= $tmp_s;
+		$fmt_IGNORED .= $tmp_s;
+	} else {
+		$skip_field_width += $w + 1;
+
+		if ($i == 4) {
+			$fmt_LNK .= " " . center_str("N/A", $skip_field_width);
+			$fmt_IGNORED .= " " . center_str("IGNORED", $skip_field_width);
+		}
+	}
+}
+$fmt_LNK .= " => %s";
+
+my $show_dirs = 1;
+my $show_files = 1;
+my $quiet = 0;
+
+GetOptions(
+	'dirs' => sub { $show_dirs = 1; $show_files = 0; },
+	'files' => sub { $show_files = 1; $show_dirs = 0; },
+	'quiet' => sub { $quiet = 1; }
+);
 
 if (!defined($ARGV[0])) {
 	$ARGV[0] = ".";
@@ -100,7 +146,8 @@ sub get_hint {
 }
 
 sub file_stats {
-	my ($extents, $holes, $hint, $hint_str, $ltarg);
+	my ($extents, $holes, $hint);
+	my $hint_str = "";
 	my $path = $File::Find::name;
 	my $stats = lstat($path);
 	my $maj_min = $stats->dev;
@@ -113,6 +160,7 @@ sub file_stats {
 	my $mode = $stats->mode;
 	my $size = $stats->size;
 
+	# stat fields:  dev, ino, mode, nlink, uid, gid, rdev, size, atime, mtime, ctime, blksize, blocks
 	my $stat_fields ="
              0 dev      device number of filesystem
              1 ino      inode number
@@ -140,18 +188,22 @@ sub file_stats {
 	my $size_str = byte_units($size, 1024);
 
 	if (S_ISLNK($mode)) {
-		$ltarg = " => " . readlink($path);
-		$extents = $holes = $hint = 0;
-		$hint_str = "";
+		printf("${fmt_LNK}\n", $symbolic, $size_str, $path, readlink($path)) if (! $quiet);
+		return;
+	} elsif ((! $show_dirs && S_ISDIR($mode)) ||
+		(! $show_files && S_ISREG($mode))) {
+
+		printf("${fmt_IGNORED}\n", $symbolic, $size_str, $path) if (! $quiet);
+		return;
 	} else {
-		$ltarg = "";
 		($extents, $holes) = get_extent_count($path);
 		$hint = get_hint($path);
-	}
-	if ($hint ne 0) { $hint_str = byte_units($hint, 1024, 0); }
-	else { $hint_str = "0"; }
 
-	printf($fmt, $symbolic, $size_str, $extents, $holes, $hint_str, $path, $ltarg);
+		if ($hint ne 0) { $hint_str = byte_units($hint, 1024, 0); }
+		else { $hint_str = "0"; }
+	}
+
+	printf("${fmt}\n", $symbolic, $size_str, $extents, $holes, $hint_str, $path);
 }
 
 sub is_xfs_fs {
@@ -160,13 +212,20 @@ sub is_xfs_fs {
 	open(my $fh, "-|", "/usr/bin/stat", $path, "-f", "-c", "%T") or die "Couldn't stat $path: $!\n";
 	my $fstype = <$fh>;
 	close $fh;
+	my $exit = $? >> 8;
+
+	if ($exit) {
+		printf("unable to stat %s\n", $path);
+		return 0;
+	}
+
 	$fstype =~ s/^\s+|\s+$//g;
 
 	return 1 if ($fstype eq "xfs");
 	return 0;
 }
 
-printf($fmt, "mode", "size", "extents", "holes", "hint", "path", " (=>link target)");
+printf("${fmt} (=>link target)\n", "mode", "size", "extents", "holes", "hint", "path");
 for my $dir (@ARGV) {
 	if (is_xfs_fs($dir)) {
 		my $stats = lstat($dir);
