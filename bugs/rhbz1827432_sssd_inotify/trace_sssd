@@ -1,0 +1,373 @@
+#!/bin/bash
+
+umask 0027
+
+trace_dir="/tmp/sssd_trace.$(hostname -s).$(date +'%F-%H.%M.%S')"
+log_pipe=$trace_dir/log_pipe
+log_file=$trace_dir/log
+main_pid=$$
+cleanup_complete=0
+
+log() {
+	local logfile=$1
+	[[ -z $logfile ]] && return
+
+	awk 'BEGIN { cmd = "date +%m-%d-%Y_%H.%M.%S.%N" } function log_msg(msg) {cmd | getline mydate; close(cmd) ; print mydate": "msg} {log_msg($0)}' >>$logfile
+}
+foo() {
+	while read l ; do
+#		echo -e "$(date --rfc-3339=ns): $l" >>$logfile
+		echo -e "$(date --rfc-3339=ns): $l"
+	done >> $logfile
+}
+record_cmd() {
+	local cmd=$1
+	echo -e "  # $cmd\n  $($cmd 2>&1)"
+}
+exit_cleanup() {
+	trap - SIGTERM SIGINT EXIT
+
+	[[ $cleanup_complete -ne 1 ]] && {
+		exec 1>&11 11>&- 2>&12 12>&-
+
+		[[ $$ -eq $main_pid ]] && {
+			exec 15>&-
+		}
+		cleanup_complete=1
+	}
+}
+gather_children() {
+	local curr=$(echo $1 | paste -s - | sed -e 's/\(^\s\+\|\s\+$\)//g' -e 's/\s\+/ /g')
+	local last=""
+	local tmp
+
+	while [[ -n $curr && $curr != $last ]] ; do
+		last=$curr
+		tmp=$(pgrep -P "$(echo "$last" | tr ' ' ,)" | paste -s - | sed -e 's/\(^\s\+\|\s\+$\)//g' -e 's/\s\+/ /g')
+		curr=$(ps h -opid $tmp $last | paste -s - | sed -e 's/\(^\s\+\|\s\+$\)//g' -e 's/\s\+/ /g')
+	done
+	echo "$curr"
+}
+
+
+# check that pyinotify is available
+[[ -e /usr/bin/pyinotify ]] || {
+	echo "please install the python3-inotify rpm"
+	exit 1
+}
+
+for u in newuser1 newuser2 ; do
+	getent -s sss passwd $u >/dev/null 2>&1 || continue
+	echo "user '$u' exists.  cowardly refusing to modify the system"
+	echo "remove user '$u' and rerun"
+	exit 1
+done
+
+
+mkdir $trace_dir
+mkfifo $log_pipe
+
+exec 11>&1 12>&2 # save copies of stdout/stderr for later
+exec 15<>$log_pipe
+pipe_fd=15
+
+
+(log $log_file <&$pipe_fd) &
+log_pid=$!
+
+
+echo "trace_dir: $trace_dir" | tee >&$pipe_fd
+echo "umask: $(umask)" | tee >&$pipe_fd
+
+# backup /etc/passwd, /etc/group
+cp -f /etc/passwd $trace_dir/passwd.bak
+cp -f /etc/group $trace_dir/group.bak
+
+
+echo ':execute "normal! gg/wheel\<CR>A,newuser2\<Esc>:wq\<CR>"' > $trace_dir/add_newuser2_wheel.vim
+echo ':execute "normal! gg/wheel\<CR>/,newuser2\<CR>9x:wq\<CR>"' > $trace_dir/remove_newuser2_wheel.vim
+echo ':execute "normal! :wq\<CR>"' > $trace_dir/wq.vim
+
+
+systemctl stop sssd.service
+
+#userdel -r newuser1 >/dev/null 2>&1
+#userdel -r newuser2 >/dev/null 2>&1
+
+
+(
+	echo "initial setup"
+	echo
+	echo "adding 'newuser1' and adding to 'wheel' group"
+	record_cmd "useradd newuser1"
+	record_cmd "usermod -G wheel newuser1"
+
+	sleep 1
+	echo
+	echo "'newuser1' added"
+	record_cmd "getent -s sss passwd newuser1"
+	record_cmd "getent -s sss group wheel"
+
+	sleep 1
+	echo
+	echo "adding user 'newuser2'"
+	record_cmd "useradd newuser2"
+
+	echo
+	echo "starting inotify watches and sssd"
+) | tee >&11 >&$pipe_fd
+
+
+# inotify watches
+inotify_pids=""
+pyinotify_opts="-f"
+
+# sssd watch on /etc
+(pyinotify $pyinotify_opts -e IN_MOVED_TO,IN_CREATE /etc 2>&1 | log $trace_dir/sssd.inotify_etc) &
+inotify_pids="$inotify_pids $!"
+
+# sssd watch on /etc/passwd
+(pyinotify $pyinotify_opts -e IN_CLOSE_WRITE,IN_MOVED_TO,IN_CREATE,IN_DELETE_SELF,IN_MOVE_SELF /etc/passwd 2>&1 | log $trace_dir/sssd.inotify_passwd) &
+inotify_pids="$inotify_pids $!"
+
+# sssd watch on /etc/group
+(pyinotify $pyinotify_opts -e IN_CLOSE_WRITE,IN_MOVED_TO,IN_CREATE,IN_DELETE_SELF,IN_MOVE_SELF /etc/group 2>&1 | log $trace_dir/sssd.inotify_group) &
+inotify_pids="$inotify_pids $!"
+
+# watch on all of /etc
+(pyinotify $pyinotify_opts /etc 2>&1 | log $trace_dir/inotify_all_etc) &
+inotify_pids="$inotify_pids $!"
+
+
+
+# to strace currently-running sssd processes
+# pids="" ; for p in $(ps ax -o comm | grep sssd) ; do pids="$pids -p $(pidof $p)" ; done ; echo $pids
+
+#strace -fttTvyo $trace_dir/sssd.strace -s 10240 /usr/sbin/sssd -i --logger=stderr --debug-level 0xffff --debug-timestamps=1 --debug-microseconds=1 > $trace_dir/sssd.out 2>&1 &
+#strace -fttTvyo $trace_dir/sssd.strace -s 10240 /usr/sbin/sssd -i --logger=stderr --debug-level 0xf --debug-timestamps=1 --debug-microseconds=1 > $trace_dir/sssd.out 2>&1 &
+(strace -D -fttTvyo $trace_dir/sssd.strace -etrace=file,desc,/inotify.+ -s 10240 /usr/sbin/sssd -i --logger=stderr --debug-level 0xf --debug-timestamps=1 --debug-microseconds=1 > $trace_dir/sssd.out 2>&1) &
+#2>&1 | log "$trace_dir/sssd.out"
+sssd_pid=$!
+
+sleep 5
+(
+	sleep 1
+	echo
+	echo "'newuser1' and 'newuser2' exist; only 'newuser1' is a member of 'wheel'"
+	record_cmd "getent -s sss passwd newuser1"
+	record_cmd "getent -s sss passwd newuser2"
+	record_cmd "getent -s sss group wheel"
+	record_cmd "grep ^wheel /etc/group"
+
+	sleep 1
+	echo "using 'vim' to add 'newuser2' to 'wheel' group"
+) | tee >&11 >&$pipe_fd
+
+# create vim script file to add 'newuser2' to 'wheel'
+#vim -s $trace_dir/add_newuser2_wheel.vim /etc/group
+#strace -fttTvyo $trace_dir/vi.strace -s 10240 vim /etc/group
+strace -fo $trace_dir/vim_add_newuser2_wheel.strace-1 -s 10240 vim -n -s $trace_dir/add_newuser2_wheel.vim /etc/group
+
+(
+	sleep 1
+	echo
+	echo "after adding 'newuser2' to 'wheel' group using vim"
+	record_cmd "getent -s sss group wheel"
+	record_cmd "grep ^wheel /etc/group"
+) | tee >&11 >&$pipe_fd
+
+
+
+
+
+
+
+sleep 1
+(
+	echo
+	echo "try to trigger update by touching /etc/group"
+	record_cmd "touch /etc/group"
+
+	sleep 1
+	echo
+	echo "after triggering update to /etc/group"
+	record_cmd "getent -s sss group wheel"
+	record_cmd "grep ^wheel /etc/group"
+
+	echo
+	echo "try to trigger update by touching /etc/passwd"
+	record_cmd "touch /etc/passwd"
+
+	sleep 1
+	echo
+	echo "after triggering update to /etc/passwd"
+	record_cmd "getent -s sss group wheel"
+	record_cmd "grep ^wheel /etc/group"
+) | tee >&11 >&$pipe_fd
+
+#echo "starting 'vim /etc/group'" | log $trace_dir/log
+#strace -fttTvyo $trace_dir/vi.strace -s 10240 vim /etc/group
+#echo "'vi' exited" | log $trace_dir/log
+
+
+
+echo | tee >&11 >&$pipe_fd
+echo "editing /etc/group to remove 'newuser2' from 'wheel' group" | tee >&$pipe_fd
+strace -fo $trace_dir/vim_remove_newuser2_wheel.strace-1 -s 10240 vim -n -s $trace_dir/remove_newuser2_wheel.vim /etc/group
+(
+	sleep 1
+	echo
+	echo "after removing 'newuser2' from 'wheel' group using vim"
+	record_cmd "getent -s sss group wheel"
+	record_cmd "grep ^wheel /etc/group"
+) | tee >&$pipe_fd
+
+
+echo "testing whether useradd breaks the inotify watch on /etc/passwd" | tee >&11 >&$pipe_fd
+strace -fo $trace_dir/useradd.strace -s 10240 useradd newuser3 2>&1 | tee >&11 >&$pipe_fd
+
+false && {
+echo "editing /etc/passwd, just to break the inotify watch" | tee >&$pipe_fd
+strace -fo $trace_dir/vim_wq.strace -s 10240 vim -n -s $trace_dir/wq.vim /etc/passwd
+(
+	sleep 1
+	echo "after editing 'passwd'"
+	record_cmd "getent -s sss group wheel"
+	record_cmd "grep ^wheel /etc/group"
+) | tee >&$pipe_fd
+}
+
+sleep 1
+echo "adding 'newuser2' to 'wheel' group" | tee >&$pipe_fd
+strace -fo $trace_dir/vim_add_newuser2_wheel.strace-2 -s 10240 vim -n -s $trace_dir/add_newuser2_wheel.vim /etc/group
+
+(
+	sleep 1
+	echo "after adding 'newuser2' to 'wheel' group"
+	record_cmd "getent -s sss group wheel"
+	record_cmd "grep ^wheel /etc/group"
+
+	echo
+	echo "try to trigger update by touching /etc/group"
+	record_cmd "touch /etc/group"
+
+	sleep 1
+	echo
+	echo "after touching /etc/group"
+	record_cmd "getent -s sss group wheel"
+	record_cmd "grep ^wheel /etc/group"
+
+	echo
+	echo "touch /etc/passwd to see if that triggers"
+	record_cmd "touch /etc/passwd"
+
+	sleep 1
+	echo
+	echo "after touching /etc/passwd"
+	record_cmd "getent -s sss group wheel"
+	record_cmd "grep ^wheel /etc/group"
+
+) | tee >&$pipe_fd
+
+
+echo "editing /etc/group to remove 'newuser2' from 'wheel' group" | tee >&$pipe_fd
+strace -fo $trace_dir/vim_remove_newuser2_wheel.strace-2 -s 10240 vim -n -s $trace_dir/remove_newuser2_wheel.vim /etc/group
+
+(
+	sleep 1
+	echo
+	echo "after removing 'newuser2' from 'wheel' group using vim"
+	record_cmd "getent -s sss group wheel"
+	record_cmd "grep ^wheel /etc/group"
+
+	echo
+	echo "try to trigger update by touching /etc/group"
+	record_cmd "touch /etc/group"
+
+	sleep 1
+	echo
+	echo "after triggering update to /etc/group"
+	record_cmd "getent -s sss group wheel"
+	record_cmd "grep ^wheel /etc/group"
+
+	echo
+	echo "try to trigger update by touching /etc/passwd"
+	record_cmd "touch /etc/passwd"
+
+	sleep 1
+	echo "after triggering update to /etc/passwd"
+	record_cmd "getent -s sss group wheel"
+	record_cmd "grep ^wheel /etc/group"
+
+
+
+#	echo "post-vim wheel group:"
+#	echo -e "  # getent group wheel\n  $(getent group wheel)"
+#	record_cmd "getent -s sss group wheel"
+#	echo
+#	echo -e "  # grep ^wheel /etc/group\n  $(grep ^wheel /etc/group)"
+#	record_cmd "grep ^wheel /etc/group"
+
+) | tee >&$pipe_fd
+
+
+child_pids=$(gather_children "$inotify_pids $sssd_pid")
+#false && {
+true && {
+(
+	echo "  child_pids: $child_pids"
+
+	#echo "sssd_pid: $sssd_pid"
+	#echo "inotify_pids: $inotify_pids"
+	#echo "inotify_child_pids: $inotify_child_pids"
+
+	echo
+	echo
+	echo "for all child pids:"
+	echo "  sssd:"
+	echo "    $sssd_pid: $(gather_children $sssd_pid)"
+	echo "  inotify pids:"
+	for p in $inotify_pids ; do
+		echo "    $p: $(gather_children $p)"
+	done
+	echo
+	echo "  log pid:"
+	echo "    $log_pid: $(gather_children $log_pid)"
+) | tee >&11 >&$pipe_fd
+}
+
+(
+	echo "killing child processes"
+#	kill $sssd_pid $(ps h --ppid $sssd
+#	kill $(ps h --ppid 27868 -opid)
+	kill $child_pids
+
+	#kill $child_pids $sssd_pid $inotify_pids $inotify_child_pids
+	#kill $child_pids
+#	echo "  sssd_pid: $sssd_pid"
+#	echo "  inotify_pids: $inotify_pids"
+#	echo "  ccpids: $ccpids"
+#	kill $sssd_pid $inotify_pids $ccpids
+
+) | tee >&$pipe_fd
+
+	kill $log_pid >/dev/null 2>&1
+
+	echo "remaining child processes:"
+
+	ps --ppid $$
+	ps -u --ppid $$
+
+exit_cleanup
+wait
+
+
+# cleanup
+userdel -r newuser1 >/dev/null 2>&1
+userdel -r newuser2 >/dev/null 2>&1
+for f in passwd group ; do
+	cp -f $trace_dir/$f.bak /etc/$f
+	chmod 644 /etc/$f
+done
+
+systemctl start sssd.service
