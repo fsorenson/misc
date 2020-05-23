@@ -1,0 +1,101 @@
+#!/bin/bash
+
+caseno=2638223
+hung_task_timeout=60
+save_trace=1
+start_time=$(date +%s.%N)
+logdir="/var/tmp/case_${caseno}_$(hostname -s)-$(date +'%F_%H.%M.%S' -d @$start_time)"
+logfile="$logdir/log"
+
+log() {
+	while read line ; do
+		echo "$(date +"%F %H:%M:%S.%N") $line"
+	done | tee -a $logfile
+}
+enable_tracing() {
+# enable tracing
+	echo 0 > /sys/kernel/debug/tracing/tracing_on
+	>/sys/kernel/debug/tracing/trace
+	echo function > /sys/kernel/debug/tracing/current_tracer
+	egrep 'xfs_i(|un)lock' /sys/kernel/debug/tracing/available_filter_functions | awk '{print $1}' > /sys/kernel/debug/tracing/set_ftrace_filter 
+	egrep '^sched:|xfs_i(|un)lock' /sys/kernel/debug/tracing/available_events > /sys/kernel/debug/tracing/set_event
+	echo 1 > /sys/kernel/debug/tracing/tracing_on
+	echo "tracing enabled" | log
+}
+# stop tracing, copy trace, but don't clear
+stop_tracing() {
+	echo 0 > /sys/kernel/debug/tracing/tracing_on
+	[[ $save_trace -ne 0 ]] && cat /sys/kernel/debug/tracing/trace >$logdir/trace
+	echo "tracing stopped" | log
+}
+compress_dir() {
+	(
+		cd /var/tmp/
+		tar cJf $logdir.tar.xz $logdir >/dev/null 2>&1
+	)
+	echo "gathered data collected in $logdir.tar.xz"
+}
+cleanup() {
+	stop_tracing
+	dmesg -T >$logdir/dmesg.end
+
+	# set sysctl back to original value
+	sysctl $orig_hung_task_timeout >/dev/null 2>&1
+}
+interrupted() {
+	echo "monitoring interrupted" | log
+	trap - EXIT SIGINT SIGTERM
+
+	cleanup
+	compress_dir
+	exit 1
+}
+
+mkdir -p $logdir
+cat "$0" > $logdir/executing_script
+echo "stored executing script '$0' to $logdir/executing_script" | log
+
+dmesg -T >$logdir/dmesg.begin
+
+dmesg_blocked_pids=$(perl -n -e'/:([0-9]+) blocked for more than/ && printf "%s ", $1' <$logdir/dmesg.begin)
+[[ -n $dmesg_blocked_pids ]] && {
+	[[ -n $dmesg_blocked_pids ]] && {
+		still_blocked_pids=$(ps h -opid $dmesg_blocked_pids)
+		[[ -n $still_blocked_pids ]] && {
+			echo "blocked tasks already exist.  Unable to begin tracing" | log
+			echo | log
+			ps -www $still_blocked_pids | log
+			compress_dir
+			exit 1
+		}
+	}
+}
+
+echo "logging to $logdir" | log
+
+enable_tracing
+trap interrupted SIGINT SIGTERM
+
+# save old hung_task_timeout sysctl & set our own
+orig_hung_task_timeout=$(sysctl kernel.hung_task_timeout_secs | tr -d ' ')
+sysctl kernel.hung_task_timeout_secs=$hung_task_timeout >/dev/null 2>&1
+
+
+echo "monitoring kernel messages until blocked tasks are reported" | log
+# watch for a message of this sort:
+# [#####.######] INFO: task kworker/u81:3:78226 blocked for more than 120 seconds.
+dmesg -Tw 2>&1 | tee $logdir/dmesg.work | egrep 'task .+ blocked for more than ' -m1 >/dev/null
+
+cleanup
+
+stop_time=$(date +%s.%N)
+secs=$(echo "scale=9; $stop_time - $start_time" | bc)
+echo "tracing runtime: $secs seconds" | log
+[[ ${secs%%.*} -lt $(($hung_task_timeout + 10)) ]] && {
+	echo "blocked task event(s) found, but trace time likely too short to capture the event itself" | log
+	compress_dir
+	exit 1
+}
+compress_dir
+
+echo "blocked task event(s) found.  Please upload $logdir.tar.xz and vmcore as soon as able"
