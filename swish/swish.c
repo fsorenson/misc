@@ -7,64 +7,95 @@
 	# gcc swish.c -o swish -lnuma
 */
 
+#define _GNU_SOURCE
 #include <stdio.h>
+#include <stdlib.h>
+#include <signal.h>
 #include <numa.h>
 
+int usage(char *cmd, int ret) {
+	printf("Usage: %s <pid1> [<pid2>] [<pid3>] ...\n", cmd);
+
+	return ret;
+}
+
 int main(int argc, char *argv[]) {
-	struct bitmask *node0, *node1;
+	struct bitmask **numa_nodes = NULL;
 	char *err_string = "%s: numa error occurred while '%s': %m";
-	char *err_action = "";
-	int pid1 = 0;
-	int pid2 = 0;
+	char *err_action = NULL;
+	int numa_node_count = -1;
+	int pid_count, valid_pids = 0;
+	pid_t *pids = NULL;
+	int node_rot = 0;
 	int ret;
-
-	if (argc < 2) {
-		printf("Usage: %s <pid1> [<pid2>]\n",
-			argv[0]);
-		exit(EXIT_FAILURE);
-	}
-
-	pid1 = strtol(argv[1], NULL, 10);
-	if (argc == 3)
-		pid2 = strtol(argv[2], NULL, 10);
+	int i;
 
 	if (numa_available() == -1) {
 		printf("NUMA is not available\n");
-		exit(EXIT_FAILURE);
+		return usage(argv[0], EXIT_FAILURE);
 	}
 
-	node0 = numa_allocate_nodemask();
-	node1 = numa_allocate_nodemask();
+	if (argc < 2)
+		return usage(argv[0], EXIT_FAILURE);
 
-	numa_bitmask_setbit(node0, 0);
-	numa_bitmask_setbit(node1, 1);
-	while (1) {
-		if ((ret = numa_migrate_pages(pid1, node1, node0)) != 0) {
-			err_action = "migrate_pages pid1: node1->node0";
-			break;
+	pid_count = argc - 1;
+	pids = malloc(sizeof(pid_t) * pid_count);
+	for (i = 1 ; i < argc ; i++) {
+		pid_t tmp_pid = (pid_t)strtoul(argv[i], NULL, 10);
+		if (tmp_pid < 1) {
+			printf("invalid pid: %d\n", tmp_pid);
+			continue;
 		}
-		if (pid2) {
-			if ((ret = numa_migrate_pages(pid2, node0, node1)) != 0) {
-				err_action = "migrate_pages pid2: node0->node1";
-				break;
-			}
+		if (kill(tmp_pid, 0) < 0) {
+			printf("pid %d requested, but not running\n", tmp_pid);
+			continue;
 		}
-
-		if ((ret = numa_migrate_pages(pid1, node0, node1)) != 0) {
-			err_action = "migrate_pages pid1: node0->node1";
-			break;
-		}
-		if (pid2) {
-			if ((ret = numa_migrate_pages(pid2, node1, node0)) != 0) {
-				err_action = "migrate_pages pid2: node1->node0";
-				break;
-			}
-		}
+		pids[valid_pids++] = tmp_pid;
 	}
+	if (valid_pids < 1) {
+		printf("no valid pids found\n");
+		return usage(argv[0], EXIT_FAILURE);
+	}
+
+//	printf("size of bitmask: %ld\n", sizeof(struct bitmask));
+	numa_node_count = numa_num_configured_nodes();
+	numa_nodes = malloc(sizeof(struct bitmask *) * numa_node_count);
+	for (i = 0 ; i < numa_node_count ; i++) {
+		numa_nodes[i] = numa_allocate_nodemask();
+		numa_bitmask_clearall(numa_nodes[i]);
+//		numa_nodes[i] = numa_bitmask_alloc(numa_node_count);
+		numa_bitmask_setbit(numa_nodes[i], i);
+	}
+	printf("configured numa nodes: %d\n", numa_node_count);
+	printf("swishing %d pid%s\n", valid_pids, valid_pids > 1 ? "s" : "");
+
+	while (42) {
+		for (i = 0 ; i < valid_pids ; i++) {
+			int cur_node = (i + node_rot) % numa_node_count;
+			int next_node = (i + node_rot + 1) % numa_node_count;
+
+//			printf("swish %d from node%d->node%d\n", pids[i], cur_node, next_node);
+
+retry_migrate:
+			if ((ret = numa_migrate_pages(pids[i], numa_nodes[cur_node], numa_nodes[next_node])) != 0) {
+				if (ret > 0)
+					goto retry_migrate;
+				asprintf(&err_action, "migrate_pages pid %d from node%d->node%d",
+					pids[i], cur_node, next_node);
+				goto out_err;
+			}
+		}
+		node_rot = (node_rot + 1) % numa_node_count;
+	}
+
+out_err:
 	numa_warn(ret, err_string, argv[0], err_action);
 
-	numa_free_nodemask(node0);
-	numa_free_nodemask(node1);
+	for (i = 0 ; i < numa_node_count ; i++) {
+		numa_free_nodemask(numa_nodes[i]);
+	}
+	free(numa_nodes);
+	free(pids);
 
 	return EXIT_SUCCESS;
 }
