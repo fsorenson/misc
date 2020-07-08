@@ -1,0 +1,12 @@
+#!/bin/bash
+
+check_blocks() {
+	dev=$1
+	[[ -r $dev ]] || { echo "unable to read $dev" ; return ; }
+	agcount=$(xfs_db -x $dev -c "sb 0" -c "p agcount" | awk '{print $3}')
+	for sb in $(seq 0 $(( $agcount - 1 )) ) ; do
+		(echo $sb ; xfs_db -x $dev -c "sb $sb" -c "p dblocks fdblocks") | paste -s - -d' ' | awk '{ sb=$1; dblocks=$4; fdblocks=$7; if (fdblocks > dblocks) { msg=" ***** free disk blocks error in superblock *****" } else {msg=""} ; printf "superblock %d%s\n\tdisk blocks: %d\n\tfree blocks: %d\n", sb, msg, dblocks, fdblocks }'
+	done
+}
+
+check_blocks $1

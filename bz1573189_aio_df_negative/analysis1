@@ -1,0 +1,304 @@
+
+
+
+     kworker/3:4-11475 [003] 1526421959.067469: print:                xfs_log_done: CALL:   - caller __xfs_trans_commit, m_fdblocks = 13052007
+     kworker/3:4-11475 [003] 1526421959.067469: xfs_log_done_nonperm: dev 253:48 t_ocnt 2 t_cnt 2 t_curr_res 112720 t_unit_res 112720 t_flags XLOG_TIC_INITED|XLOG_TIC_PERM_RESERV reserveq empty writeq empty grant_reserve_cycle 1 grant_reserve_bytes 8155276 grant_write_cycle 1 grant_write_bytes 8155276 curr_cycle 1 curr_block 30 tail_cycle 1 tail_block 2
+     kworker/3:4-11475 [003] 1526421959.067541: print:                xlog_ungrant_log_space: CALL:   - caller xfs_log_done, m_fdblocks = 13052007, tid = 0x769ebcf3, t_curr_res = 112720, t_unit_res = 112720
+     kworker/3:4-11475 [003] 1526421959.067542: xfs_log_ungrant_enter: dev 253:48 t_ocnt 2 t_cnt 1 t_curr_res 112720 t_unit_res 112720 t_flags XLOG_TIC_INITED|XLOG_TIC_PERM_RESERV reserveq empty writeq empty grant_reserve_cycle 1 grant_reserve_bytes 8155276 grant_write_cycle 1 grant_write_bytes 8155276 curr_cycle 1 curr_block 30 tail_cycle 1 tail_block 2
+     kworker/3:4-11475 [003] 1526421959.067542: xfs_log_ungrant_sub:  dev 253:48 t_ocnt 2 t_cnt 1 t_curr_res 112720 t_unit_res 112720 t_flags XLOG_TIC_INITED|XLOG_TIC_PERM_RESERV reserveq empty writeq empty grant_reserve_cycle 1 grant_reserve_bytes 8155276 grant_write_cycle 1 grant_write_bytes 8155276 curr_cycle 1 curr_block 30 tail_cycle 1 tail_block 2
+     kworker/3:4-11475 [003] 1526421959.067543: xfs_log_ungrant_exit: dev 253:48 t_ocnt 2 t_cnt 1 t_curr_res 112720 t_unit_res 112720 t_flags XLOG_TIC_INITED|XLOG_TIC_PERM_RESERV reserveq empty writeq empty grant_reserve_cycle 1 grant_reserve_bytes 7929836 grant_write_cycle 1 grant_write_bytes 7929836 curr_cycle 1 curr_block 30 tail_cycle 1 tail_block 2
+     kworker/3:4-11475 [003] 1526421959.067579: xfs_iunlock:          dev 253:48 ino 0x43 flags ILOCK_EXCL caller xfs_iomap_write_unwritten
+     kworker/1:4-11479 [001] 1526421959.067720: print:                xfs_bmapi_write: CALL:   - caller xfs_iomap_write_unwritten, m_fdblocks = 13052007, tid = 0xce1a9e96, t_blk_res = 8, t_blk_res_used = 0
+     kworker/1:4-11479 [001] 1526421959.067788: print:                xfs_trans_commit: CALL:   - caller xfs_iomap_write_unwritten, m_fdblocks = 13052007, tid = 0xce1a9e96, t_blk_res = 8, t_blk_res_used = 0
+     kworker/1:4-11479 [001] 1526421959.067872: print:                __xfs_trans_commit: CALL:   - caller xfs_trans_commit, m_fdblocks = 13052007, tid = 0xce1a9e96, t_blk_res = 8, t_blk_res_used = 0
+     kworker/1:4-11479 [001] 1526421959.067937: print:                xfs_trans_unreserve_and_mod_sb: CALL:   - caller __xfs_trans_commit, m_fdblocks = 13052007, tid = 0xce1a9e96, t_blk_res = 8, t_blk_res_used = 0
+     kworker/1:4-11479 [001] 1526421959.068009: print:                xfs_mod_fdblocks: CALL:   - caller xfs_trans_unreserve_and_mod_sb, m_fdblocks = 13052007, delta = 8, rsvd = 1
+
+
+     kworker/1:4-11479 [001] 1526421959.068009: print:                xfs_mod_fdblocks: CALL:   - caller xfs_trans_unreserve_and_mod_sb, m_fdblocks = 13052007, delta = 8, rsvd = 1
+     kworker/1:4-11479 [001] 1526421959.068074: print:                xfs_log_done: CALL:   - caller __xfs_trans_commit, m_fdblocks = 13052015
+     kworker/1:4-11479 [001] 1526421959.068075: xfs_log_done_nonperm: dev 253:48 t_ocnt 2 t_cnt 2 t_curr_res 112720 t_unit_res 112720 t_flags XLOG_TIC_INITED|XLOG_TIC_PERM_RESERV reserveq empty writeq empty grant_reserve_cycle 1 grant_reserve_bytes 7929836 grant_write_cycle 1 grant_write_bytes 7929836 curr_cycle 1 curr_block 30 tail_cycle 1 tail_block 2
+     kworker/1:4-11479 [001] 1526421959.068146: print:                xlog_ungrant_log_space: CALL:   - caller xfs_log_done, m_fdblocks = 13052015, tid = 0xce1a9e96, t_curr_res = 112720, t_unit_res = 112720
+     kworker/1:4-11479 [001] 1526421959.068147: xfs_log_ungrant_enter: dev 253:48 t_ocnt 2 t_cnt 1 t_curr_res 112720 t_unit_res 112720 t_flags XLOG_TIC_INITED|XLOG_TIC_PERM_RESERV reserveq empty writeq empty grant_reserve_cycle 1 grant_reserve_bytes 7929836 grant_write_cycle 1 grant_write_bytes 7929836 curr_cycle 1 curr_block 30 tail_cycle 1 tail_block 2
+     kworker/1:4-11479 [001] 1526421959.068148: xfs_log_ungrant_sub:  dev 253:48 t_ocnt 2 t_cnt 1 t_curr_res 112720 t_unit_res 112720 t_flags XLOG_TIC_INITED|XLOG_TIC_PERM_RESERV reserveq empty writeq empty grant_reserve_cycle 1 grant_reserve_bytes 7929836 grant_write_cycle 1 grant_write_bytes 7929836 curr_cycle 1 curr_block 30 tail_cycle 1 tail_block 2
+     kworker/1:4-11479 [001] 1526421959.068148: xfs_log_ungrant_exit: dev 253:48 t_ocnt 2 t_cnt 1 t_curr_res 112720 t_unit_res 112720 t_flags XLOG_TIC_INITED|XLOG_TIC_PERM_RESERV reserveq empty writeq empty grant_reserve_cycle 1 grant_reserve_bytes 7704396 grant_write_cycle 1 grant_write_bytes 7704396 curr_cycle 1 curr_block 30 tail_cycle 1 tail_block 2
+     kworker/1:4-11479 [001] 1526421959.068191: xfs_iunlock:          dev 253:48 ino 0x43 flags ILOCK_EXCL caller xfs_iomap_write_unwritten
+     kworker/0:6-11525 [000] 1526421959.068298: print:                xfs_bmapi_write: CALL:   - caller xfs_iomap_write_unwritten, m_fdblocks = 13052015, tid = 0x8bdeb98, t_blk_res = 8, t_blk_res_used = 0
+     kworker/0:6-11525 [000] 1526421959.068361: print:                xfs_trans_commit: CALL:   - caller xfs_iomap_write_unwritten, m_fdblocks = 13052015, tid = 0x8bdeb98, t_blk_res = 8, t_blk_res_used = 0
+     kworker/0:6-11525 [000] 1526421959.068420: print:                __xfs_trans_commit: CALL:   - caller xfs_trans_commit, m_fdblocks = 13052015, tid = 0x8bdeb98, t_blk_res = 8, t_blk_res_used = 0
+     kworker/0:6-11525 [000] 1526421959.068485: print:                xfs_trans_unreserve_and_mod_sb: CALL:   - caller __xfs_trans_commit, m_fdblocks = 13052015, tid = 0x8bdeb98, t_blk_res = 8, t_blk_res_used = 0
+     kworker/0:6-11525 [000] 1526421959.068555: print:                xfs_mod_fdblocks: CALL:   - caller xfs_trans_unreserve_and_mod_sb, m_fdblocks = 13052015, delta = 8, rsvd = 1
+     kworker/0:6-11525 [000] 1526421959.068618: print:                xfs_log_done: CALL:   - caller __xfs_trans_commit, m_fdblocks = 13052023
+     kworker/0:6-11525 [000] 1526421959.068619: xfs_log_done_nonperm: dev 253:48 t_ocnt 2 t_cnt 2 t_curr_res 112720 t_unit_res 112720 t_flags XLOG_TIC_INITED|XLOG_TIC_PERM_RESERV reserveq empty writeq empty grant_reserve_cycle 1 grant_reserve_bytes 7704396 grant_write_cycle 1 grant_write_bytes 7704396 curr_cycle 1 curr_block 30 tail_cycle 1 tail_block 2
+     kworker/0:6-11525 [000] 1526421959.068689: print:                xlog_ungrant_log_space: CALL:   - caller xfs_log_done, m_fdblocks = 13052023, tid = 0x8bdeb98, t_curr_res = 112720, t_unit_res = 112720
+     kworker/0:6-11525 [000] 1526421959.068690: xfs_log_ungrant_enter: dev 253:48 t_ocnt 2 t_cnt 1 t_curr_res 112720 t_unit_res 112720 t_flags XLOG_TIC_INITED|XLOG_TIC_PERM_RESERV reserveq empty writeq empty grant_reserve_cycle 1 grant_reserve_bytes 7704396 grant_write_cycle 1 grant_write_bytes 7704396 curr_cycle 1 curr_block 30 tail_cycle 1 tail_block 2
+
+
+     kworker/0:6-11525 [000] 1526421959.068690: xfs_log_ungrant_sub:  dev 253:48 t_ocnt 2 t_cnt 1 t_curr_res 112720 t_unit_res 112720 t_flags XLOG_TIC_INITED|XLOG_TIC_PERM_RESERV reserveq empty writeq empty grant_reserve_cycle 1 grant_reserve_bytes 7704396 grant_write_cycle 1 grant_write_bytes 7704396 curr_cycle 1 curr_block 30 tail_cycle 1 tail_block 2
+     kworker/0:6-11525 [000] 1526421959.068690: xfs_log_ungrant_exit: dev 253:48 t_ocnt 2 t_cnt 1 t_curr_res 112720 t_unit_res 112720 t_flags XLOG_TIC_INITED|XLOG_TIC_PERM_RESERV reserveq empty writeq empty grant_reserve_cycle 1 grant_reserve_bytes 7478956 grant_write_cycle 1 grant_write_bytes 7478956 curr_cycle 1 curr_block 30 tail_cycle 1 tail_block 2
+     kworker/0:6-11525 [000] 1526421959.068721: xfs_iunlock:          dev 253:48 ino 0x43 flags ILOCK_EXCL caller xfs_iomap_write_unwritten
+     kworker/2:4-11473 [002] 1526421959.068878: print:                xfs_bmapi_write: CALL:   - caller xfs_iomap_write_unwritten, m_fdblocks = 13052023, tid = 0x511bf654, t_blk_res = 8, t_blk_res_used = 0
+     kworker/2:4-11473 [002] 1526421959.068944: print:                xfs_bmapi_write: CALL:   - caller xfs_iomap_write_unwritten, m_fdblocks = 13052023, tid = 0x511bf654, t_blk_res = 8, t_blk_res_used = 0
+     kworker/2:4-11473 [002] 1526421959.069005: print:                xfs_bmap_alloc: CALL:   - caller xfs_bmapi_write, m_fdblocks = 13052023, tid = 0x511bf654, t_blk_res = 8, t_blk_res_used = 0
+     kworker/2:4-11473 [002] 1526421959.069007: xfs_perag_get:        dev 253:48 agno 0 refcount 9 caller xfs_bmap_longest_free_extent
+     kworker/2:4-11473 [002] 1526421959.069008: xfs_perag_put:        dev 253:48 agno 0 refcount 8 caller xfs_bmap_longest_free_extent
+     kworker/2:4-11473 [002] 1526421959.069079: print:                xfs_alloc_vextent: CALL:   - caller xfs_bmap_btalloc, m_fdblocks = 13052023, tid = 0x511bf654, t_blk_res = 8, t_blk_res_used = 0
+     kworker/2:4-11473 [002] 1526421959.069080: xfs_perag_get:        dev 253:48 agno 0 refcount 9 caller xfs_alloc_vextent
+     kworker/2:4-11473 [002] 1526421959.069081: xfs_alloc_read_agf:   dev 253:48 agno 0
+     kworker/2:4-11473 [002] 1526421959.069082: xfs_read_agf:         dev 253:48 agno 0
+     kworker/2:4-11473 [002] 1526421959.069082: xfs_perag_get:        dev 253:48 agno 0 refcount 10 caller _xfs_buf_find
+     kworker/2:4-11473 [002] 1526421959.069083: xfs_perag_put:        dev 253:48 agno 0 refcount 9 caller _xfs_buf_find
+     kworker/2:4-11473 [002] 1526421959.069083: xfs_buf_trylock:      dev 253:48 bno 0x1 nblks 0x1 hold 3 pincount 1 lock 0 flags DONE|KMEM caller _xfs_buf_find
+     kworker/2:4-11473 [002] 1526421959.069084: xfs_buf_find:         dev 253:48 bno 0x1 len 0x200 hold 3 pincount 1 lock 0 flags READ|TRYLOCK caller xfs_buf_get_map
+     kworker/2:4-11473 [002] 1526421959.069084: xfs_buf_get:          dev 253:48 bno 0x1 len 0x200 hold 3 pincount 1 lock 0 flags READ|TRYLOCK caller xfs_buf_read_map
+     kworker/2:4-11473 [002] 1526421959.069084: xfs_buf_read:         dev 253:48 bno 0x1 len 0x200 hold 3 pincount 1 lock 0 flags READ|TRYLOCK caller xfs_trans_read_buf_map
+     kworker/2:4-11473 [002] 1526421959.069101: xfs_trans_read_buf:   dev 253:48 bno 0x1 len 0x200 hold 3 pincount 1 lock 0 flags DONE|KMEM recur 0 refcount 2 bliflags DIRTY lidesc 0x0xffff880036711518 liflags IN_AIL
+     kworker/2:4-11473 [002] 1526421959.069101: xfs_perag_get:        dev 253:48 agno 0 refcount 10 caller xfs_alloc_read_agf
+     kworker/2:4-11473 [002] 1526421959.069101: xfs_perag_put:        dev 253:48 agno 0 refcount 9 caller xfs_alloc_read_agf
+     kworker/2:4-11473 [002] 1526421959.069102: xfs_perag_get:        dev 253:48 agno 0 refcount 10 caller _xfs_buf_find
+     kworker/2:4-11473 [002] 1526421959.069102: xfs_perag_put:        dev 253:48 agno 0 refcount 9 caller _xfs_buf_find
+     kworker/2:4-11473 [002] 1526421959.069103: xfs_buf_trylock:      dev 253:48 bno 0x3 nblks 0x1 hold 2 pincount 0 lock 0 flags DONE|KMEM caller _xfs_buf_find
+     kworker/2:4-11473 [002] 1526421959.069103: xfs_buf_find:         dev 253:48 bno 0x3 len 0x200 hold 2 pincount 0 lock 0 flags READ caller xfs_buf_get_map
+     kworker/2:4-11473 [002] 1526421959.069103: xfs_buf_get:          dev 253:48 bno 0x3 len 0x200 hold 2 pincount 0 lock 0 flags READ caller xfs_buf_read_map
+     kworker/2:4-11473 [002] 1526421959.069103: xfs_buf_read:         dev 253:48 bno 0x3 len 0x200 hold 2 pincount 0 lock 0 flags READ caller xfs_trans_read_buf_map
+     kworker/2:4-11473 [002] 1526421959.069118: xfs_buf_hold:         dev 253:48 bno 0x3 nblks 0x1 hold 2 pincount 0 lock 0 flags DONE|KMEM caller xfs_buf_item_init
+     kworker/2:4-11473 [002] 1526421959.069130: xfs_trans_read_buf:   dev 253:48 bno 0x3 len 0x200 hold 3 pincount 0 lock 0 flags DONE|KMEM recur 0 refcount 1 bliflags  lidesc 0x0xffff880036711248 liflags 
+     kworker/2:4-11473 [002] 1526421959.069227: print:                xfs_trans_brelse: CALL:   - caller xfs_alloc_fix_freelist, m_fdblocks = 13052023, tid = 0x511bf654, t_blk_res = 8, t_blk_res_used = 0
+     kworker/2:4-11473 [002] 1526421959.069229: xfs_trans_brelse:     dev 253:48 bno 0x3 len 0x200 hold 3 pincount 0 lock 0 flags DONE|KMEM recur 0 refcount 1 bliflags  lidesc 0x0xffff880036711248 liflags 
+     kworker/2:4-11473 [002] 1526421959.069241: xfs_buf_item_relse:   dev 253:48 bno 0x3 nblks 0x1 hold 3 pincount 0 lock 0 flags DONE|KMEM caller xfs_trans_brelse
+     kworker/2:4-11473 [002] 1526421959.069242: xfs_buf_rele:         dev 253:48 bno 0x3 nblks 0x1 hold 3 pincount 0 lock 0 flags DONE|KMEM caller xfs_buf_item_relse
+     kworker/2:4-11473 [002] 1526421959.069254: xfs_buf_unlock:       dev 253:48 bno 0x3 nblks 0x1 hold 2 pincount 0 lock 1 flags DONE|KMEM caller xfs_trans_brelse
+     kworker/2:4-11473 [002] 1526421959.069254: xfs_buf_rele:         dev 253:48 bno 0x3 nblks 0x1 hold 2 pincount 0 lock 1 flags DONE|KMEM caller xfs_trans_brelse
+     kworker/2:4-11473 [002] 1526421959.069332: print:                xfs_alloc_ag_vextent: CALL:   - caller xfs_alloc_vextent, m_fdblocks = 13052023, tid = 0x511bf654, t_blk_res = 8, t_blk_res_used = 0
+     kworker/2:4-11473 [002] 1526421959.069346: xfs_perag_get:        dev 253:48 agno 0 refcount 10 caller _xfs_buf_find
+     kworker/2:4-11473 [002] 1526421959.069347: xfs_perag_put:        dev 253:48 agno 0 refcount 9 caller _xfs_buf_find
+     kworker/2:4-11473 [002] 1526421959.069347: xfs_buf_trylock:      dev 253:48 bno 0x10 nblks 0x8 hold 2 pincount 1 lock 0 flags DONE|PAGES caller _xfs_buf_find
+     kworker/2:4-11473 [002] 1526421959.069348: xfs_buf_find:         dev 253:48 bno 0x10 len 0x1000 hold 2 pincount 1 lock 0 flags READ caller xfs_buf_get_map
+     kworker/2:4-11473 [002] 1526421959.069348: xfs_buf_get:          dev 253:48 bno 0x10 len 0x1000 hold 2 pincount 1 lock 0 flags READ caller xfs_buf_read_map
+     kworker/2:4-11473 [002] 1526421959.069348: xfs_buf_read:         dev 253:48 bno 0x10 len 0x1000 hold 2 pincount 1 lock 0 flags READ caller xfs_trans_read_buf_map
+     kworker/2:4-11473 [002] 1526421959.069363: xfs_trans_read_buf:   dev 253:48 bno 0x10 len 0x1000 hold 2 pincount 1 lock 0 flags DONE|PAGES recur 0 refcount 2 bliflags DIRTY lidesc 0x0xffff880036711248 liflags IN_AIL
+     kworker/2:4-11473 [002] 1526421959.069378: xfs_perag_get:        dev 253:48 agno 0 refcount 10 caller _xfs_buf_find
+
+
+     kworker/2:4-11473 [002] 1526421959.069378: xfs_perag_get:        dev 253:48 agno 0 refcount 10 caller _xfs_buf_find
+     kworker/2:4-11473 [002] 1526421959.069378: xfs_perag_put:        dev 253:48 agno 0 refcount 9 caller _xfs_buf_find
+     kworker/2:4-11473 [002] 1526421959.069378: xfs_buf_trylock:      dev 253:48 bno 0x8 nblks 0x8 hold 2 pincount 1 lock 0 flags DONE|PAGES caller _xfs_buf_find
+     kworker/2:4-11473 [002] 1526421959.069378: xfs_buf_find:         dev 253:48 bno 0x8 len 0x1000 hold 2 pincount 1 lock 0 flags READ caller xfs_buf_get_map
+     kworker/2:4-11473 [002] 1526421959.069379: xfs_buf_get:          dev 253:48 bno 0x8 len 0x1000 hold 2 pincount 1 lock 0 flags READ caller xfs_buf_read_map
+     kworker/2:4-11473 [002] 1526421959.069379: xfs_buf_read:         dev 253:48 bno 0x8 len 0x1000 hold 2 pincount 1 lock 0 flags READ caller xfs_trans_read_buf_map
+     kworker/2:4-11473 [002] 1526421959.069395: xfs_trans_read_buf:   dev 253:48 bno 0x8 len 0x1000 hold 2 pincount 1 lock 0 flags DONE|PAGES recur 0 refcount 2 bliflags DIRTY lidesc 0x0xffff880036710ca8 liflags IN_AIL
+     kworker/2:4-11473 [002] 1526421959.069490: print:                xfs_btree_delete: CALL:   - caller xfs_alloc_fixup_trees, m_fdblocks = 13052023, tid = 0x511bf654, t_blk_res = 8, t_blk_res_used = 0
+     kworker/2:4-11473 [002] 1526421959.069589: print:                xfs_btree_delrec: CALL:   - caller xfs_btree_delete, m_fdblocks = 13052023, tid = 0x511bf654, t_blk_res = 8, t_blk_res_used = 0
+     kworker/2:4-11473 [002] 1526421959.069695: print:                xfs_btree_log_recs: CALL:   - caller xfs_btree_delrec, m_fdblocks = 13052023, tid = 0x511bf654, t_blk_res = 8, t_blk_res_used = 0
+     kworker/2:4-11473 [002] 1526421959.069808: print:                xfs_trans_log_buf: CALL:   - caller xfs_btree_log_recs, m_fdblocks = 13052023, tid = 0x511bf654, t_blk_res = 8, t_blk_res_used = 0
+     kworker/2:4-11473 [002] 1526421959.069823: xfs_trans_log_buf:    dev 253:48 bno 0x10 len 0x1000 hold 2 pincount 1 lock 0 flags DONE|PAGES recur 0 refcount 2 bliflags DIRTY lidesc 0x0xffff880036711248 liflags IN_AIL
+     kworker/2:4-11473 [002] 1526421959.069930: print:                xfs_btree_log_block: CALL:   - caller xfs_btree_delrec, m_fdblocks = 13052023, tid = 0x511bf654, t_blk_res = 8, t_blk_res_used = 0
+     kworker/2:4-11473 [002] 1526421959.070037: print:                xfs_trans_log_buf: CALL:   - caller xfs_btree_log_block, m_fdblocks = 13052023, tid = 0x511bf654, t_blk_res = 8, t_blk_res_used = 0
+     kworker/2:4-11473 [002] 1526421959.070038: xfs_trans_log_buf:    dev 253:48 bno 0x10 len 0x1000 hold 2 pincount 1 lock 0 flags DONE|PAGES recur 0 refcount 2 bliflags DIRTY|LOGGED lidesc 0x0xffff880036711248 liflags IN_AIL
+     kworker/2:4-11473 [002] 1526421959.070131: print:                xfs_btree_delete: CALL:   - caller xfs_alloc_fixup_trees, m_fdblocks = 13052023, tid = 0x511bf654, t_blk_res = 8, t_blk_res_used = 0
+     kworker/2:4-11473 [002] 1526421959.070239: print:                xfs_btree_delrec: CALL:   - caller xfs_btree_delete, m_fdblocks = 13052023, tid = 0x511bf654, t_blk_res = 8, t_blk_res_used = 0
+     kworker/2:4-11473 [002] 1526421959.070344: print:                xfs_btree_log_recs: CALL:   - caller xfs_btree_delrec, m_fdblocks = 13052023, tid = 0x511bf654, t_blk_res = 8, t_blk_res_used = 0
+     kworker/2:4-11473 [002] 1526421959.070451: print:                xfs_trans_log_buf: CALL:   - caller xfs_btree_log_recs, m_fdblocks = 13052023, tid = 0x511bf654, t_blk_res = 8, t_blk_res_used = 0
+     kworker/2:4-11473 [002] 1526421959.070452: xfs_trans_log_buf:    dev 253:48 bno 0x8 len 0x1000 hold 2 pincount 1 lock 0 flags DONE|PAGES recur 0 refcount 2 bliflags DIRTY lidesc 0x0xffff88003
+6710ca8 liflags IN_AIL
+
+
+     kworker/2:4-11473 [002] 1526421959.070452: xfs_trans_log_buf:    dev 253:48 bno 0x8 len 0x1000 hold 2 pincount 1 lock 0 flags DONE|PAGES recur 0 refcount 2 bliflags DIRTY lidesc 0x0xffff880036710ca8 liflags IN_AIL
+     kworker/2:4-11473 [002] 1526421959.070556: print:                xfs_btree_log_block: CALL:   - caller xfs_btree_delrec, m_fdblocks = 13052023, tid = 0x511bf654, t_blk_res = 8, t_blk_res_used = 0
+     kworker/2:4-11473 [002] 1526421959.070663: print:                xfs_trans_log_buf: CALL:   - caller xfs_btree_log_block, m_fdblocks = 13052023, tid = 0x511bf654, t_blk_res = 8, t_blk_res_used = 0
+     kworker/2:4-11473 [002] 1526421959.070663: xfs_trans_log_buf:    dev 253:48 bno 0x8 len 0x1000 hold 2 pincount 1 lock 0 flags DONE|PAGES recur 0 refcount 2 bliflags DIRTY|LOGGED lidesc 0x0xffff880036710ca8 liflags IN_AIL
+     kworker/2:4-11473 [002] 1526421959.070760: print:                xfs_trans_brelse: CALL:   - caller xfs_btree_del_cursor, m_fdblocks = 13052023, tid = 0x511bf654, t_blk_res = 8, t_blk_res_used = 0
+     kworker/2:4-11473 [002] 1526421959.070770: xfs_trans_brelse:     dev 253:48 bno 0x10 len 0x1000 hold 2 pincount 1 lock 0 flags DONE|PAGES recur 0 refcount 2 bliflags DIRTY|LOGGED lidesc 0x0xffff880036711248 liflags IN_AIL
+     kworker/2:4-11473 [002] 1526421959.070876: print:                xfs_trans_brelse: CALL:   - caller xfs_btree_del_cursor, m_fdblocks = 13052023, tid = 0x511bf654, t_blk_res = 8, t_blk_res_used = 0
+     kworker/2:4-11473 [002] 1526421959.070877: xfs_trans_brelse:     dev 253:48 bno 0x8 len 0x1000 hold 2 pincount 1 lock 0 flags DONE|PAGES recur 0 refcount 2 bliflags DIRTY|LOGGED lidesc 0x0xffff880036710ca8 liflags IN_AIL
+
+
+     kworker/2:4-11473 [002] 1526421959.070877: xfs_trans_brelse:     dev 253:48 bno 0x8 len 0x1000 hold 2 pincount 1 lock 0 flags DONE|PAGES recur 0 refcount 2 bliflags DIRTY|LOGGED lidesc 0x0xffff880036710ca8 liflags IN_AIL
+     kworker/2:4-11473 [002] 1526421959.070888: xfs_alloc_near_first: dev 253:48 agno 0 agbno 40108 minlen 16 maxlen 16 mod 0 prod 1 minleft 2 total 8 alignment 1 minalignslop 0 len 16 type NEAR_BNO otype START_BNO wasdel 0 wasfromfl 0 isfl 0 userdata 1 firstblock 0xffffffffffffffff
+     kworker/2:4-11473 [002] 1526421959.070971: print:                xfs_alloc_update_counters.isra.11: CALL:   - caller xfs_alloc_ag_vextent, m_fdblocks = 13052023, tid = 0x511bf654, t_blk_res = 8, t_blk_res_used = 0
+     kworker/2:4-11473 [002] 1526421959.071058: print:                xfs_alloc_log_agf: CALL:   - caller xfs_alloc_update_counters.isra.11, m_fdblocks = 13052023, tid = 0x511bf654, t_blk_res = 8, t_blk_res_used = 0
+     kworker/2:4-11473 [002] 1526421959.071059: xfs_agf:              dev 253:48 agno 0 flags FREEBLKS length 6553600 roots b 1 c 2 levels b 1 c 1 flfirst 0 fllast 3 flcount 4 freeblks 6513263 longest 6513252 caller xfs_alloc_update_counters.isra.11
+     kworker/2:4-11473 [002] 1526421959.071151: print:                xfs_trans_log_buf: CALL:   - caller xfs_alloc_log_agf, m_fdblocks = 13052023, tid = 0x511bf654, t_blk_res = 8, t_blk_res_used = 0
+     kworker/2:4-11473 [002] 1526421959.071152: xfs_trans_log_buf:    dev 253:48 bno 0x1 len 0x200 hold 3 pincount 1 lock 0 flags DONE|KMEM recur 0 refcount 2 bliflags DIRTY lidesc 0x0xffff880036711518 liflags IN_AIL
+     kworker/2:4-11473 [002] 1526421959.071250: print:                xfs_trans_mod_sb: CALL:   - caller xfs_alloc_ag_vextent, m_fdblocks = 13052023, tid = 0x511bf654, t_blk_res = 8, t_blk_res_used = 0
+     kworker/2:4-11473 [002] 1526421959.071251: xfs_perag_put:        dev 253:48 agno 0 refcount 8 caller xfs_alloc_vextent
+
+     kworker/2:4-11473 [002] 1526421959.071324: print:                xfs_bmap_add_extent_hole_real: CALL:   - caller xfs_bmapi_write, m_fdblocks = 13052023, tid = 0x511bf654, t_blk_res = 8, t_blk_res_used = 16
+     kworker/2:4-11473 [002] 1526421959.071369: print:                xfs_bmap_add_extent_hole_real: ALERT: t_blk_res_used (16) is greater than t_blk_res (8)
+     kworker/2:4-11473 [002] 1526421959.071377: xfs_bmap_pre_update:  dev 253:48 ino 0x43 state LC|RC idx 20 offset 40032 block 40060 count 48 flag 0 caller xfs_bmap_add_extent_hole_real
+     kworker/2:4-11473 [002] 1526421959.071378: xfs_bmap_post_update: dev 253:48 ino 0x43 state LC|RC idx 20 offset 40032 block 40060 count 288 flag 0 caller xfs_bmap_add_extent_hole_real
+     kworker/2:4-11473 [002] 1526421959.071378: xfs_iext_remove:      dev 253:48 ino 0x43 state LC|RC idx 21 offset 40096 block 40124 count 224 flag 0 caller xfs_bmap_add_extent_hole_real
+     kworker/2:4-11473 [002] 1526421959.071380: xfs_perag_get:        dev 253:48 agno 0 refcount 9 caller _xfs_buf_find
+     kworker/2:4-11473 [002] 1526421959.071381: xfs_perag_put:        dev 253:48 agno 0 refcount 8 caller _xfs_buf_find
+     kworker/2:4-11473 [002] 1526421959.071381: xfs_buf_trylock:      dev 253:48 bno 0x48158 nblks 0x8 hold 2 pincount 1 lock 0 flags DONE|PAGES caller _xfs_buf_find
+     kworker/2:4-11473 [002] 1526421959.071381: xfs_buf_find:         dev 253:48 bno 0x48158 len 0x1000 hold 2 pincount 1 lock 0 flags READ caller xfs_buf_get_map
+     kworker/2:4-11473 [002] 1526421959.071382: xfs_buf_get:          dev 253:48 bno 0x48158 len 0x1000 hold 2 pincount 1 lock 0 flags READ caller xfs_buf_read_map
+     kworker/2:4-11473 [002] 1526421959.071382: xfs_buf_read:         dev 253:48 bno 0x48158 len 0x1000 hold 2 pincount 1 lock 0 flags READ caller xfs_trans_read_buf_map
+     kworker/2:4-11473 [002] 1526421959.071396: xfs_trans_read_buf:   dev 253:48 bno 0x48158 len 0x1000 hold 2 pincount 1 lock 0 flags DONE|PAGES recur 0 refcount 2 bliflags DIRTY lidesc 0x0xffff8800367105a0 liflags 
+     kworker/2:4-11473 [002] 1526421959.071464: print:                xfs_btree_delete: CALL:   - caller xfs_bmap_add_extent_hole_real, m_fdblocks = 13052023, tid = 0x511bf654, t_blk_res = 8, t_blk_res_used = 16
+     kworker/2:4-11473 [002] 1526421959.071510: print:                xfs_btree_delete: ALERT: t_blk_res_used (16) is greater than t_blk_res (8)
+     kworker/2:4-11473 [002] 1526421959.071582: print:                xfs_btree_delrec: CALL:   - caller xfs_btree_delete, m_fdblocks = 13052023, tid = 0x511bf654, t_blk_res = 8, t_blk_res_used = 16
+     kworker/2:4-11473 [002] 1526421959.071631: print:                xfs_btree_delrec: ALERT: t_blk_res_used (16) is greater than t_blk_res (8)
+
+
+     kworker/2:4-11473 [002] 1526421959.071631: print:                xfs_btree_delrec: ALERT: t_blk_res_used (16) is greater than t_blk_res (8)
+     kworker/2:4-11473 [002] 1526421959.071708: print:                xfs_btree_log_block: CALL:   - caller xfs_btree_delrec, m_fdblocks = 13052023, tid = 0x511bf654, t_blk_res = 8, t_blk_res_used = 16
+     kworker/2:4-11473 [002] 1526421959.071794: print:                xfs_trans_log_buf: CALL:   - caller xfs_btree_log_block, m_fdblocks = 13052023, tid = 0x511bf654, t_blk_res = 8, t_blk_res_used = 16
+     kworker/2:4-11473 [002] 1526421959.071853: print:                xfs_trans_log_buf: ALERT: t_blk_res_used (16) is greater than t_blk_res (8)
+     kworker/2:4-11473 [002] 1526421959.071863: xfs_trans_log_buf:    dev 253:48 bno 0x48158 len 0x1000 hold 2 pincount 1 lock 0 flags DONE|PAGES recur 0 refcount 2 bliflags DIRTY lidesc 0x0xffff8800367105a0 liflags 
+     kworker/2:4-11473 [002] 1526421959.071942: print:                xfs_btree_log_recs: CALL:   - caller xfs_btree_update, m_fdblocks = 13052023, tid = 0x511bf654, t_blk_res = 8, t_blk_res_used = 16
+     kworker/2:4-11473 [002] 1526421959.072023: print:                xfs_trans_log_buf: CALL:   - caller xfs_btree_log_recs, m_fdblocks = 13052023, tid = 0x511bf654, t_blk_res = 8, t_blk_res_used = 16
+     kworker/2:4-11473 [002] 1526421959.072081: print:                xfs_trans_log_buf: ALERT: t_blk_res_used (16) is greater than t_blk_res (8)
+     kworker/2:4-11473 [002] 1526421959.072082: xfs_trans_log_buf:    dev 253:48 bno 0x48158 len 0x1000 hold 2 pincount 1 lock 0 flags DONE|PAGES recur 0 refcount 2 bliflags DIRTY|LOGGED lidesc 0x0xffff8800367105a0 liflags 
+     kworker/2:4-11473 [002] 1526421959.072084: xfs_trans_read_buf_recur: dev 253:48 bno 0x48158 len 0x1000 hold 2 pincount 1 lock 0 flags DONE|PAGES recur 1 refcount 2 bliflags DIRTY|LOGGED lidesc 0x0xffff8800367105a0 liflags 
+
+
+     kworker/2:4-11473 [002] 1526421959.072098: xfs_trans_binval:     dev 253:48 bno 0x48158 len 0x1000 hold 2 pincount 1 lock 0 flags DONE|PAGES recur 1 refcount 2 bliflags DIRTY|LOGGED lidesc 0x0xffff8800367105a0 liflags 
+     kworker/2:4-11473 [002] 1526421959.072213: print:                xfs_trans_dup: CALL:   - caller __xfs_trans_roll, m_fdblocks = 13052023, tid = 0x511bf654, t_blk_res = 8, t_blk_res_used = 16
+     kworker/2:4-11473 [002] 1526421959.072259: print:                xfs_trans_dup: ALERT: t_blk_res_used (16) is greater than t_blk_res (8)
+     kworker/2:4-11473 [002] 1526421959.072276: print:                xfs_trans_dup: t_blk_res (8) >= $tp->t_blk_res_used (16) ... I'd like to panic, but my parole officer says that's a bad idea
+     kworker/2:4-11473 [002] 1526421959.072342: print:                __xfs_trans_commit: CALL:   - caller __xfs_trans_roll, m_fdblocks = 13052023, tid = 0x511bf654, t_blk_res = 16, t_blk_res_used = 16
+     kworker/2:4-11473 [002] 1526421959.072414: print:                xfs_log_commit_cil: CALL:   - caller __xfs_trans_commit, m_fdblocks = 13052023, tid = 0x511bf654, t_blk_res = 16, t_blk_res_used = 16
+     kworker/2:4-11473 [002] 1526421959.072434: xfs_buf_item_size:    dev 253:48 bno 0x1 len 0x200 hold 3 pincount 1 lock 0 flags DONE|KMEM recur 0 refcount 2 bliflags DIRTY|LOGGED lidesc 0x0xffff880036711518 liflags IN_AIL
+     kworker/2:4-11473 [002] 1526421959.072435: xfs_buf_item_size:    dev 253:48 bno 0x10 len 0x1000 hold 2 pincount 1 lock 0 flags DONE|PAGES recur 0 refcount 2 bliflags DIRTY|LOGGED lidesc 0x0xffff880036711248 liflags IN_AIL
+     kworker/2:4-11473 [002] 1526421959.072435: xfs_buf_item_size:    dev 253:48 bno 0x8 len 0x1000 hold 2 pincount 1 lock 0 flags DONE|PAGES recur 0 refcount 2 bliflags DIRTY|LOGGED lidesc 0x0xffff880036710ca8 liflags IN_AIL
+     kworker/2:4-11473 [002] 1526421959.072436: xfs_buf_item_size_stale: dev 253:48 bno 0x48158 len 0x1000 hold 2 pincount 1 lock 0 flags DONE|STALE|PAGES recur 1 refcount 2 bliflags STALE lidesc 0x0xffff8800367105a0 liflags 
+     kworker/2:4-11473 [002] 1526421959.072535: print:                xfs_buf_item_format: CALL:   - caller xfs_log_commit_cil, m_fdblocks = 13052023, tid = 0x511bf654, t_blk_res = 16, t_blk_res_used = 16
+     kworker/2:4-11473 [002] 1526421959.072537: xfs_buf_item_format:  dev 253:48 bno 0x1 len 0x200 hold 3 pincount 1 lock 0 flags DONE|KMEM recur 0 refcount 2 bliflags DIRTY|LOGGED lidesc 0x0xffff880036711518 liflags IN_AIL
+     kworker/2:4-11473 [002] 1526421959.072614: print:                xfs_buf_item_format: CALL:   - caller xfs_log_commit_cil, m_fdblocks = 13052023, tid = 0x511bf654, t_blk_res = 16, t_blk_res_used = 16
+     kworker/2:4-11473 [002] 1526421959.072615: xfs_buf_item_format:  dev 253:48 bno 0x10 len 0x1000 hold 2 pincount 1 lock 0 flags DONE|PAGES recur 0 refcount 2 bliflags DIRTY|LOGGED lidesc 0x0xffff880036711248 liflags IN_AIL
+     kworker/2:4-11473 [002] 1526421959.072690: print:                xfs_buf_item_format: CALL:   - caller xfs_log_commit_cil, m_fdblocks = 13052023, tid = 0x511bf654, t_blk_res = 16, t_blk_res_used = 16
+     kworker/2:4-11473 [002] 1526421959.072691: xfs_buf_item_format:  dev 253:48 bno 0x8 len 0x1000 hold 2 pincount 1 lock 0 flags DONE|PAGES recur 0 refcount 2 bliflags DIRTY|LOGGED lidesc 0x0xffff880036710ca8 liflags IN_AIL
+     kworker/2:4-11473 [002] 1526421959.072772: print:                xfs_buf_item_format: CALL:   - caller xfs_log_commit_cil, m_fdblocks = 13052023, tid = 0x511bf654, t_blk_res = 16, t_blk_res_used = 16
+     kworker/2:4-11473 [002] 1526421959.072783: xfs_buf_item_format_stale: dev 253:48 bno 0x48158 len 0x1000 hold 2 pincount 1 lock 0 flags DONE|STALE|PAGES recur 1 refcount 2 bliflags STALE lidesc 0x0xffff8800367105a0 liflags 
+     kworker/2:4-11473 [002] 1526421959.072784: xfs_buf_item_format:  dev 253:48 bno 0x48158 len 0x1000 hold 2 pincount 1 lock 0 flags DONE|STALE|PAGES recur 1 refcount 2 bliflags STALE lidesc 0x0xffff8800367105a0 liflags 
+     kworker/2:4-11473 [002] 1526421959.072862: print:                xfs_log_done: CALL:   - caller xfs_log_commit_cil, m_fdblocks = 13052023
+     kworker/2:4-11473 [002] 1526421959.072863: xfs_log_done_perm:    dev 253:48 t_ocnt 2 t_cnt 2 t_curr_res 113208 t_unit_res 112720 t_flags XLOG_TIC_INITED|XLOG_TIC_PERM_RESERV reserveq empty writeq empty grant_reserve_cycle 1 grant_reserve_bytes 7478956 grant_write_cycle 1 grant_write_bytes 7478956 curr_cycle 1 curr_block 30 tail_cycle 1 tail_block 2
+     kworker/2:4-11473 [002] 1526421959.072947: print:                xlog_regrant_reserve_log_space: CALL:   - caller xfs_log_done, m_fdblocks = 13052023, tid = 0x511bf654, t_curr_res = 113208, t_unit_res = 112720
+     kworker/2:4-11473 [002] 1526421959.072948: xfs_log_regrant_reserve_enter: dev 253:48 t_ocnt 2 t_cnt 2 t_curr_res 113208 t_unit_res 112720 t_flags XLOG_TIC_INITED|XLOG_TIC_PERM_RESERV reserveq empty writeq empty grant_reserve_cycle 1 grant_reserve_bytes 7478956 grant_write_cycle 1 grant_write_bytes 7478956 curr_cycle 1 curr_block 30 tail_cycle 1 tail_block 2
+
+     kworker/2:4-11473 [002] 1526421959.072948: xfs_log_regrant_reserve_enter: dev 253:48 t_ocnt 2 t_cnt 2 t_curr_res 113208 t_unit_res 112720 t_flags XLOG_TIC_INITED|XLOG_TIC_PERM_RESERV reserveq empty writeq empty grant_reserve_cycle 1 grant_reserve_bytes 7478956 grant_write_cycle 1 grant_write_bytes 7478956 curr_cycle 1 curr_block 30 tail_cycle 1 tail_block 2
+     kworker/2:4-11473 [002] 1526421959.072949: xfs_log_regrant_reserve_sub: dev 253:48 t_ocnt 2 t_cnt 1 t_curr_res 112720 t_unit_res 112720 t_flags XLOG_TIC_INITED|XLOG_TIC_PERM_RESERV reserveq empty writeq empty grant_reserve_cycle 1 grant_reserve_bytes 7365748 grant_write_cycle 1 grant_write_bytes 7365748 curr_cycle 1 curr_block 30 tail_cycle 1 tail_block 2
+     kworker/2:4-11473 [002] 1526421959.073025: print:                xfs_trans_unreserve_and_mod_sb: CALL:   - caller xfs_log_commit_cil, m_fdblocks = 13052023, tid = 0x511bf654, t_blk_res = 16, t_blk_res_used = 16
+     kworker/2:4-11473 [002] 1526421959.073037: xfs_buf_item_unlock:  dev 253:48 bno 0x1 len 0x200 hold 3 pincount 1 lock 0 flags DONE|KMEM recur 0 refcount 2 bliflags DIRTY lidesc 0x(nil) liflags IN_AIL
+     kworker/2:4-11473 [002] 1526421959.073037: xfs_buf_unlock:       dev 253:48 bno 0x1 nblks 0x1 hold 3 pincount 1 lock 1 flags DONE|KMEM caller xfs_buf_item_unlock
+     kworker/2:4-11473 [002] 1526421959.073038: xfs_buf_rele:         dev 253:48 bno 0x1 nblks 0x1 hold 3 pincount 1 lock 1 flags DONE|KMEM caller xfs_buf_item_unlock
+     kworker/2:4-11473 [002] 1526421959.073046: xfs_buf_item_unlock:  dev 253:48 bno 0x10 len 0x1000 hold 2 pincount 1 lock 0 flags DONE|PAGES recur 0 refcount 2 bliflags DIRTY lidesc 0x(nil) liflags IN_AIL
+     kworker/2:4-11473 [002] 1526421959.073047: xfs_buf_unlock:       dev 253:48 bno 0x10 nblks 0x8 hold 2 pincount 1 lock 1 flags DONE|PAGES caller xfs_buf_item_unlock
+     kworker/2:4-11473 [002] 1526421959.073047: xfs_buf_rele:         dev 253:48 bno 0x10 nblks 0x8 hold 2 pincount 1 lock 1 flags DONE|PAGES caller xfs_buf_item_unlock
+     kworker/2:4-11473 [002] 1526421959.073056: xfs_buf_item_unlock:  dev 253:48 bno 0x8 len 0x1000 hold 2 pincount 1 lock 0 flags DONE|PAGES recur 0 refcount 2 bliflags DIRTY lidesc 0x(nil) liflags IN_AIL
+     kworker/2:4-11473 [002] 1526421959.073056: xfs_buf_unlock:       dev 253:48 bno 0x8 nblks 0x8 hold 2 pincount 1 lock 1 flags DONE|PAGES caller xfs_buf_item_unlock
+     kworker/2:4-11473 [002] 1526421959.073056: xfs_buf_rele:         dev 253:48 bno 0x8 nblks 0x8 hold 2 pincount 1 lock 1 flags DONE|PAGES caller xfs_buf_item_unlock
+     kworker/2:4-11473 [002] 1526421959.073065: xfs_buf_item_unlock_stale: dev 253:48 bno 0x48158 len 0x1000 hold 2 pincount 1 lock 0 flags DONE|STALE|PAGES recur 1 refcount 2 bliflags STALE lidesc 0x(nil) liflags 
+
+     kworker/2:4-11473 [002] 1526421959.073159: print:                xfs_trans_reserve: CALL:   - caller __xfs_trans_roll, m_fdblocks = 13052023, tid = 0x511bf654, blocks = 0, t_blk_res = 4294967288, t_blk_res_used = 0
+     kworker/2:4-11473 [002] 1526421959.073289: print:                xfs_log_regrant: CALL:   - caller xfs_trans_reserve, m_fdblocks = 13052023, tid = 0x511bf654, t_curr_res = 112720, t_unit_res = 112720, need_bytes = -1
+     kworker/2:4-11473 [002] 1526421959.073366: print:                xlog_grant_push_ail: CALL:   - caller xfs_log_regrant, m_fdblocks = 13052023, need_bytes = 112720
+     kworker/2:4-11473 [002] 1526421959.073387: xfs_perag_get:        dev 253:48 agno 0 refcount 9 caller xfs_free_extent
+     kworker/2:4-11473 [002] 1526421959.073388: xfs_alloc_read_agf:   dev 253:48 agno 0
+     kworker/2:4-11473 [002] 1526421959.073389: xfs_read_agf:         dev 253:48 agno 0
+     kworker/2:4-11473 [002] 1526421959.073389: xfs_perag_get:        dev 253:48 agno 0 refcount 10 caller _xfs_buf_find
+     kworker/2:4-11473 [002] 1526421959.073389: xfs_perag_put:        dev 253:48 agno 0 refcount 9 caller _xfs_buf_find
+     kworker/2:4-11473 [002] 1526421959.073390: xfs_buf_trylock:      dev 253:48 bno 0x1 nblks 0x1 hold 3 pincount 1 lock 0 flags DONE|KMEM caller _xfs_buf_find
+     kworker/2:4-11473 [002] 1526421959.073390: xfs_buf_find:         dev 253:48 bno 0x1 len 0x200 hold 3 pincount 1 lock 0 flags READ caller xfs_buf_get_map
+     kworker/2:4-11473 [002] 1526421959.073391: xfs_buf_get:          dev 253:48 bno 0x1 len 0x200 hold 3 pincount 1 lock 0 flags READ caller xfs_buf_read_map
+     kworker/2:4-11473 [002] 1526421959.073391: xfs_buf_read:         dev 253:48 bno 0x1 len 0x200 hold 3 pincount 1 lock 0 flags READ caller xfs_trans_read_buf_map
+     kworker/2:4-11473 [002] 1526421959.073405: xfs_trans_read_buf:   dev 253:48 bno 0x1 len 0x200 hold 3 pincount 1 lock 0 flags DONE|KMEM recur 0 refcount 2 bliflags DIRTY lidesc 0x0xffff8800367102d0 liflags IN_AIL
+     kworker/2:4-11473 [002] 1526421959.073406: xfs_perag_get:        dev 253:48 agno 0 refcount 10 caller xfs_alloc_read_agf
+     kworker/2:4-11473 [002] 1526421959.073406: xfs_perag_put:        dev 253:48 agno 0 refcount 9 caller xfs_alloc_read_agf
+     kworker/2:4-11473 [002] 1526421959.073406: xfs_perag_get:        dev 253:48 agno 0 refcount 10 caller _xfs_buf_find
+     kworker/2:4-11473 [002] 1526421959.073407: xfs_perag_put:        dev 253:48 agno 0 refcount 9 caller _xfs_buf_find
+     kworker/2:4-11473 [002] 1526421959.073407: xfs_buf_trylock:      dev 253:48 bno 0x3 nblks 0x1 hold 2 pincount 0 lock 0 flags DONE|KMEM caller _xfs_buf_find
+     kworker/2:4-11473 [002] 1526421959.073408: xfs_buf_find:         dev 253:48 bno 0x3 len 0x200 hold 2 pincount 0 lock 0 flags READ caller xfs_buf_get_map
+     kworker/2:4-11473 [002] 1526421959.073408: xfs_buf_get:          dev 253:48 bno 0x3 len 0x200 hold 2 pincount 0 lock 0 flags READ caller xfs_buf_read_map
+     kworker/2:4-11473 [002] 1526421959.073408: xfs_buf_read:         dev 253:48 bno 0x3 len 0x200 hold 2 pincount 0 lock 0 flags READ caller xfs_trans_read_buf_map
+     kworker/2:4-11473 [002] 1526421959.073433: xfs_buf_hold:         dev 253:48 bno 0x3 nblks 0x1 hold 2 pincount 0 lock 0 flags DONE|KMEM caller xfs_buf_item_init
+     kworker/2:4-11473 [002] 1526421959.073445: xfs_trans_read_buf:   dev 253:48 bno 0x3 len 0x200 hold 3 pincount 0 lock 0 flags DONE|KMEM recur 0 refcount 1 bliflags  lidesc 0x0xffff8800367105a0 liflags 
+     kworker/2:4-11473 [002] 1526421959.073445: xfs_trans_read_buf:   dev 253:48 bno 0x3 len 0x200 hold 3 pincount 0 lock 0 flags DONE|KMEM recur 0 refcount 1 bliflags  lidesc 0x0xffff8800367105a0 liflags 
+
+==============================================================================================================================
+
+new tid - 0x511bf655
+reservation goes back into the free blocks
+
+     kworker/2:4-11473 [002] 1526421959.073538: print:                xfs_trans_brelse: CALL:   - caller xfs_alloc_fix_freelist, m_fdblocks = 13052023, tid = 0x511bf655, t_blk_res = 4294967288, t_blk_res_used = 0
+     kworker/2:4-11473 [002] 1526421959.073539: xfs_trans_brelse:     dev 253:48 bno 0x3 len 0x200 hold 3 pincount 0 lock 0 flags DONE|KMEM recur 0 refcount 1 bliflags  lidesc 0x0xffff8800367105a0
+ liflags 
+     kworker/2:4-11473 [002] 1526421959.073549: xfs_buf_item_relse:   dev 253:48 bno 0x3 nblks 0x1 hold 3 pincount 0 lock 0 flags DONE|KMEM caller xfs_trans_brelse
+     kworker/2:4-11473 [002] 1526421959.073549: xfs_buf_rele:         dev 253:48 bno 0x3 nblks 0x1 hold 3 pincount 0 lock 0 flags DONE|KMEM caller xfs_buf_item_relse
+     kworker/2:4-11473 [002] 1526421959.073560: xfs_buf_unlock:       dev 253:48 bno 0x3 nblks 0x1 hold 2 pincount 0 lock 1 flags DONE|KMEM caller xfs_trans_brelse
+     kworker/2:4-11473 [002] 1526421959.073560: xfs_buf_rele:         dev 253:48 bno 0x3 nblks 0x1 hold 2 pincount 0 lock 1 flags DONE|KMEM caller xfs_trans_brelse
+     kworker/2:4-11473 [002] 1526421959.073573: xfs_perag_get:        dev 253:48 agno 0 refcount 10 caller _xfs_buf_find
+     kworker/2:4-11473 [002] 1526421959.073573: xfs_perag_put:        dev 253:48 agno 0 refcount 9 caller _xfs_buf_find
+     kworker/2:4-11473 [002] 1526421959.073573: xfs_buf_trylock:      dev 253:48 bno 0x8 nblks 0x8 hold 2 pincount 1 lock 0 flags DONE|PAGES caller _xfs_buf_find
+     kworker/2:4-11473 [002] 1526421959.073574: xfs_buf_find:         dev 253:48 bno 0x8 len 0x1000 hold 2 pincount 1 lock 0 flags READ caller xfs_buf_get_map
+     kworker/2:4-11473 [002] 1526421959.073574: xfs_buf_get:          dev 253:48 bno 0x8 len 0x1000 hold 2 pincount 1 lock 0 flags READ caller xfs_buf_read_map
+     kworker/2:4-11473 [002] 1526421959.073574: xfs_buf_read:         dev 253:48 bno 0x8 len 0x1000 hold 2 pincount 1 lock 0 flags READ caller xfs_trans_read_buf_map
+     kworker/2:4-11473 [002] 1526421959.073587: xfs_trans_read_buf:   dev 253:48 bno 0x8 len 0x1000 hold 2 pincount 1 lock 0 flags DONE|PAGES recur 0 refcount 2 bliflags DIRTY lidesc 0x0xffff8800367105a0 liflags IN_AIL
+     kworker/2:4-11473 [002] 1526421959.073689: print:                xfs_btree_log_recs: CALL:   - caller xfs_btree_insrec, m_fdblocks = 13052023, tid = 0x511bf655, t_blk_res = 4294967288, t_blk_res_used = 0
+     kworker/2:4-11473 [002] 1526421959.073788: print:                xfs_trans_log_buf: CALL:   - caller xfs_btree_log_recs, m_fdblocks = 13052023, tid = 0x511bf655, t_blk_res = 4294967288, t_blk_res_used = 0
+     kworker/2:4-11473 [002] 1526421959.073798: xfs_trans_log_buf:    dev 253:48 bno 0x8 len 0x1000 hold 2 pincount 1 lock 0 flags DONE|PAGES recur 0 refcount 2 bliflags DIRTY lidesc 0x0xffff8800367105a0 liflags IN_AIL
+     kworker/2:4-11473 [002] 1526421959.073889: print:                xfs_btree_log_block: CALL:   - caller xfs_btree_insrec, m_fdblocks = 13052023, tid = 0x511bf655, t_blk_res = 4294967288, t_blk_res_used = 0
+     kworker/2:4-11473 [002] 1526421959.073982: print:                xfs_trans_log_buf: CALL:   - caller xfs_btree_log_block, m_fdblocks = 13052023, tid = 0x511bf655, t_blk_res = 4294967288, t_blk_res_used = 0
+     kworker/2:4-11473 [002] 1526421959.073983: xfs_trans_log_buf:    dev 253:48 bno 0x8 len 0x1000 hold 2 pincount 1 lock 0 flags DONE|PAGES recur 0 refcount 2 bliflags DIRTY|LOGGED lidesc 0x0xffff8800367105a0 liflags IN_AIL
+     kworker/2:4-11473 [002] 1526421959.074064: print:                xfs_trans_brelse: CALL:   - caller xfs_btree_del_cursor, m_fdblocks = 13052023, tid = 0x511bf655, t_blk_res = 4294967288, t_blk_res_used = 0
+     kworker/2:4-11473 [002] 1526421959.074065: xfs_trans_brelse:     dev 253:48 bno 0x8 len 0x1000 hold 2 pincount 1 lock 0 flags DONE|PAGES recur 0 refcount 2 bliflags DIRTY|LOGGED lidesc 0x0xffff8800367105a0 liflags IN_AIL
+     kworker/2:4-11473 [002] 1526421959.074076: xfs_perag_get:        dev 253:48 agno 0 refcount 10 caller _xfs_buf_find
+     kworker/2:4-11473 [002] 1526421959.074077: xfs_perag_put:        dev 253:48 agno 0 refcount 9 caller _xfs_buf_find
+     kworker/2:4-11473 [002] 1526421959.074077: xfs_buf_trylock:      dev 253:48 bno 0x10 nblks 0x8 hold 2 pincount 1 lock 0 flags DONE|PAGES caller _xfs_buf_find
+     kworker/2:4-11473 [002] 1526421959.074077: xfs_buf_find:         dev 253:48 bno 0x10 len 0x1000 hold 2 pincount 1 lock 0 flags READ caller xfs_buf_get_map
+     kworker/2:4-11473 [002] 1526421959.074078: xfs_buf_get:          dev 253:48 bno 0x10 len 0x1000 hold 2 pincount 1 lock 0 flags READ caller xfs_buf_read_map
+     kworker/2:4-11473 [002] 1526421959.074078: xfs_buf_read:         dev 253:48 bno 0x10 len 0x1000 hold 2 pincount 1 lock 0 flags READ caller xfs_trans_read_buf_map
+     kworker/2:4-11473 [002] 1526421959.074092: xfs_trans_read_buf:   dev 253:48 bno 0x10 len 0x1000 hold 2 pincount 1 lock 0 flags DONE|PAGES recur 0 refcount 2 bliflags DIRTY lidesc 0x0xffff880036710ca8 liflags IN_AIL
+     kworker/2:4-11473 [002] 1526421959.074190: print:                xfs_btree_log_recs: CALL:   - caller xfs_btree_insrec, m_fdblocks = 13052023, tid = 0x511bf655, t_blk_res = 4294967288, t_blk_res_used = 0
+     kworker/2:4-11473 [002] 1526421959.074284: print:                xfs_trans_log_buf: CALL:   - caller xfs_btree_log_recs, m_fdblocks = 13052023, tid = 0x511bf655, t_blk_res = 4294967288, t_blk_res_used = 0
+     kworker/2:4-11473 [002] 1526421959.074285: xfs_trans_log_buf:    dev 253:48 bno 0x10 len 0x1000 hold 2 pincount 1 lock 0 flags DONE|PAGES recur 0 refcount 2 bliflags DIRTY lidesc 0x0xffff880036710ca8 liflags IN_AIL
+
+     kworker/2:4-11473 [002] 1526421959.074372: print:                xfs_btree_log_block: CALL:   - caller xfs_btree_insrec, m_fdblocks = 13052023, tid = 0x511bf655, t_blk_res = 4294967288, t_blk_res_used = 0
+     kworker/2:4-11473 [002] 1526421959.074465: print:                xfs_trans_log_buf: CALL:   - caller xfs_btree_log_block, m_fdblocks = 13052023, tid = 0x511bf655, t_blk_res = 4294967288, t_blk_res_used = 0
+     kworker/2:4-11473 [002] 1526421959.074466: xfs_trans_log_buf:    dev 253:48 bno 0x10 len 0x1000 hold 2 pincount 1 lock 0 flags DONE|PAGES recur 0 refcount 2 bliflags DIRTY|LOGGED lidesc 0x0xffff880036710ca8 liflags IN_AIL
+     kworker/2:4-11473 [002] 1526421959.074548: print:                xfs_trans_brelse: CALL:   - caller xfs_btree_del_cursor, m_fdblocks = 13052023, tid = 0x511bf655, t_blk_res = 4294967288, t_blk_res_used = 0
+     kworker/2:4-11473 [002] 1526421959.074549: xfs_trans_brelse:     dev 253:48 bno 0x10 len 0x1000 hold 2 pincount 1 lock 0 flags DONE|PAGES recur 0 refcount 2 bliflags DIRTY|LOGGED lidesc 0x0xffff880036710ca8 liflags IN_AIL
+     kworker/2:4-11473 [002] 1526421959.074559: xfs_perag_get:        dev 253:48 agno 0 refcount 10 caller xfs_free_ag_extent
+
+     kworker/2:4-11473 [002] 1526421959.074635: print:                xfs_alloc_update_counters.isra.11: CALL:   - caller xfs_free_ag_extent, m_fdblocks = 13052023, tid = 0x511bf655, t_blk_res = 4294967288, t_blk_res_used = 0
+     kworker/2:4-11473 [002] 1526421959.074718: print:                xfs_alloc_log_agf: CALL:   - caller xfs_alloc_update_counters.isra.11, m_fdblocks = 13052023, tid = 0x511bf655, t_blk_res = 4294967288, t_blk_res_used = 0
+     kworker/2:4-11473 [002] 1526421959.074719: xfs_agf:              dev 253:48 agno 0 flags FREEBLKS length 6553600 roots b 1 c 2 levels b 1 c 1 flfirst 0 fllast 3 flcount 4 freeblks 6513264 longest 6513252 caller xfs_alloc_update_counters.isra.11
+     kworker/2:4-11473 [002] 1526421959.074811: print:                xfs_trans_log_buf: CALL:   - caller xfs_alloc_log_agf, m_fdblocks = 13052023, tid = 0x511bf655, t_blk_res = 4294967288, t_blk_res_used = 0
+     kworker/2:4-11473 [002] 1526421959.074820: xfs_trans_log_buf:    dev 253:48 bno 0x1 len 0x200 hold 3 pincount 1 lock 0 flags DONE|KMEM recur 0 refcount 2 bliflags DIRTY lidesc 0x0xffff8800367102d0 liflags IN_AIL
+     kworker/2:4-11473 [002] 1526421959.074821: xfs_perag_put:        dev 253:48 agno 0 refcount 9 caller xfs_free_ag_extent
+     kworker/2:4-11473 [002] 1526421959.074899: print:                xfs_trans_mod_sb: CALL:   - caller xfs_free_ag_extent, m_fdblocks = 13052023, tid = 0x511bf655, t_blk_res = 4294967288, t_blk_res_used = 0
+     kworker/2:4-11473 [002] 1526421959.074900: xfs_free_extent:      dev 253:48 agno 0 agbno 36907 len 1 isfl 0 none
+     kworker/2:4-11473 [002] 1526421959.074913: xfs_extent_busy:      dev 253:48 agno 0 agbno 36907 len 1
+     kworker/2:4-11473 [002] 1526421959.074913: xfs_perag_get:        dev 253:48 agno 0 refcount 10 caller xfs_extent_busy_insert
+     kworker/2:4-11473 [002] 1526421959.074914: xfs_perag_put:        dev 253:48 agno 0 refcount 9 caller xfs_extent_busy_insert
+     kworker/2:4-11473 [002] 1526421959.074914: xfs_perag_put:        dev 253:48 agno 0 refcount 8 caller xfs_free_extent
+     kworker/2:4-11473 [002] 1526421959.074976: print:                xfs_trans_commit: CALL:   - caller xfs_iomap_write_unwritten, m_fdblocks = 13052023, tid = 0x511bf655, t_blk_res = 4294967288, t_blk_res_used = 0
+     kworker/2:4-11473 [002] 1526421959.075035: print:                __xfs_trans_commit: CALL:   - caller xfs_trans_commit, m_fdblocks = 13052023, tid = 0x511bf655, t_blk_res = 4294967288, t_blk_res_used = 0
+
+
+
+     kworker/2:4-11473 [002] 1526421959.075100: print:                xfs_log_commit_cil: CALL:   - caller __xfs_trans_commit, m_fdblocks = 13052023, tid = 0x511bf655, t_blk_res = 4294967288, t_blk_res_used = 0
+     kworker/2:4-11473 [002] 1526421959.075111: xfs_buf_item_size:    dev 253:48 bno 0x1 len 0x200 hold 3 pincount 1 lock 0 flags DONE|KMEM recur 0 refcount 2 bliflags DIRTY|LOGGED lidesc 0x0xffff8800367102d0 liflags IN_AIL
+     kworker/2:4-11473 [002] 1526421959.075111: xfs_buf_item_size:    dev 253:48 bno 0x8 len 0x1000 hold 2 pincount 1 lock 0 flags DONE|PAGES recur 0 refcount 2 bliflags DIRTY|LOGGED lidesc 0x0xffff8800367105a0 liflags IN_AIL
+     kworker/2:4-11473 [002] 1526421959.075112: xfs_buf_item_size:    dev 253:48 bno 0x10 len 0x1000 hold 2 pincount 1 lock 0 flags DONE|PAGES recur 0 refcount 2 bliflags DIRTY|LOGGED lidesc 0x0xffff880036710ca8 liflags IN_AIL
+     kworker/2:4-11473 [002] 1526421959.075191: print:                xfs_buf_item_format: CALL:   - caller xfs_log_commit_cil, m_fdblocks = 13052023, tid = 0x511bf655, t_blk_res = 4294967288, t_blk_res_used = 0
+     kworker/2:4-11473 [002] 1526421959.075192: xfs_buf_item_format:  dev 253:48 bno 0x1 len 0x200 hold 3 pincount 1 lock 0 flags DONE|KMEM recur 0 refcount 2 bliflags DIRTY|LOGGED lidesc 0x0xffff8800367102d0 liflags IN_AIL
+     kworker/2:4-11473 [002] 1526421959.075262: print:                xfs_buf_item_format: CALL:   - caller xfs_log_commit_cil, m_fdblocks = 13052023, tid = 0x511bf655, t_blk_res = 4294967288, t_blk_res_used = 0
+     kworker/2:4-11473 [002] 1526421959.075263: xfs_buf_item_format:  dev 253:48 bno 0x8 len 0x1000 hold 2 pincount 1 lock 0 flags DONE|PAGES recur 0 refcount 2 bliflags DIRTY|LOGGED lidesc 0x0xffff8800367105a0 liflags IN_AIL
+
+     kworker/2:4-11473 [002] 1526421959.075332: print:                xfs_buf_item_format: CALL:   - caller xfs_log_commit_cil, m_fdblocks = 13052023, tid = 0x511bf655, t_blk_res = 4294967288, t_blk_res_used = 0
+     kworker/2:4-11473 [002] 1526421959.075333: xfs_buf_item_format:  dev 253:48 bno 0x10 len 0x1000 hold 2 pincount 1 lock 0 flags DONE|PAGES recur 0 refcount 2 bliflags DIRTY|LOGGED lidesc 0x0xffff880036710ca8 liflags IN_AIL
+
+     kworker/2:4-11473 [002] 1526421959.075402: print:                xfs_log_done: CALL:   - caller xfs_log_commit_cil, m_fdblocks = 13052023
+     kworker/2:4-11473 [002] 1526421959.075403: xfs_log_done_nonperm: dev 253:48 t_ocnt 2 t_cnt 1 t_curr_res 112676 t_unit_res 112720 t_flags XLOG_TIC_INITED|XLOG_TIC_PERM_RESERV reserveq empty writeq empty grant_reserve_cycle 1 grant_reserve_bytes 7365748 grant_write_cycle 1 grant_write_bytes 7365748 curr_cycle 1 curr_block 30 tail_cycle 1 tail_block 2
+
+     kworker/2:4-11473 [002] 1526421959.075479: print:                xlog_ungrant_log_space: CALL:   - caller xfs_log_done, m_fdblocks = 13052023, tid = 0x511bf655, t_curr_res = 112676, t_unit_res = 112720
+     kworker/2:4-11473 [002] 1526421959.075479: xfs_log_ungrant_enter: dev 253:48 t_ocnt 2 t_cnt 0 t_curr_res 112676 t_unit_res 112720 t_flags XLOG_TIC_INITED|XLOG_TIC_PERM_RESERV reserveq empty writeq empty grant_reserve_cycle 1 grant_reserve_bytes 7365748 grant_write_cycle 1 grant_write_bytes 7365748 curr_cycle 1 curr_block 30 tail_cycle 1 tail_block 2
+     kworker/2:4-11473 [002] 1526421959.075480: xfs_log_ungrant_sub:  dev 253:48 t_ocnt 2 t_cnt 0 t_curr_res 112676 t_unit_res 112720 t_flags XLOG_TIC_INITED|XLOG_TIC_PERM_RESERV reserveq empty writeq empty grant_reserve_cycle 1 grant_reserve_bytes 7365748 grant_write_cycle 1 grant_write_bytes 7365748 curr_cycle 1 curr_block 30 tail_cycle 1 tail_block 2
+     kworker/2:4-11473 [002] 1526421959.075480: xfs_log_ungrant_exit: dev 253:48 t_ocnt 2 t_cnt 0 t_curr_res 112676 t_unit_res 112720 t_flags XLOG_TIC_INITED|XLOG_TIC_PERM_RESERV reserveq empty writeq empty grant_reserve_cycle 1 grant_reserve_bytes 7253072 grant_write_cycle 1 grant_write_bytes 7253072 curr_cycle 1 curr_block 30 tail_cycle 1 tail_block 2
+     kworker/2:4-11473 [002] 1526421959.075560: print:                xfs_trans_unreserve_and_mod_sb: CALL:   - caller xfs_log_commit_cil, m_fdblocks = 13052023, tid = 0x6b6b6b6b, t_blk_res = 4294967288, t_blk_res_used = 0
+     kworker/2:4-11473 [002] 1526421959.075636: print:                xfs_mod_fdblocks: CALL:   - caller xfs_trans_unreserve_and_mod_sb, m_fdblocks = 13052023, delta = 4294967289, rsvd = 1
+     kworker/2:4-11473 [002] 1526421959.075681: print:                xfs_mod_fdblocks: - ALERT: xfs_mod_fdblocks (delta = 4294967289)
+     kworker/2:4-11473 [002] 1526421959.075682: print:                xfs_mod_fdblocks: xfs_mod_fdblocks+0x0 [xfs]
+
