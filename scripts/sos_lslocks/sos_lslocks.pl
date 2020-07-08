@@ -81,6 +81,19 @@ sub parse_mountinfo {
 	close($fh);
 }
 
+
+
+#1: OFDLCK ADVISORY  WRITE -1 ca:50:33554699 0 EOF
+#2: OFDLCK ADVISORY  READ  -1 00:09:6388338 0 EOF
+#3: OFDLCK ADVISORY  READ  -1 00:09:44068 0 EOF
+#4: OFDLCK ADVISORY  READ  -1 00:09:15070 0 EOF
+#5: FLOCK  ADVISORY  WRITE 1960 ca:50:147 0 EOF
+#6: OFDLCK ADVISORY  READ  -1 00:09:30530 0 EOF
+#8: FLOCK  ADVISORY  WRITE 1414 fd:00:163578468 0 EOF
+#9: OFDLCK ADVISORY  WRITE -1 ca:50:33554691 0 EOF
+#10: POSIX  ADVISORY  WRITE 876 00:14:22805 0 EOF
+#11: OFDLCK ADVISORY  WRITE -1 ca:50:33554693 0 EOF
+
 sub parse_locks {
 	open(my $fh, "proc/locks") or die("Could not open proc/locks");
 	my $i = 0;
@@ -93,7 +106,7 @@ sub parse_locks {
 			$line = sprintf("%s %s", $1, $2);
 		}
 
-		if ($line =~ /^([0-9]+): (FLOCK|POSIX)  (ADVISORY |MANDATORY|MSNFS    |[^ ]+) (READ |WRITE|NONE ) ([0-9]+) ([0-9a-f]+):([0-9a-f]+):([0-9]+) ([0-9]+) ([0-9]+|EOF)/) {
+		if ($line =~ /^([0-9]+): (FLOCK |POSIX |OFDLCK) (ADVISORY |MANDATORY|MSNFS    |[^ ]+) (READ |WRITE|NONE ) ([-0-9]+) ([0-9a-f]+):([0-9a-f]+):([0-9]+) ([0-9]+) ([0-9]+|EOF)/) {
 			my $lk_num = $1;
 			my $lk_desc = sprintf("%s:%s", $2, $3);
 			my $lk_type = $4;
@@ -174,6 +187,8 @@ sub parse_lsof {
 	my $hdr = <$fh>;
 
 	my $has_tid = 0;
+
+	return if (!defined($hdr));
 
 	if ($hdr =~ /^COMMAND\s+PID\s+TID\s+USER\s+FD\s+TYPE\s+DEVICE\s+SIZE\/OFF\s+NODE\s+NAME$/) {
 		$has_tid = 1;
