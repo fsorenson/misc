@@ -1,0 +1,9 @@
+SECTIONS {
+	test1 : {
+		__start_test1 = . ;
+		*(test1)
+		__stop_test1 = . ;
+		test1_size = (__start_test1 - __stop_test1) ;
+	}
+}
+
