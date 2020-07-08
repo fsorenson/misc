@@ -1,0 +1,397 @@
+%{
+
+#undef MAXSTRINGLEN
+#define MAXSTRINGLEN 2048
+
+#undef MAXMAPENTRIES
+#define MAXMAPENTRIES 16384
+
+
+#include <linux/kernel.h>
+#include <linux/percpu_counter.h>
+
+#if 0
+#ifndef trace_puts
+#define trace_puts(str) ({                                              \
+        static const char *trace_printk_fmt                             \
+                __attribute__((section("__trace_printk_fmt"))) =        \
+                __builtin_constant_p(str) ? str : NULL;                 \
+                                                                        \
+        if (__builtin_constant_p(str))                                  \
+                __trace_bputs(_THIS_IP_, trace_printk_fmt);             \
+        else                                                            \
+                __trace_puts(_THIS_IP_, str, strlen(str));              \
+})
+
+#endif
+#endif
+
+%}
+
+#global major=253
+#global minor=48
+#global limit_majmin=1
+
+function majmin(dev) {
+#	if (limit_majmin)
+		return (dev == MKDEV(253, 48))
+//		return (dev == MKDEV(major, minor))
+#		return (MAJOR(dev) == major && MINOR(dev) == minor)
+#	return 1
+}
+
+
+function my_trace_puts:long(addr:long, msg:string) %{
+	unsigned long addr = (unsigned long)STAP_ARG_addr;
+	char *msg = (char *)STAP_ARG_msg;
+	int len = strlen(msg);
+	__trace_puts(addr, msg, len);
+	STAP_RETVALUE = 0;
+%}
+
+
+@define my_trace_puts(msg) %( { my_trace_puts(addr(), @msg) } %)
+@define my_trace_puts_call(msg) %( { my_trace_puts(addr(), sprintf("CALL:   - caller %s, %s", symname(caller_addr()), @msg)) } %)
+@define my_trace_puts_return(msg) %( { my_trace_puts(@entry(addr()), sprintf("RETURN: - %s", @msg)) } %)
+
+
+
+function percpu_counter_sum:long(addr:long) %{
+	struct percpu_counter *fbc = (struct percpu_counter *)STAP_ARG_addr;
+	s64 ret;
+
+	ret = percpu_counter_sum(fbc);
+	STAP_RETVALUE = ret;
+%}
+
+@define percpu_sum_mp(mp) %( percpu_counter_sum(&@cast(@mp, "struct xfs_mount", "xfs")->m_fdblocks) %)
+
+@define trace_msg_entry(msg) %( @my_trace_puts_call(@msg) %)
+@define trace_msg(msg) %( @my_trace_puts(@msg) %)
+@define trace_msg_return(msg) %( @my_trace_puts_return(@msg) %)
+
+
+@define add_entry_probe(fname, mp) %(
+	probe module("xfs").function(@fname) {
+		if (majmin(@cast(@mp, "struct xfs_mount", "xfs")->m_super->s_dev)) {
+			@trace_msg_entry(sprintf("m_fdblocks = %ld", @percpu_sum_mp(@mp)))
+		}
+	}
+%)
+@define add_return_probe(fname, mp) %(
+	probe module("xfs").function(@fname).return {
+		if (majmin(@cast(@mp, "struct xfs_mount", "xfs")->m_super->s_dev)) {
+			@trace_msg_return(sprintf("m_fdblocks = %ld", @percpu_sum_mp(@mp)))
+		}
+	}
+%)
+@define add_probes(fname, mp) %(
+	@add_entry_probe(@fname, @mp)
+	@add_return_probe(@fname, @entry(@mp))
+%)
+
+
+/*
+# module("xfs").function("xfs_log_sb@fs/xfs/libxfs/xfs_sb.c:818") $tp:struct xfs_trans*
+probe module("xfs").function("xfs_log_sb") {
+	fdblocks = @percpu_sum_mp($tp->t_mountp)
+	@trace_msg_entry(sprintf("m_fdblocks = %d\n",
+		fdblocks))
+}
+# module("xfs").function("xfs_log_sb@fs/xfs/libxfs/xfs_sb.c:818").return $tp:struct xfs_trans*
+probe module("xfs").function("xfs_log_sb").return {
+	mountp = @entry($tp->t_mountp)
+#	fdblocks = percpu_counter_sum(&@cast(mountp, "struct xfs_mount", "xfs")->m_fdblocks)
+	fdblocks = @percpu_sum_mp(mountp)
+	@trace_msg_return(sprintf("sb_fdblocks = %d",
+		fdblocks))
+}
+*/
+@add_entry_probe("xfs_log_sb", $tp->t_mountp)
+#@add_return_probe("xfs_log_sb", @entry($tp->t_mountp))
+@add_entry_probe("xfs_log_done", $mp)
+#@add_return_probe("xfs_log_done", @entry($mp))
+
+
+#@add_entry_probe("xfs_trans_log_buf", $tp->t_mountp)
+probe module("xfs").function("xfs_trans_log_buf") {
+	if (majmin($tp->t_mountp->m_super->s_dev)) {
+		@trace_msg_entry(sprintf("m_fdblocks = %ld, tid = 0x%x, t_blk_res = %d, t_blk_res_used = %d",
+			@percpu_sum_mp($tp->t_mountp), $tp->t_ticket->t_tid, $tp->t_blk_res, $tp->t_blk_res_used))
+	}
+}
+
+#@add_return_probe("xfs_trans_log_buf", @entry($tp->t_mountp))
+
+/*
+@add_probes("xfs_trans_unreserve_and_mod_sb", $tp->t_mountp)
+*/
+
+probe module("xfs").function("xfs_trans_unreserve_and_mod_sb") {
+	if (majmin(@cast($tp->t_mountp, "struct xfs_mount", "xfs")->m_super->s_dev)) {
+		@trace_msg_entry(sprintf("m_fdblocks = %ld, t_tid = 0x%x, t_blk_res = %d, t_blk_res_used = %d, t_fdblocks_delta = %ld, t_rtx_res = %ld, t_frextents_delta = %ld, t_icount_delta = %ld",
+			@percpu_sum_mp($tp->t_mountp), $tp->t_ticket->t_tid, $tp->t_blk_res, $tp->t_blk_res_used, $tp->t_fdblocks_delta, $tp->t_rtx_res, $tp->t_frextents_delta, $tp->t_icount_delta))
+	}
+}
+#probe module("xfs").function("xfs_trans_unreserve_and_mod_sb").return {
+#	if (majmin(@cast(@entry($tp->t_mountp), "struct xfs_mount", "xfs")->m_super->s_dev)) {
+#		@trace_msg_return(sprintf("m_fdblocks = %ld", @percpu_sum_mp(@entry($tp->t_mountp))))
+#	}
+#}
+
+probe module("xfs").function("xfs_trans_mod_sb") {
+	if (majmin(@cast($tp->t_mountp, "struct xfs_mount", "xfs")->m_super->s_dev)) {
+		@trace_msg_entry(sprintf("m_fdblocks = %ld, t_tid = 0x%x, t_blk_res = %d, delta = %d, field = %d",
+			@percpu_sum_mp($tp->t_mountp), $tp->t_ticket->t_tid, $tp->t_blk_res, $delta, $field))
+	}
+}
+
+
+#@add_probes("xfs_mod_icount", $mp)
+#@add_probes("xfs_mod_ifree", $mp)
+#@add_probes("xfs_sb_mod64", $
+probe module("xfs").function("xfs_sb_mod64") {
+	@trace_msg(sprintf("%s (%d) %p = %d, delta = %ld\n",
+		execname(), pid(), $field, kernel_long($field), $delta))
+}
+#probe module("xfs").function("xfs_sb_mod64").return {
+#	@trace_msg(sprintf("%s (%d) field = %d, delta=%ld\n",
+#		execname(), pid(), kernel_long(@entry($field)), @entry($delta)))
+#}
+
+@add_entry_probe("xfs_log_reserve", $mp)
+probe module("xfs").function("xfs_log_reserve") {
+	if (majmin($mp->m_super->s_dev)) {
+		tic = &@cast(kernel_long($ticp), "struct xlog_ticket", "xfs")
+
+		@trace_msg_entry(sprintf("m_fdblocks = %ld, tid = 0x%x, t_curr_res = %d, t_unit_res = %d, need_bytes = %d, unit_bytes = %d, cnt = %d, permanent = %d",
+			@percpu_sum_mp($mp), tic->t_tid, tic->t_curr_res, tic->t_unit_res, $need_bytes, $unit_bytes, $cnt, $permanent))
+	}
+}
+#@add_return_probe("xfs_log_reserve", @entry($mp))
+
+#@add_entry_probe("xfs_log_regrant", $mp)
+probe module("xfs").function("xfs_log_regrant") {
+	if (majmin($mp->m_super->s_dev)) {
+		@trace_msg_entry(sprintf("m_fdblocks = %ld, tid = 0x%x, t_curr_res = %d, t_unit_res = %d, need_bytes = %d",
+			@percpu_sum_mp($mp), $tic->t_tid, $tic->t_curr_res, $tic->t_unit_res, $need_bytes))
+	}
+}
+#@add_return_probe("xfs_log_regrant", @entry($mp))
+
+@add_entry_probe("xlog_grant_head_check", $log->l_mp)
+#@add_return_probe("xlog_grant_head_check", @entry($log->l_mp))
+
+#@add_probes("xfs_log_commit_cil", $mp)
+probe module("xfs").function("xfs_log_commit_cil") {
+	if (majmin(@cast($tp->t_mountp, "struct xfs_mount", "xfs")->m_super->s_dev)) {
+
+
+
+		@trace_msg_entry(sprintf("m_fdblocks = %ld, tid = 0x%x, t_blk_res = %d, t_blk_res_used = %d, t_fdblocks_delta = %ld, t_rtx_res = %ld, t_frextents_delta = %ld, t_icount_delta = %ld",
+			@percpu_sum_mp($tp->t_mountp), $tp->t_ticket->t_tid, $tp->t_blk_res, $tp->t_blk_res_used, $tp->t_fdblocks_delta, $tp->t_rtx_res, $tp->t_frextents_delta, $tp->t_icount_delta))
+	}
+}
+#probe module("xfs").function("xfs_log_commit_cil").return {
+#	if (majmin(@cast(@entry($tp->t_mountp), "struct xfs_mount", "xfs")->m_super->s_dev)) {
+#		@trace_msg_return(sprintf("m_fdblocks = %ld", @percpu_sum_mp(@entry($tp->t_mountp))))
+#	}
+#}
+
+
+#@add_probes("xfs_trans_commit", $tp->t_mountp)
+probe module("xfs").function("xfs_trans_commit") {
+	if (majmin(@cast($tp->t_mountp, "struct xfs_mount", "xfs")->m_super->s_dev)) {
+
+		@trace_msg_entry(sprintf("m_fdblocks = %ld, tid = 0x%x, t_blk_res = %d, t_blk_res_used = %d, t_fdblocks_delta = %ld, t_rtx_res = %ld, t_frextents_delta = %ld, t_icount_delta = %ld",
+			@percpu_sum_mp($tp->t_mountp), $tp->t_ticket->t_tid, $tp->t_blk_res, $tp->t_blk_res_used, $tp->t_fdblocks_delta, $tp->t_rtx_res, $tp->t_frextents_delta, $tp->t_icount_delta))
+
+
+#		printf("xfs_trans_commit...  backtrace:\n")
+#		print_backtrace()
+	}
+}
+#probe module("xfs").function("xfs_trans_commit").return {
+#	if (majmin(@cast(@entry($tp->t_mountp), "struct xfs_mount", "xfs")->m_super->s_dev)) {
+#		@trace_msg_return(sprintf("m_fdblocks = %ld", @percpu_sum_mp(@entry($tp->t_mountp))))
+#	}
+#}
+
+
+
+#@add_entry_probe("__xfs_trans_commit", $tp->t_mountp)
+probe module("xfs").function("__xfs_trans_commit") {
+	if (majmin($tp->t_mountp->m_super->s_dev)) {
+		@trace_msg_entry(sprintf("m_fdblocks = %ld, tid = 0x%x, t_blk_res = %d, t_blk_res_used = %d, t_fdblocks_delta = %ld, t_rtx_res = %ld, t_frextents_delta = %ld, t_icount_delta = %ld",
+
+			@percpu_sum_mp($tp->t_mountp), $tp->t_ticket->t_tid, $tp->t_blk_res, $tp->t_blk_res_used, $tp->t_fdblocks_delta, $tp->t_rtx_res, $tp->t_frextents_delta, $tp->t_icount_delta))
+
+	}
+}
+#@add_return_probe("__xfs_trans_commit", @entry($tp->t_mountp))
+
+@add_entry_probe("xfs_trans_cancel", $tp->t_mountp)
+#@add_return_probe("xfs_trans_cancel", @entry($tp->t_mountp))
+
+@add_entry_probe("xfs_end_io_direct_write", $iocb->ki_filp->f_inode->i_sb->s_fs_info)
+#@add_return_probe("xfs_end_io_direct_write", @entry($iocb->ki_filp->f_inode->i_sb->s_fs_info))
+#@add_probes("xfs_end_io_direct_write", $iocb->ki_filp->f_path.dentry.d_sb->s_fs_info)
+
+@add_entry_probe("xfs_file_dio_aio_write", $ip->i_mount)
+#@add_return_probe("xfs_file_dio_aio_write", @entry($ip->i_mount))
+
+
+
+#@add_probes("xfs_iomap_write_unwritten", $ip->i_mount)
+probe module("xfs").function("xfs_iomap_write_unwritten") {
+#	if (majmin(@cast($tp->t_mountp, "struct xfs_mount", "xfs")->m_super->s_dev)) {
+	if (majmin($tp->t_mountp->m_super->s_dev)) {
+#		t_fdblocks_delta = $tp->t_fdblocks_delta
+#		t_rtx_res = $tp->t_rtx_res
+#		t_frextents_delta = $tp->t_frextents_delta
+#		t_icount_delta = $tp->t_icount_delta
+
+		@trace_msg_entry(sprintf("m_fdblocks = %ld, tid = 0x%x, t_blk_res = %d, t_blk_res_used = %d, t_fdblocks_delta = %ld, t_rtx_res = %ld, t_frextents_delta = %ld, t_icount_delta = %ld, offset = %d, count = %d",
+			@percpu_sum_mp($tp->t_mountp), $tp->t_ticket->t_tid, $tp->t_blk_res, $tp->t_blk_res_used, $tp->t_fdblocks_delta, $tp->t_rtx_res, $tp->t_frextents_delta, $tp->t_icount_delta, $offset, $count))
+	}
+}
+
+
+
+#@add_probes("xfs_perag_get", $mp)
+#@add_probes("xfs_perag_put", $pag->pag_mount)
+
+/*
+probe module("xfs").function("xfs_mod_fdblocks") {
+	@trace_msg_entry(sprintf("m_fdblocks = %d", @percpu_sum_mp($mp)))
+}
+probe module("xfs").function("xfs_mod_fdblocks").return {
+	@trace_msg_return(sprintf("m_fdblocks = %d", @percpu_sum_mp(@entry($mp))))
+}
+*/
+//@add_probes("xfs_mod_fdblocks", $mp)
+
+probe module("xfs").function("xfs_mod_fdblocks") {
+	if (majmin(@cast($mp, "struct xfs_mount", "xfs")->m_super->s_dev)) {
+		fdblocks = @percpu_sum_mp($mp)
+
+		@trace_msg_entry(sprintf("m_fdblocks = %d, delta = %d, rsvd = %d",
+			fdblocks, $delta, $rsvd))
+
+		if ($delta >= 0x0fff00000) {
+			@my_trace_puts(sprintf("- ALERT: %s (delta = %d)\n",
+				ppfunc(), $delta))
+			@my_trace_puts(sprint_backtrace())
+
+			printf("%s (%d) %s(m_fdblocks = %d, delta = %d, rsvd = %d\n",
+				execname(), pid(), ppfunc(), fdblocks, $delta, $rsvd)
+
+			print_backtrace()
+		}
+	}
+}
+
+#probe module("xfs").function("xfs_mod_fdblocks").return {
+#	mp = @entry($mp)
+#	if (majmin(@cast(mp, "struct xfs_mount", "xfs")->m_super->s_dev)) {
+#		@trace_msg_return(sprintf("m_fdblocks = %d, delta = %d, rsvd = %d",
+#			@percpu_sum_mp(mp), @entry($delta), @entry($rsvd)))
+#	}
+#}
+
+#@add_probes("xfs_ilock", $ip->i_mount)
+#@add_probes("xfs_iunlock", $ip->i_mount)
+
+#@add_entry_probe("xlog_grant_push_ail", $log->l_mp)
+probe module("xfs").function("xlog_grant_push_ail") {
+	if (majmin($log->l_mp->m_super->s_dev)) {
+		@trace_msg_entry(sprintf("m_fdblocks = %d, need_bytes = %d",
+			@percpu_sum_mp($log->l_mp), $need_bytes))
+	}
+}
+#@add_return_probe("xlog_grant_push_ail", @entry($log->l_mp))
+
+probe module("xfs").function("xfs_trans_brelse") {
+	if (majmin($tp->t_mountp)) {
+		@trace_msg_entry(sprintf("tid = 0x%x, t_blk_res = %d, t_blk_res_used = %d",
+			$tp->t_ticket->t_tid, $tp->t_blk_res, $tp->t_blk_res_used))
+	}
+}
+
+
+#@add_entry_probe("xlog_regrant_reserve_log_space", $log->l_mp)
+probe module("xfs").function("xlog_regrant_reserve_log_space") {
+	if (majmin($log->l_mp->m_super->s_dev)) {
+		@trace_msg_entry(sprintf("m_fdblocks = %d, tid = 0x%x, t_curr_res = %d, t_unit_res = %d",
+			@percpu_sum_mp($log->l_mp), $ticket->t_tid, $ticket->t_curr_res, $ticket->t_unit_res))
+	}
+}
+#@add_return_probe("xlog_regrant_reserve_log_space", @entry($log->l_mp))
+
+
+#@add_probes("xlog_ungrant_log_space", $log->l_mp)
+probe module("xfs").function("xlog_ungrant_log_space") {
+	if (majmin(@cast($log->l_mp, "struct xfs_mount", "xfs")->m_super->s_dev)) {
+
+		@trace_msg_entry(sprintf("m_fdblocks = %d, tid = 0x%x, t_curr_res = %d, t_unit_res = %ld",
+			@percpu_sum_mp($log->l_mp), $ticket->t_tid, $ticket->t_curr_res, $ticket->t_unit_res))
+	}
+}
+
+
+
+probe module("xfs").function("xfs_trans_reserve") {
+	if (majmin($tp->t_mountp->m_super->s_dev)) {
+		@trace_msg_entry(sprintf("m_fdblocks = %d, tid = 0x%x, blocks = %d, t_blk_res = %d, t_blk_res_used = %d",
+			@percpu_sum_mp($tp->t_mountp), $tp->t_ticket->t_tid, $blocks, $tp->t_blk_res, $tp->t_blk_res_used))
+		if ($tp->t_blk_res >= 0x0fff00000) {
+			printf("t_blk_res is bogus:\n");
+			print_backtrace()
+		}
+	}
+}
+
+probe module("xfs").function("xfs_trans_dup") {
+	if (majmin($tp->t_mountp->m_super->s_dev)) {
+		@trace_msg_entry(sprintf("m_fdblocks = %d, tid = 0x%x, t_blk_res = %d, t_blk_res_used = %d",
+			@percpu_sum_mp($tp->t_mountp), $tp->t_ticket->t_tid, $tp->t_blk_res, $tp->t_blk_res_used))
+		if ($tp->t_blk_res_used < 0) {
+			printf("%s (%d): t_blk_res_used is negative in %s: %d\n", execname(), pid(), ppfunc(), $tp->t_blk_res_used)
+			print_backtrace()
+		}
+	}
+}
+probe module("xfs").function("xfs_trans_roll") {
+	tp = &@cast(kernel_long($tpp), "struct xfs_trans", "xfs")
+	if (majmin(tp->t_mountp->m_super->s_dev)) {
+		@trace_msg_entry(sprintf("m_fdblocks = %d, tid = 0x%x, t_blk_res = %d, t_blk_res_used = %d",
+			@percpu_sum_mp(tp->t_mountp), tp->t_ticket->t_tid, tp->t_blk_res, tp->t_blk_res_used))
+		printf("xfs_trans_roll backtrace:\n")
+		print_backtrace()
+	}
+}
+probe module("xfs").function("__xfs_trans_roll") {
+	tp = &@cast(kernel_long($tpp), "struct xfs_trans", "xfs")
+	if (majmin(tp->t_mountp->m_super->s_dev)) {
+		@trace_msg_entry(sprintf("m_fdblocks = %d, tid = 0x%x, t_blk_res = %d, t_blk_res_used = %d",
+			@percpu_sum_mp(tp->t_mountp), tp->t_ticket->t_tid, tp->t_blk_res, tp->t_blk_res_used))
+	}
+}
+
+
+
+
+
+#@trace_msg_entry(sprintf("m_fdblocks = %d, delta = %d, rsvd = %d",
+#	@percpu_sum_mp($mp), $delta, $rsvd)
+
+@add_probes("xfs_fs_statfs", $dentry->d_sb->s_fs_info)
+
+
+
+probe begin {
+	@trace_msg("stap starting up")
+}
+probe end {
+	@trace_msg("stap exiting")
+}
