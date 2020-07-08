@@ -1,0 +1,10 @@
+SECTIONS
+{
+	.functions : {
+		functions_start = . ;
+		*(.functions)
+		functions_stop = . ;
+		functions_size = (functions_start - functions_stop) ;
+	}
+}
+
