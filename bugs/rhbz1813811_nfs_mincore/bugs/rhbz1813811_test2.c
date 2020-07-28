@@ -158,6 +158,96 @@ void check_path_mincore(char *path, int len) {
 	munmap(map, len);
 	close(fd);
 }
+void do_one_test2(char *buf, char *path, int test_size) {
+	char *map;
+	int fd;
+
+	printf("  open()\n");
+	fd = open(path, O_RDONLY);
+
+	printf("    file: ");
+	check_path_mincore(path, test_size);
+
+	printf("  mmap()\n");
+	map = mmap(NULL, test_size, PROT_READ, MAP_SHARED, fd, 0);
+
+	printf("    file: ");
+	check_path_mincore(path, test_size);
+	printf("    map:  ");
+	check_mem_mincore(map, test_size);
+
+
+	printf("  flock(LOCK_SH)\n");
+	flock(fd, LOCK_SH);
+/*
+	printf("    map:  ");
+	check_mem_mincore(map, test_size);
+	printf("  memcpy(map => buffer)\n");
+	memcpy(buf, map, test_size);
+	printf("    file: ");
+	check_path_mincore(path, test_size);
+	printf("    map:  ");
+	check_mem_mincore(map, test_size);
+
+
+	printf("  flock(LOCK_UN)\n");
+*/
+	flock(fd, LOCK_UN);
+	printf("    file: ");
+	check_path_mincore(path, test_size);
+	printf("    map:  ");
+//	check_mem_mincore(path, test_size);
+	check_mem_mincore(map, test_size);
+
+	printf("  close()\n");
+	close(fd);
+	printf("    file: ");
+	check_path_mincore(path, test_size);
+	printf("    map:  ");
+	check_mem_mincore(map, test_size);
+
+	printf("  munmap()\n");
+	munmap(map, test_size);
+
+
+
+/*
+
+	int i;
+	printf("  trying some other stuff\n");
+	fd = open(path, O_RDONLY);
+	for (i = 0 ; i < 10 ; i++) {
+
+		printf("  %d:\n", i);
+//		printf("    file: ");
+//		check_path_mincore(path, test_size);
+
+//		printf("  mmap()\n");
+		map = mmap(NULL, test_size, PROT_READ, MAP_SHARED, fd, 0);
+		printf("    ");
+		check_path_mincore(path, test_size);
+
+		mlock(map, test_size);
+		flock(fd, LOCK_SH);
+		flock(fd, LOCK_UN);
+		munlock(map, test_size);
+
+
+		munmap(map, test_size);
+		printf("    after unmap\n");
+		printf("    ");
+		check_path_mincore(path, test_size);
+
+	}
+	close(fd);
+*/
+
+
+	printf("    file: ");
+	check_path_mincore(path, test_size);
+
+
+}
 void do_one_test(char *buf, char *path, int test_size) {
 	char *map;
 	int fd;
@@ -228,30 +318,25 @@ void do_one_test(char *buf, char *path, int test_size) {
 
 	printf("  flock(LOCK_SH)\n");
 	flock(fd, LOCK_SH);
-	if (0) {
-		printf("    file: ");
-		check_path_mincore(path, test_size);
-	} else {
-		printf("    file: DISABLED - if enabled:\n");
-		printf("      upstream: no new effect\n");
-		printf("      RHEL 7.x: test will always pass\n");
-	}
+/*
 	printf("    map:  ");
 	check_mem_mincore(map, test_size);
-
+*/
 	printf("  memcpy(map => buffer)\n");
 	memcpy(buf, map, test_size);
+/*
 	printf("    file: ");
 	check_path_mincore(path, test_size);
 	printf("    map:  ");
 	check_mem_mincore(map, test_size);
-
+*/
 
 	printf("  flock(LOCK_UN)\n");
 	flock(fd, LOCK_UN);
 	printf("    file: ");
 	check_path_mincore(path, test_size);
 	printf("    map:  ");
+//	check_mem_mincore(path, test_size);
 	check_mem_mincore(map, test_size);
 
 	printf("  close()\n");
@@ -263,10 +348,41 @@ void do_one_test(char *buf, char *path, int test_size) {
 
 	printf("  munmap()\n");
 	munmap(map, test_size);
+/*
 
+	int i;
+	printf("  trying some other stuff\n");
+	fd = open(path, O_RDONLY);
+	for (i = 0 ; i < 10 ; i++) {
+
+		printf("  %d:\n", i);
+//		printf("    file: ");
+//		check_path_mincore(path, test_size);
+
+//		printf("  mmap()\n");
+		map = mmap(NULL, test_size, PROT_READ, MAP_SHARED, fd, 0);
+		printf("    ");
+		check_path_mincore(path, test_size);
+
+		mlock(map, test_size);
+		flock(fd, LOCK_SH);
+		flock(fd, LOCK_UN);
+		munlock(map, test_size);
+
+
+		munmap(map, test_size);
+		printf("    after unmap\n");
+		printf("    ");
+		check_path_mincore(path, test_size);
+
+	}
+	close(fd);
+*/
+
+/*
 	printf("    file: ");
 	check_path_mincore(path, test_size);
-
+*/
 
 }
 void create_file(char *path, int test_size) {
@@ -307,16 +423,69 @@ int main(int argc, char *argv[]) {
 
 	create_file(path, test_size);
 
+int fd1, fd2;
+char *map1, *map2;
+char *buf1, *buf2;
+
+fd1 = open(path, O_RDONLY);
+fd2 = open(path, O_RDONLY);
+
+map1 = mmap(NULL, test_size, PROT_READ, MAP_SHARED, fd1, 0);
+map2 = mmap(NULL, test_size, PROT_READ, MAP_SHARED, fd2, 0);
+buf1 = malloc(test_size);
+buf2 = malloc(test_size);
+
+memcpy(buf1, map1, test_size);
+
+printf("mincore map1: ");
+check_mem_mincore(map1, test_size);
+//printf("mincore map2: ");
+//check_mem_mincore(map2, test_size);
+
 	for (i = 0 ; i++ < loop_count ; ) {
 		printf("loop %d\n", i);
 
-		do_one_test(buf, path, test_size);
+/*
+fd2 = open(path, O_RDONLY);
+map2 = mmap(NULL, test_size, PROT_READ, MAP_SHARED, fd2, 0);
+*/
+
+
+flock(fd2, LOCK_SH);
+memcpy(buf2, map2, test_size);
+flock(fd2, LOCK_UN);
+
+
+
+//		do_one_test(buf, path, test_size);
+
+printf("*** current in-core status of existing map: \n");
+//printf("*** file: ");
+//check_path_mincore(path, test_size);
+printf("*** map1:  ");
+check_mem_mincore(map1, test_size);
+printf("*** map2:  ");
+check_mem_mincore(map2, test_size);
+
+/*
+close(fd2);
+munmap(map2, test_size);
+*/
+
+printf("*** file: ");
+check_path_mincore(path, test_size);
+
 
 		if (i < loop_count)
 			printf("\n");
 	}
 	free(buf);
 	munmap(random_statebuf, RANDOM_STATEBUF_SIZE);
+
+munmap(map1, test_size);
+close(fd1);
+
+
 
 	return EXIT_SUCCESS;
 }
