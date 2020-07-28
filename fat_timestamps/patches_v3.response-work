@@ -1,0 +1,53 @@
+
+Looks like basically very good, however there are some issues.  Those
+small stuff would be easier to tell as patch, instead of commenting
+inline.
+
+Please check the following patch and comment of it. Only noticeable one
+is atime bug (6 in comment), looks like it is only missed to test well,
+and need to re-test (in my quick test, looks works with this patch).
+
+Other stuff are tweaks and optimizations basically.
+
+Thanks.
+
+
+[PATCH] fat: Fix/cleanup FAT timestamp works
+
+
+1) Move SECS_PER_* family to misc.c, only used in misc.c
+
+2) Don't use fat_update_time() to replace mark_inode_dirty(),
+mark_inode_dirty_sync() and mark_inode_dirty() are different.
+
+3) Set sb->s_time_gran, we use this only for ctime in vfat mode. So
+nothing benefit to add additional overhead to get current time.
+
+Instead, just truncate ctime manually.
+
+4) Add i_version support to update_time(). FAT doesn't support
+i_version, but user still can set it.
+
+5) Make sure to use 64bits wide to mask 2secs (i.e. ~1ULL, instead ~1)
+
+6) Fix atime bug
+
+    - on 32bit arch, have to use div64 stuff
+    - missing to back to unix time after converting localtime
+
+7) Remove needless noinline. gcc should be able to choice to inline it
+or not, without any issue.
+
+Signed-off-by: OGAWA Hirofumi <hirofumi@mail.parknet.co.jp>
+---
+
+ fs/fat/fat.h         |   12 ------------
+ fs/fat/file.c        |    3 ++-
+ fs/fat/inode.c       |   11 ++++++++---
+ fs/fat/misc.c        |   45 ++++++++++++++++++++++++++++++++++-----------
+ fs/fat/namei_msdos.c |    4 ++--
+ fs/fat/namei_vfat.c  |    4 ++--
+ 6 files changed, 48 insertions(+), 31 deletions(-)
+
+
+OGAWA Hirofumi <hirofumi@mail.parknet.co.jp>

@@ -1,0 +1,39 @@
+From 32edbd083b42c6df80f42b05b332a402918d0480 Mon Sep 17 00:00:00 2001
+From: Frank Sorenson <sorenson@redhat.com>
+Date: Wed, 26 Sep 2018 17:06:56 -0500
+Subject: [PATCH V4 4/4] fat: truncate inode timestamp updates in setattr
+
+setattr_copy can't truncate timestamps correctly for
+msdos/vfat, so truncate and copy them ourselves.
+
+Signed-off-by: Frank Sorenson <sorenson@redhat.com>
+---
+ fs/fat/file.c | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/fs/fat/file.c b/fs/fat/file.c
+index 4b5438405415..13935ee99e1e 100644
+--- a/fs/fat/file.c
++++ b/fs/fat/file.c
+@@ -542,6 +542,18 @@ int fat_setattr(struct dentry *dentry, struct iattr *attr)
+ 		up_write(&MSDOS_I(inode)->truncate_lock);
+ 	}
+ 
++	/*
++	 * setattr_copy can't truncate these appropriately, so we'll
++	 * copy them ourselves
++	 */
++	if (attr->ia_valid & ATTR_ATIME)
++		fat_truncate_time(inode, &attr->ia_atime, S_ATIME);
++	if (attr->ia_valid & ATTR_CTIME)
++		fat_truncate_time(inode, &attr->ia_ctime, S_CTIME);
++	if (attr->ia_valid & ATTR_MTIME)
++		fat_truncate_time(inode, &attr->ia_mtime, S_MTIME);
++	attr->ia_valid &= ~(ATTR_ATIME|ATTR_CTIME|ATTR_MTIME);
++
+ 	setattr_copy(inode, attr);
+ 	mark_inode_dirty(inode);
+ out:
+-- 
+2.14.4
+

@@ -1,0 +1,37 @@
+From b6385c9904a79bc5fe0d2550ef21e06376d45558 Mon Sep 17 00:00:00 2001
+From: Frank Sorenson <sorenson@redhat.com>
+Date: Sat, 22 Sep 2018 14:54:07 -0500
+Subject: [PATCH V3 0/4] fat: timestamp updates
+
+vfat/msdos timestamps are stored on-disk with several different
+granularities, some of them lower resolution than timespec_trunc()
+can provide.  In addition, they are only truncated as they are
+written to disk, so the timestamps in-memory for new or modified
+files/directories may be different from the same timestamps after
+a remount, as the now-truncated times are re-read from the on-disk
+format.
+
+These patches allow finer granularity for the timestamps where
+possible and add fat-specific ->update_time inode operation and
+fat_truncate_time functions to truncate each timestamp correctly,
+giving consistent times across remounts.
+
+
+Frank Sorenson (4):
+  fat: set the s_time_gran for msdos or vfat mounts
+  fat: create function to calculate timezone offset
+  fat: add functions to update and truncate the timestamps appropriately
+  fat: change timestamp updates to fat_update_time or fat_truncate_time
+
+ fs/fat/dir.c         |  2 +-
+ fs/fat/fat.h         | 14 ++++++++++
+ fs/fat/file.c        | 18 ++++++++++---
+ fs/fat/inode.c       |  6 ++---
+ fs/fat/misc.c        | 74 +++++++++++++++++++++++++++++++++++++++++++++-------
+ fs/fat/namei_msdos.c | 17 ++++++------
+ fs/fat/namei_vfat.c  | 15 ++++++-----
+ 7 files changed, 114 insertions(+), 32 deletions(-)
+
+-- 
+2.13.6
+

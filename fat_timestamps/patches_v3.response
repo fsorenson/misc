@@ -1,0 +1,376 @@
+Delivered-To: fsorenso@gapps.redhat.com
+Received: by 2002:a4a:458f:0:0:0:0:0 with SMTP id y137-v6csp805755ooa;
+        Sun, 23 Sep 2018 03:31:52 -0700 (PDT)
+X-Google-Smtp-Source: ACcGV61KIcLRiB5rHbYiwVnOHQLGjuwSRAYvfJJcqFm+pdLYvqvQV6pr+DpzSJHewGi7DqAWxnaH
+X-Received: by 2002:ac8:232b:: with SMTP id a40-v6mr3808837qta.40.1537698712067;
+        Sun, 23 Sep 2018 03:31:52 -0700 (PDT)
+ARC-Seal: i=1; a=rsa-sha256; t=1537698712; cv=none;
+        d=google.com; s=arc-20160816;
+        b=iSq80X8r7A4EjWNs96IsOq0Z6nWiP1L5rwZulVT5f2HNi0AievImztvx5Q/2WCi47a
+         IJIA2VoN44fWLRN1A+SgV1W100o2ry5gGTgvsVToO04ATiOz/s7QknV682HhXPPTktyM
+         ovv/DPnwbAIRR7WODnvWER82lb1Co+ZDpMx4+HH9Jw1taujTCJygnrLB6vShm/I92BPi
+         8sXPreuLipyxGcvbsqMVrde9PBTaButRE3cp4xp/pVNRdIwy9eGFYg3nqolBCRcgJs/K
+         I532YNaF7j6rXB2QBht8HuVX+IFK5CdkCz6YqOXdobGJHhMbtGGuSyittwvhbdXGReDn
+         Lhuw==
+ARC-Message-Signature: i=1; a=rsa-sha256; c=relaxed/relaxed; d=google.com; s=arc-20160816;
+        h=mime-version:user-agent:message-id:in-reply-to:date:references
+         :subject:cc:to:from:delivered-to;
+        bh=aYVzkKB2krxWX3Mqd9d4Lsm7qzmfE+0B6jR4oWnSYKI=;
+        b=xQwu4xGIJykeSApqUJ6gsk3reBumYYghMcSe0maEFtfPELYDnrhNmTZbWLRWw7fwF9
+         4HwSrz4X/Nt8tuGQpgFQz32gvO4TDVoe1LlR7tWaY7d61R1tKVWYiDiF64tE1/RV6RKq
+         os2InXwlJOfy8M5F6VRDsxoy3yjO3CJapCPsO5QUQaniksdMWJQLcxIEk77ZDUPAIwT3
+         CzjsZeNYhfxsK+F47JeQQT3BrAKb2sMf14sUJnVRhmB2b1NdegTC4Sco1dvBjjebnGQn
+         a/mdX+fmHuF9WXZ4qPjIQUztjoXRAAY9APuyYPm8h8Px85F7vLkXI/GE2PjmDJHcejX7
+         gQpw==
+ARC-Authentication-Results: i=1; mx.google.com;
+       spf=pass (google.com: domain of hirofumi@parknet.co.jp designates 210.171.160.6 as permitted sender) smtp.mailfrom=hirofumi@parknet.co.jp
+Return-Path: <hirofumi@parknet.co.jp>
+Received: from mx1.redhat.com (mx1.redhat.com. [209.132.183.28])
+        by mx.google.com with ESMTPS id j125-v6si1616896qkc.143.2018.09.23.03.31.51
+        for <fsorenso@gapps.redhat.com>
+        (version=TLS1_2 cipher=ECDHE-RSA-AES128-GCM-SHA256 bits=128/128);
+        Sun, 23 Sep 2018 03:31:51 -0700 (PDT)
+Received-SPF: pass (google.com: domain of hirofumi@parknet.co.jp designates 210.171.160.6 as permitted sender) client-ip=210.171.160.6;
+Authentication-Results: mx.google.com;
+       spf=pass (google.com: domain of hirofumi@parknet.co.jp designates 210.171.160.6 as permitted sender) smtp.mailfrom=hirofumi@parknet.co.jp
+Received: from smtp.corp.redhat.com (int-mx05.intmail.prod.int.phx2.redhat.com [10.5.11.15])
+	(using TLSv1.2 with cipher AECDH-AES256-SHA (256/256 bits))
+	(No client certificate requested)
+	by mx1.redhat.com (Postfix) with ESMTPS id 79B1D88313
+	for <fsorenso@gapps.redhat.com>; Sun, 23 Sep 2018 10:31:50 +0000 (UTC)
+Received: by smtp.corp.redhat.com (Postfix)
+	id 6F92D17C4F; Sun, 23 Sep 2018 10:31:50 +0000 (UTC)
+Delivered-To: sorenson@redhat.com
+Received: from mx1.redhat.com (ext-mx12.extmail.prod.ext.phx2.redhat.com [10.5.110.41])
+	by smtp.corp.redhat.com (Postfix) with ESMTPS id 62EB717C52
+	for <sorenson@redhat.com>; Sun, 23 Sep 2018 10:31:46 +0000 (UTC)
+Received: from mail.parknet.co.jp (mail.parknet.co.jp [210.171.160.6])
+	by mx1.redhat.com (Postfix) with ESMTP id 4FBDE308A94E
+	for <sorenson@redhat.com>; Sun, 23 Sep 2018 10:31:43 +0000 (UTC)
+Received: from ibmpc.myhome.or.jp (server.parknet.ne.jp [210.171.168.39])
+	by mail.parknet.co.jp (Postfix) with ESMTPSA id 1463315AF4D;
+	Sun, 23 Sep 2018 19:31:42 +0900 (JST)
+Received: from devron.myhome.or.jp (foobar@devron.myhome.or.jp [192.168.0.3])
+	by ibmpc.myhome.or.jp (8.15.2/8.15.2/Debian-11) with ESMTPS id w8NAVedA004310
+	(version=TLSv1.2 cipher=ECDHE-RSA-AES256-GCM-SHA384 bits=256 verify=NOT);
+	Sun, 23 Sep 2018 19:31:41 +0900
+Received: from devron.myhome.or.jp (foobar@localhost [127.0.0.1])
+	by devron.myhome.or.jp (8.15.2/8.15.2/Debian-12) with ESMTPS id w8NAVeMR030665
+	(version=TLSv1.2 cipher=ECDHE-RSA-AES256-GCM-SHA384 bits=256 verify=NOT);
+	Sun, 23 Sep 2018 19:31:40 +0900
+Received: (from hirofumi@localhost)
+	by devron.myhome.or.jp (8.15.2/8.15.2/Submit) id w8NAVejB030664;
+	Sun, 23 Sep 2018 19:31:40 +0900
+From: OGAWA Hirofumi <hirofumi@mail.parknet.co.jp>
+To: Frank Sorenson <sorenson@redhat.com>
+Cc: linux-fsdevel@vger.kernel.org
+Subject: Re: [PATCH V3 0/4] fat: timestamp updates
+References: <20180922201959.10477-1-sorenson@redhat.com>
+Date: Sun, 23 Sep 2018 19:31:39 +0900
+In-Reply-To: <20180922201959.10477-1-sorenson@redhat.com> (Frank Sorenson's
+	message of "Sat, 22 Sep 2018 15:19:55 -0500")
+Message-ID: <877ejcijxw.fsf@mail.parknet.co.jp>
+User-Agent: Gnus/5.13 (Gnus v5.13) Emacs/27.0.50 (gnu/linux)
+MIME-Version: 1.0
+Content-Type: text/plain
+X-Greylist: Sender passed SPF test, Sender IP whitelisted by DNSRBL, ACL 214 matched, not delayed by milter-greylist-4.5.16 (mx1.redhat.com [10.5.110.41]); Sun, 23 Sep 2018 10:31:44 +0000 (UTC)
+X-Greylist: inspected by milter-greylist-4.5.16 (mx1.redhat.com [10.5.110.41]); Sun, 23 Sep 2018 10:31:44 +0000 (UTC) for IP:'210.171.160.6' DOMAIN:'mail.parknet.co.jp' HELO:'mail.parknet.co.jp' FROM:'hirofumi@parknet.co.jp' RCPT:''
+X-RedHat-Spam-Score: -0.701  (RCVD_IN_DNSWL_LOW,SPF_PASS) 210.171.160.6 mail.parknet.co.jp 210.171.160.6 mail.parknet.co.jp <hirofumi@parknet.co.jp>
+X-Scanned-By: MIMEDefang 2.84 on 10.5.110.41
+X-Scanned-By: MIMEDefang 2.79 on 10.5.11.15
+X-Greylist: Sender IP whitelisted, not delayed by milter-greylist-4.5.16 (mx1.redhat.com [10.5.110.28]); Sun, 23 Sep 2018 10:31:50 +0000 (UTC)
+
+Frank Sorenson <sorenson@redhat.com> writes:
+
+> vfat/msdos timestamps are stored on-disk with several different
+> granularities, some of them lower resolution than timespec_trunc()
+> can provide.  In addition, they are only truncated as they are
+> written to disk, so the timestamps in-memory for new or modified
+> files/directories may be different from the same timestamps after
+> a remount, as the now-truncated times are re-read from the on-disk
+> format.
+>
+> These patches allow finer granularity for the timestamps where
+> possible and add fat-specific ->update_time inode operation and
+> fat_truncate_time functions to truncate each timestamp correctly,
+> giving consistent times across remounts.
+
+Looks like basically very good, however there are some issues.  Those
+small stuff would be easier to tell as patch, instead of commenting
+inline.
+
+Please check the following patch and comment of it. Only noticeable one
+is atime bug (6 in comment), looks like it is only missed to test well,
+and need to re-test (in my quick test, looks works with this patch).
+
+Other stuff are tweaks and optimizations basically.
+
+Thanks.
+
+
+[PATCH] fat: Fix/cleanup FAT timestamp works
+
+
+1) Move SECS_PER_* family to misc.c, only used in misc.c
+
+2) Don't use fat_update_time() to replace mark_inode_dirty(),
+mark_inode_dirty_sync() and mark_inode_dirty() are different.
+
+3) Set sb->s_time_gran, we use this only for ctime in vfat mode. So
+nothing benefit to add additional overhead to get current time.
+
+Instead, just truncate ctime manually.
+
+4) Add i_version support to update_time(). FAT doesn't support
+i_version, but user still can set it.
+
+5) Make sure to use 64bits wide to mask 2secs (i.e. ~1ULL, instead ~1)
+
+6) Fix atime bug
+
+    - on 32bit arch, have to use div64 stuff
+    - missing to back to unix time after converting localtime
+
+7) Remove needless noinline. gcc should be able to choice to inline it
+or not, without any issue.
+
+Signed-off-by: OGAWA Hirofumi <hirofumi@mail.parknet.co.jp>
+---
+
+ fs/fat/fat.h         |   12 ------------
+ fs/fat/file.c        |    3 ++-
+ fs/fat/inode.c       |   11 ++++++++---
+ fs/fat/misc.c        |   45 ++++++++++++++++++++++++++++++++++-----------
+ fs/fat/namei_msdos.c |    4 ++--
+ fs/fat/namei_vfat.c  |    4 ++--
+ 6 files changed, 48 insertions(+), 31 deletions(-)
+
+diff -puN fs/fat/fat.h~fat-timestamp-fix-tweaks fs/fat/fat.h
+--- linux/fs/fat/fat.h~fat-timestamp-fix-tweaks	2018-09-23 19:00:41.573501694 +0900
++++ linux-hirofumi/fs/fat/fat.h	2018-09-23 19:16:10.576363930 +0900
+@@ -412,18 +412,6 @@ void fat_msg(struct super_block *sb, con
+ 	 } while (0)
+ extern int fat_clusters_flush(struct super_block *sb);
+ extern int fat_chain_add(struct inode *inode, int new_dclus, int nr_cluster);
+-
+-#define SECS_PER_MIN    60
+-#define SECS_PER_HOUR   (60 * 60)
+-#define SECS_PER_DAY    (SECS_PER_HOUR * 24)
+-
+-static inline int fat_tz_offset(struct msdos_sb_info *sbi)
+-{
+-	return  (sbi->options.tz_set ?
+-		- sbi->options.time_offset :
+-		sys_tz.tz_minuteswest) * SECS_PER_MIN;
+-}
+-
+ extern void fat_time_fat2unix(struct msdos_sb_info *sbi, struct timespec64 *ts,
+ 			      __le16 __time, __le16 __date, u8 time_cs);
+ extern void fat_time_unix2fat(struct msdos_sb_info *sbi, struct timespec64 *ts,
+diff -puN fs/fat/file.c~fat-timestamp-fix-tweaks fs/fat/file.c
+--- linux/fs/fat/file.c~fat-timestamp-fix-tweaks	2018-09-23 19:00:41.574501693 +0900
++++ linux-hirofumi/fs/fat/file.c	2018-09-23 19:16:10.576363930 +0900
+@@ -227,7 +227,8 @@ static int fat_cont_expand(struct inode
+ 	if (err)
+ 		goto out;
+ 
+-	fat_update_time(inode, NULL, S_CTIME|S_MTIME);
++	fat_truncate_time(inode, NULL, S_CTIME|S_MTIME);
++	mark_inode_dirty(inode);
+ 	if (IS_SYNC(inode)) {
+ 		int err2;
+ 
+diff -puN fs/fat/inode.c~fat-timestamp-fix-tweaks fs/fat/inode.c
+--- linux/fs/fat/inode.c~fat-timestamp-fix-tweaks	2018-09-23 19:00:41.575501692 +0900
++++ linux-hirofumi/fs/fat/inode.c	2018-09-23 19:16:10.576363930 +0900
+@@ -244,8 +244,9 @@ static int fat_write_end(struct file *fi
+ 	if (err < len)
+ 		fat_write_failed(mapping, pos + len);
+ 	if (!(err < 0) && !(MSDOS_I(inode)->i_attrs & ATTR_ARCH)) {
++		fat_truncate_time(inode, NULL, S_CTIME|S_MTIME);
+ 		MSDOS_I(inode)->i_attrs |= ATTR_ARCH;
+-		fat_update_time(inode, NULL, S_CTIME|S_MTIME);
++		mark_inode_dirty(inode);
+ 	}
+ 	return err;
+ }
+@@ -563,7 +564,7 @@ int fat_fill_inode(struct inode *inode,
+ 				  de->cdate, de->ctime_cs);
+ 		fat_time_fat2unix(sbi, &inode->i_atime, 0, de->adate, 0);
+ 	} else
+-		fat_update_time(inode, &inode->i_mtime, S_ATIME|S_CTIME);
++		fat_truncate_time(inode, &inode->i_mtime, S_ATIME|S_CTIME);
+ 
+ 	return 0;
+ }
+@@ -1625,7 +1626,11 @@ int fat_fill_super(struct super_block *s
+ 	sb->s_magic = MSDOS_SUPER_MAGIC;
+ 	sb->s_op = &fat_sops;
+ 	sb->s_export_op = &fat_export_ops;
+-	sb->s_time_gran = isvfat ? 10000000 : 1000000000;
++	/*
++	 * timestamp is complex and truncated by fat itself, so we set
++	 * 1 here to be fast.
++	 */
++	sb->s_time_gran = 1;
+ 	mutex_init(&sbi->nfs_build_inode_lock);
+ 	ratelimit_state_init(&sbi->ratelimit, DEFAULT_RATELIMIT_INTERVAL,
+ 			     DEFAULT_RATELIMIT_BURST);
+diff -puN fs/fat/misc.c~fat-timestamp-fix-tweaks fs/fat/misc.c
+--- linux/fs/fat/misc.c~fat-timestamp-fix-tweaks	2018-09-23 19:00:41.576501690 +0900
++++ linux-hirofumi/fs/fat/misc.c	2018-09-23 19:16:10.542363973 +0900
+@@ -7,6 +7,7 @@
+  */
+ 
+ #include "fat.h"
++#include <linux/iversion.h>
+ 
+ /*
+  * fat_fs_error reports a file system problem that might indicate fa data
+@@ -170,6 +171,9 @@ int fat_chain_add(struct inode *inode, i
+  * time:  5 - 10: min	(0 -  59)
+  * time: 11 - 15: hour	(0 -  23)
+  */
++#define SECS_PER_MIN	60
++#define SECS_PER_HOUR	(60 * 60)
++#define SECS_PER_DAY	(SECS_PER_HOUR * 24)
+ /* days between 1.1.70 and 1.1.80 (2 leap days) */
+ #define DAYS_DELTA	(365 * 10 + 2)
+ /* 120 (2100 - 1980) isn't leap year */
+@@ -182,6 +186,13 @@ static long days_in_year[] = {
+ 	0,   0,  31,  59,  90, 120, 151, 181, 212, 243, 273, 304, 334, 0, 0, 0,
+ };
+ 
++static inline int fat_tz_offset(struct msdos_sb_info *sbi)
++{
++	return (sbi->options.tz_set ?
++		-sbi->options.time_offset :
++		sys_tz.tz_minuteswest) * SECS_PER_MIN;
++}
++
+ /* Convert a FAT time/date pair to a UNIX date (seconds since 1 1 70). */
+ void fat_time_fat2unix(struct msdos_sb_info *sbi, struct timespec64 *ts,
+ 		       __le16 __time, __le16 __date, u8 time_cs)
+@@ -255,6 +266,11 @@ void fat_time_unix2fat(struct msdos_sb_i
+ }
+ EXPORT_SYMBOL_GPL(fat_time_unix2fat);
+ 
++static inline struct timespec64 fat_timespec64_trunc_2secs(struct timespec64 ts)
++{
++	return (struct timespec64){ ts.tv_sec & ~1ULL, 0 };
++}
++
+ /*
+  * truncate the various times with appropriate granularity:
+  *   root inode:
+@@ -266,7 +282,7 @@ EXPORT_SYMBOL_GPL(fat_time_unix2fat);
+  *       vfat  - 10 milliseconds
+  *     atime - 24 hours (00:00:00 in local timezone)
+  */
+-noinline int fat_truncate_time(struct inode *inode, struct timespec64 *now, int flags)
++int fat_truncate_time(struct inode *inode, struct timespec64 *now, int flags)
+ {
+ 	struct msdos_sb_info *sbi = MSDOS_SB(inode->i_sb);
+ 	struct timespec64 ts;
+@@ -280,22 +296,24 @@ noinline int fat_truncate_time(struct in
+ 	}
+ 
+ 	if (flags & S_ATIME) {
+-		int offset = fat_tz_offset(sbi);
+-		long seconds;
+-
+-		seconds = now->tv_sec;
+-		seconds -= (now->tv_sec - offset) % 86400;
++		/* To localtime */
++		time64_t seconds = now->tv_sec - fat_tz_offset(sbi);
++		s32 remainder;
++		div_s64_rem(seconds, SECS_PER_DAY, &remainder);
++		/* To day boundary and back to unix time */
++		seconds = seconds + fat_tz_offset(sbi) - remainder;
+ 
+ 		inode->i_atime = (struct timespec64){ seconds, 0 };
+ 	}
+ 	if (flags & S_CTIME) {
+ 		if (sbi->options.isvfat)
+-			inode->i_ctime = *now;
++			inode->i_ctime = timespec64_trunc(*now, 10000000);
+ 		else
+-			inode->i_ctime = (struct timespec64){ now->tv_sec & ~1, 0 };
++			inode->i_ctime = fat_timespec64_trunc_2secs(*now);
+ 	}
+ 	if (flags & S_MTIME)
+-		inode->i_mtime = (struct timespec64){ now->tv_sec & ~1, 0 };
++		inode->i_mtime = fat_timespec64_trunc_2secs(*now);
++
+ 	return 0;
+ }
+ EXPORT_SYMBOL_GPL(fat_truncate_time);
+@@ -303,15 +321,20 @@ EXPORT_SYMBOL_GPL(fat_truncate_time);
+ int fat_update_time(struct inode *inode, struct timespec64 *now, int flags)
+ {
+ 	int iflags = I_DIRTY_TIME;
++	bool dirty = false;
+ 
+ 	if (inode->i_ino == MSDOS_ROOT_INO)
+ 		return 0;
+-	fat_truncate_time(inode, now, flags);
+ 
++	fat_truncate_time(inode, now, flags);
++	if (flags & S_VERSION)
++		dirty = inode_maybe_inc_iversion(inode, false);
+ 	if ((flags & (S_ATIME | S_CTIME | S_MTIME)) &&
+ 	    !(inode->i_sb->s_flags & SB_LAZYTIME))
+-		iflags |= I_DIRTY_SYNC;
++		dirty = true;
+ 
++	if (dirty)
++		iflags |= I_DIRTY_SYNC;
+ 	__mark_inode_dirty(inode, iflags);
+ 	return 0;
+ }
+diff -puN fs/fat/namei_msdos.c~fat-timestamp-fix-tweaks fs/fat/namei_msdos.c
+--- linux/fs/fat/namei_msdos.c~fat-timestamp-fix-tweaks	2018-09-23 19:00:41.576501690 +0900
++++ linux-hirofumi/fs/fat/namei_msdos.c	2018-09-23 19:16:10.492364035 +0900
+@@ -327,7 +327,7 @@ static int msdos_rmdir(struct inode *dir
+ 	drop_nlink(dir);
+ 
+ 	clear_nlink(inode);
+-	fat_update_time(inode, NULL, S_CTIME);
++	fat_truncate_time(inode, NULL, S_CTIME);
+ 	fat_detach(inode);
+ out:
+ 	mutex_unlock(&MSDOS_SB(sb)->s_lock);
+@@ -413,7 +413,7 @@ static int msdos_unlink(struct inode *di
+ 	if (err)
+ 		goto out;
+ 	clear_nlink(inode);
+-	fat_update_time(inode, NULL, S_CTIME);
++	fat_truncate_time(inode, NULL, S_CTIME);
+ 	fat_detach(inode);
+ out:
+ 	mutex_unlock(&MSDOS_SB(sb)->s_lock);
+diff -puN fs/fat/namei_vfat.c~fat-timestamp-fix-tweaks fs/fat/namei_vfat.c
+--- linux/fs/fat/namei_vfat.c~fat-timestamp-fix-tweaks	2018-09-23 19:00:41.577501689 +0900
++++ linux-hirofumi/fs/fat/namei_vfat.c	2018-09-23 19:16:10.492364035 +0900
+@@ -810,7 +810,7 @@ static int vfat_rmdir(struct inode *dir,
+ 	drop_nlink(dir);
+ 
+ 	clear_nlink(inode);
+-	fat_update_time(inode, NULL, S_ATIME|S_MTIME);
++	fat_truncate_time(inode, NULL, S_ATIME|S_MTIME);
+ 	fat_detach(inode);
+ 	vfat_d_version_set(dentry, inode_query_iversion(dir));
+ out:
+@@ -836,7 +836,7 @@ static int vfat_unlink(struct inode *dir
+ 	if (err)
+ 		goto out;
+ 	clear_nlink(inode);
+-	fat_update_time(inode, NULL, S_ATIME|S_MTIME);
++	fat_truncate_time(inode, NULL, S_ATIME|S_MTIME);
+ 	fat_detach(inode);
+ 	vfat_d_version_set(dentry, inode_query_iversion(dir));
+ out:
+_
+
+-- 
+OGAWA Hirofumi <hirofumi@mail.parknet.co.jp>

@@ -1,0 +1,180 @@
+From e3a1c1fbe111238d84061926525538f3f6808d5d Mon Sep 17 00:00:00 2001
+From: Frank Sorenson <sorenson@redhat.com>
+Date: Wed, 26 Sep 2018 16:58:46 -0500
+Subject: [PATCH V2 2/4] fat: add functions to update and truncate timestamps
+ appropriately
+
+Add the fat-specific inode_operation ->update_time() and
+fat_truncate_time() function to truncate the inode timestamps
+from 1 nanosecond to the appropriate granularity.
+
+Signed-off-by: Frank Sorenson <sorenson@redhat.com>
+---
+ fs/fat/fat.h         |  2 ++
+ fs/fat/file.c        |  1 +
+ fs/fat/inode.c       |  5 ++++
+ fs/fat/misc.c        | 75 ++++++++++++++++++++++++++++++++++++++++++++++++++++
+ fs/fat/namei_msdos.c |  1 +
+ fs/fat/namei_vfat.c  |  1 +
+ 6 files changed, 85 insertions(+)
+
+diff --git a/fs/fat/fat.h b/fs/fat/fat.h
+index 9d7d2d5da28b..3976a2fc787a 100644
+--- a/fs/fat/fat.h
++++ b/fs/fat/fat.h
+@@ -416,6 +416,8 @@ extern void fat_time_fat2unix(struct msdos_sb_info *sbi, struct timespec64 *ts,
+ 			      __le16 __time, __le16 __date, u8 time_cs);
+ extern void fat_time_unix2fat(struct msdos_sb_info *sbi, struct timespec64 *ts,
+ 			      __le16 *time, __le16 *date, u8 *time_cs);
++extern int fat_truncate_time(struct inode *inode, struct timespec64 *now, int flags);
++extern int fat_update_time(struct inode *inode, struct timespec64 *now, int flags);
+ extern int fat_sync_bhs(struct buffer_head **bhs, int nr_bhs);
+ 
+ int fat_cache_init(void);
+diff --git a/fs/fat/file.c b/fs/fat/file.c
+index 4f3d72fb1e60..19b6b0566411 100644
+--- a/fs/fat/file.c
++++ b/fs/fat/file.c
+@@ -552,4 +552,5 @@ EXPORT_SYMBOL_GPL(fat_setattr);
+ const struct inode_operations fat_file_inode_operations = {
+ 	.setattr	= fat_setattr,
+ 	.getattr	= fat_getattr,
++	.update_time	= fat_update_time,
+ };
+diff --git a/fs/fat/inode.c b/fs/fat/inode.c
+index d6b81e31f9f5..3bf60f19b6d3 100644
+--- a/fs/fat/inode.c
++++ b/fs/fat/inode.c
+@@ -1626,6 +1626,11 @@ int fat_fill_super(struct super_block *sb, void *data, int silent, int isvfat,
+ 	sb->s_magic = MSDOS_SUPER_MAGIC;
+ 	sb->s_op = &fat_sops;
+ 	sb->s_export_op = &fat_export_ops;
++	/*
++	 * fat timestamps are complex and truncated by fat itself, so
++	 * we set 1 here to be fast
++	 */
++	sb->s_time_gran = 1;
+ 	mutex_init(&sbi->nfs_build_inode_lock);
+ 	ratelimit_state_init(&sbi->ratelimit, DEFAULT_RATELIMIT_INTERVAL,
+ 			     DEFAULT_RATELIMIT_BURST);
+diff --git a/fs/fat/misc.c b/fs/fat/misc.c
+index 2eca073fe785..7eb2a756333f 100644
+--- a/fs/fat/misc.c
++++ b/fs/fat/misc.c
+@@ -7,6 +7,7 @@
+  */
+ 
+ #include "fat.h"
++#include <linux/iversion.h>
+ 
+ /*
+  * fat_fs_error reports a file system problem that might indicate fa data
+@@ -265,6 +266,81 @@ void fat_time_unix2fat(struct msdos_sb_info *sbi, struct timespec64 *ts,
+ }
+ EXPORT_SYMBOL_GPL(fat_time_unix2fat);
+ 
++static inline struct timespec64 fat_timespec64_trunc_2secs(struct timespec64 ts)
++{
++	return (struct timespec64){ ts.tv_sec & ~1ULL, 0 };
++}
++/*
++ * truncate the various times with appropriate granularity:
++ *   root inode:
++ *     all times always 0
++ *   all other inodes:
++ *     mtime - 2 seconds
++ *     ctime
++ *       msdos - 2 seconds
++ *       vfat  - 10 milliseconds
++ *     atime - 24 hours (00:00:00 in local timezone)
++ */
++int fat_truncate_time(struct inode *inode, struct timespec64 *now, int flags)
++{
++	struct msdos_sb_info *sbi = MSDOS_SB(inode->i_sb);
++	struct timespec64 ts;
++
++	if (inode->i_ino == MSDOS_ROOT_INO)
++	return 0;
++
++	if (now == NULL) {
++		now = &ts;
++		ts = current_time(inode);
++	}
++
++	if (flags & S_ATIME) {
++		/* to localtime */
++		time64_t seconds = now->tv_sec - fat_tz_offset(sbi);
++		s32 remainder;
++
++		div_s64_rem(seconds, SECS_PER_DAY, &remainder);
++		/* to day boundary, and back to unix time */
++		seconds = seconds + fat_tz_offset(sbi) - remainder;
++
++		inode->i_atime = (struct timespec64){ seconds, 0 };
++	}
++	if (flags & S_CTIME) {
++		if (sbi->options.isvfat)
++			inode->i_ctime = timespec64_trunc(*now, 10000000);
++		else
++			inode->i_ctime = fat_timespec64_trunc_2secs(*now);
++	}
++	if (flags & S_MTIME)
++		inode->i_mtime = (struct timespec64){ now->tv_sec & ~1, 0 };
++		inode->i_mtime = fat_timespec64_trunc_2secs(*now);
++
++	return 0;
++}
++EXPORT_SYMBOL_GPL(fat_truncate_time);
++
++int fat_update_time(struct inode *inode, struct timespec64 *now, int flags)
++{
++	int iflags = I_DIRTY_TIME;
++	bool dirty = false;
++
++	if (inode->i_ino == MSDOS_ROOT_INO)
++		return 0;
++
++	fat_truncate_time(inode, now, flags);
++	if (flags & S_VERSION)
++		dirty = inode_maybe_inc_iversion(inode, false);
++	if ((flags & (S_ATIME | S_CTIME | S_MTIME)) &&
++	    !(inode->i_sb->s_flags & SB_LAZYTIME))
++		dirty = true;
++
++	if (dirty)
++		iflags |= I_DIRTY_SYNC;
++	__mark_inode_dirty(inode, iflags);
++	return 0;
++}
++EXPORT_SYMBOL_GPL(fat_update_time);
++
+ int fat_sync_bhs(struct buffer_head **bhs, int nr_bhs)
+ {
+ 	int i, err = 0;
+diff --git a/fs/fat/namei_msdos.c b/fs/fat/namei_msdos.c
+index efb8c40c9d27..effbdd5fbf6e 100644
+--- a/fs/fat/namei_msdos.c
++++ b/fs/fat/namei_msdos.c
+@@ -637,6 +637,7 @@ static const struct inode_operations msdos_dir_inode_operations = {
+ 	.rename		= msdos_rename,
+ 	.setattr	= fat_setattr,
+ 	.getattr	= fat_getattr,
++	.update_time	= fat_update_time,
+ };
+ 
+ static void setup(struct super_block *sb)
+diff --git a/fs/fat/namei_vfat.c b/fs/fat/namei_vfat.c
+index 82cd1e69cbdf..1daa57cf4bf3 100644
+--- a/fs/fat/namei_vfat.c
++++ b/fs/fat/namei_vfat.c
+@@ -1032,6 +1032,7 @@ static const struct inode_operations vfat_dir_inode_operations = {
+ 	.rename		= vfat_rename,
+ 	.setattr	= fat_setattr,
+ 	.getattr	= fat_getattr,
++	.update_time	= fat_update_time,
+ };
+ 
+ static void setup(struct super_block *sb)
+-- 
+2.14.4
+
