@@ -1,0 +1,182 @@
+%{
+#include <linux/fs.h>
+#include <uapi/linux/fs.h>
+
+/*
+#include <uapi/linux/pr.h>
+#include <uapi/linux/hdreg.h>
+#include <uapi/linux/blkpg.h>
+*/
+
+#include "/usr/share/systemtap/runtime/linux/syscalls-common.h"
+
+static void _stp_lookup_str2(const _stp_val_array * const array, long val, char *ptr, int len, int base) {
+        int i = 0, slen;
+        while (array[i].name) {
+                if (array[i].val == val) {
+                        strlcat (ptr, array[i].name, len);
+                        return;
+                }
+                i++;
+        }
+        slen = strlen(ptr);
+        if (base == 10)
+                _stp_snprintf(ptr + slen, len - slen, "%ld", val);
+        else if (base == 8)
+                _stp_snprintf(ptr + slen, len - slen, "%#lo", val);
+        else
+                _stp_snprintf(ptr + slen, len - slen, "0x%lx", val);
+}
+
+static inline void _stp_lookup_str(const _stp_val_array * const array, long val, char *ptr,
+        int len) {
+        _stp_lookup_str2(array, val, ptr, len, 16);
+}
+
+
+
+static inline void _stp_lookup_str_test(const _stp_val_array * const array, long val, char *ptr, int len, int base) {
+	int i = 0, slen;
+	while (array[i].name) {
+		if (array[i].val == val) {
+			strlcat (ptr, array[i].name, len);
+			return;
+		}
+		i++;
+	}
+	slen = strlen(ptr);
+	if (base == 10)
+		_stp_snprintf(ptr + slen, len - slen, "%ld", val);
+	else if (base == 8)
+		_stp_snprintf(ptr + slen, len - slen, "%#lo", val);
+	else
+		_stp_snprintf(ptr + slen, len - slen, "0x%lx", val);
+}
+
+static const _stp_val_array _stp_blkdev_ioctl_list[] = {
+	V(BLKFLSBUF),
+	V(BLKROSET),
+	V(BLKDISCARD),
+	V(BLKSECDISCARD),
+	V(BLKZEROOUT),
+/*
+	V(HDIO_GETGEO),
+*/
+	V(BLKRAGET),
+	V(BLKFRAGET),
+	V(BLKROGET),
+	V(BLKBSZGET),
+	V(BLKSSZGET),
+	V(BLKPBSZGET),
+	V(BLKIOMIN),
+	V(BLKIOOPT),
+	V(BLKALIGNOFF),
+	V(BLKDISCARDZEROES),
+	V(BLKSECTGET),
+	V(BLKROTATIONAL),
+	V(BLKRASET),
+	V(BLKFRASET),
+	V(BLKBSZSET),
+/*
+	V(BLKPG),
+*/
+	V(BLKRRPART),
+	V(BLKGETSIZE),
+	V(BLKGETSIZE64),
+/*
+	V(BLKTRACESTART),
+	V(BLKTRACESTOP),
+	V(BLKTRACESETUP),
+	V(BLKTRACETEARDOWN),
+*/
+/*
+	V(IOC_PR_REGISTER),
+	V(IOC_PR_RESERVE),
+	V(IOC_PR_RELEASE),
+	V(IOC_PR_PREEMPT),
+	V(IOC_PR_PREEMPT_ABORT),
+*/
+/*
+	V(IOC_PR_CLEAR),
+*/
+	{ 0, NULL }
+};
+%}
+
+function blkdev_ioctl_name:string(ioc:long) %{
+	_stp_lookup_str(_stp_blkdev_ioctl_list, (unsigned long)STAP_ARG_ioc,
+		STAP_RETVALUE, MAXSTRINGLEN);
+%}
+
+
+
+# kernel.function("blkdev_ioctl@block/ioctl.c:502") $bdev:struct block_device* $mode:fmode_t $cmd:unsigned int $arg:long unsigned int
+#      0  int blkdev_ioctl(struct block_device *bdev, fmode_t mode, unsigned cmd,
+#                                unsigned long arg)
+#      2  {
+#                struct backing_dev_info *bdi;
+#                void __user *argp = (void __user *)arg;
+#                loff_t size;
+#                unsigned int max_sectors;
+
+probe kernel.function("blkdev_ioctl") {
+	if (MAJOR($bdev->bd_dev) == 7 && MINOR($bdev->bd_dev) == 0) { // /dev/loop0
+		ioctl_name = blkdev_ioctl_name($cmd)
+		printf("%s(%d): %s(cmd: %d - %s)\n", execname(), tid(), ppfunc(), $cmd, ioctl_name)
+	}
+}
+
+probe kernel.function("blkdev_ioctl").return {
+	bdev = &@cast(@entry($bdev), "struct block_device")
+
+	if (MAJOR(bdev->bd_dev) == 7 && MINOR(bdev->bd_dev) == 0) { // /dev/loop0
+		cmd = @entry($cmd)
+		ioctl_name = blkdev_ioctl_name(cmd)
+
+		arg_ptr = @entry($arg)
+		found = 0
+		change = ""
+
+		if (ioctl_name == "BLKSSZGET") {
+			arg_val = user_int(arg_ptr)
+			found = 1
+		}
+//		else if (ioctl_name == "BLKRRPART")
+//			arg_val = 
+		else if (ioctl_name == "BLKPBSZGET") {
+			arg_val = user_uint32(arg_ptr)
+			found = 1
+		} else if (ioctl_name == "BLKIOOPT") {
+			arg_val = user_uint32(arg_ptr)
+			found = 1
+			change = sprintf("changed from %d to %d", arg_val, 262144)
+			set_user_int(arg_ptr, 262144)
+		} else if (ioctl_name == "BLKIOMIN") {
+			arg_val = user_uint32(arg_ptr)
+			found = 1
+			change = sprintf("changed from %d to %d", arg_val, 1048576)
+			set_user_int(arg_ptr, 1048576)
+		} else if (ioctl_name == "BLKALIGNOFF") {
+			arg_val = user_int(arg_ptr)
+			found = 1
+		}
+
+		if (found) {
+#			arg_val = user_long(arg_ptr)
+
+			printf("%s(%d): %s(cmd: %d - %s).return\n", execname(), tid(), ppfunc(), cmd, ioctl_name)
+			if (change == "") {
+				printf("    arg returned: %d\n", arg_val)
+			} else {
+				printf("    arg returned: %d - %s\n", arg_val, change)
+			}
+
+//			printf("    block_device: %s\n", (bdev)$)
+
+		}
+	}
+# /sys/block/sdb/queue/optimal_io_size:  262144
+# /sys/block/sdb/queue/minimum_io_size:  1048576
+}
+
+
