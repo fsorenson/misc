@@ -1,0 +1,234 @@
+commit 5cacd6d8c974e3dd7de9ab5f9db27543476da654
+Author: root <root@vm1.sorenson.redhat.com>
+Date:   Sat Sep 22 14:25:00 2018 -0500
+
+    fat: change timestamp updates to fat_update_time or fat_truncate_time
+    
+    Make the inode timestamp updates use fat_update_time or
+    fat_truncate_time, depending on whether to call
+    mark_inode_dirty.
+    
+    Signed-off-by: Frank Sorenson <sorenson@redhat.com>
+
+diff --git a/fs/fat/dir.c b/fs/fat/dir.c
+index 7f5f369..1f9bad2 100644
+--- a/fs/fat/dir.c
++++ b/fs/fat/dir.c
+@@ -1071,7 +1071,7 @@ int fat_remove_entries(struct inode *dir, struct fat_slot_info *sinfo)
+ 		}
+ 	}
+ 
+-	dir->i_mtime = dir->i_atime = current_time(dir);
++	fat_truncate_time(dir, NULL, S_ATIME|S_MTIME);
+ 	if (IS_DIRSYNC(dir))
+ 		(void)fat_sync_inode(dir);
+ 	else
+diff --git a/fs/fat/file.c b/fs/fat/file.c
+index 19b6b05..cf0d5ae 100644
+--- a/fs/fat/file.c
++++ b/fs/fat/file.c
+@@ -227,8 +227,7 @@ static int fat_cont_expand(struct inode *inode, loff_t size)
+ 	if (err)
+ 		goto out;
+ 
+-	inode->i_ctime = inode->i_mtime = current_time(inode);
+-	mark_inode_dirty(inode);
++	fat_update_time(inode, NULL, S_CTIME|S_MTIME);
+ 	if (IS_SYNC(inode)) {
+ 		int err2;
+ 
+@@ -330,7 +329,7 @@ static int fat_free(struct inode *inode, int skip)
+ 		MSDOS_I(inode)->i_logstart = 0;
+ 	}
+ 	MSDOS_I(inode)->i_attrs |= ATTR_ARCH;
+-	inode->i_ctime = inode->i_mtime = current_time(inode);
++	fat_truncate_time(inode, NULL, S_CTIME|S_MTIME);
+ 	if (wait) {
+ 		err = fat_sync_inode(inode);
+ 		if (err) {
+@@ -542,6 +541,18 @@ int fat_setattr(struct dentry *dentry, struct iattr *attr)
+ 		up_write(&MSDOS_I(inode)->truncate_lock);
+ 	}
+ 
++	/*
++	 * setattr_copy can't truncate these appropriately, so we'll
++	 * copy them ourselves
++	 */
++	if (attr->ia_valid & ATTR_ATIME)
++		fat_truncate_time(inode, &attr->ia_atime, S_ATIME);
++	if (attr->ia_valid & ATTR_CTIME)
++		fat_truncate_time(inode, &attr->ia_ctime, S_CTIME);
++	if (attr->ia_valid & ATTR_MTIME)
++		fat_truncate_time(inode, &attr->ia_mtime, S_MTIME);
++	attr->ia_valid &= ~(ATTR_ATIME|ATTR_CTIME|ATTR_MTIME);
++
+ 	setattr_copy(inode, attr);
+ 	mark_inode_dirty(inode);
+ out:
+diff --git a/fs/fat/inode.c b/fs/fat/inode.c
+index 3607186..a803008 100644
+--- a/fs/fat/inode.c
++++ b/fs/fat/inode.c
+@@ -244,9 +244,8 @@ static int fat_write_end(struct file *file, struct address_space *mapping,
+ 	if (err < len)
+ 		fat_write_failed(mapping, pos + len);
+ 	if (!(err < 0) && !(MSDOS_I(inode)->i_attrs & ATTR_ARCH)) {
+-		inode->i_mtime = inode->i_ctime = current_time(inode);
+ 		MSDOS_I(inode)->i_attrs |= ATTR_ARCH;
+-		mark_inode_dirty(inode);
++		fat_update_time(inode, NULL, S_CTIME|S_MTIME);
+ 	}
+ 	return err;
+ }
+@@ -564,7 +563,7 @@ int fat_fill_inode(struct inode *inode, struct msdos_dir_entry *de)
+ 				  de->cdate, de->ctime_cs);
+ 		fat_time_fat2unix(sbi, &inode->i_atime, 0, de->adate, 0);
+ 	} else
+-		inode->i_ctime = inode->i_atime = inode->i_mtime;
++		fat_update_time(inode, &inode->i_mtime, S_ATIME|S_CTIME);
+ 
+ 	return 0;
+ }
+diff --git a/fs/fat/namei_msdos.c b/fs/fat/namei_msdos.c
+index effbdd5..6506290 100644
+--- a/fs/fat/namei_msdos.c
++++ b/fs/fat/namei_msdos.c
+@@ -250,7 +250,7 @@ static int msdos_add_entry(struct inode *dir, const unsigned char *name,
+ 	if (err)
+ 		return err;
+ 
+-	dir->i_ctime = dir->i_mtime = *ts;
++	fat_truncate_time(dir, ts, S_CTIME|S_MTIME);
+ 	if (IS_DIRSYNC(dir))
+ 		(void)fat_sync_inode(dir);
+ 	else
+@@ -294,7 +294,7 @@ static int msdos_create(struct inode *dir, struct dentry *dentry, umode_t mode,
+ 		err = PTR_ERR(inode);
+ 		goto out;
+ 	}
+-	inode->i_mtime = inode->i_atime = inode->i_ctime = ts;
++	fat_truncate_time(inode, &ts, S_ATIME|S_CTIME|S_MTIME);
+ 	/* timestamp is already written, so mark_inode_dirty() is unneeded. */
+ 
+ 	d_instantiate(dentry, inode);
+@@ -327,7 +327,7 @@ static int msdos_rmdir(struct inode *dir, struct dentry *dentry)
+ 	drop_nlink(dir);
+ 
+ 	clear_nlink(inode);
+-	inode->i_ctime = current_time(inode);
++	fat_update_time(inode, NULL, S_CTIME);
+ 	fat_detach(inode);
+ out:
+ 	mutex_unlock(&MSDOS_SB(sb)->s_lock);
+@@ -380,7 +380,7 @@ static int msdos_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
+ 		goto out;
+ 	}
+ 	set_nlink(inode, 2);
+-	inode->i_mtime = inode->i_atime = inode->i_ctime = ts;
++	fat_truncate_time(inode, &ts, S_ATIME|S_CTIME|S_MTIME);
+ 	/* timestamp is already written, so mark_inode_dirty() is unneeded. */
+ 
+ 	d_instantiate(dentry, inode);
+@@ -413,7 +413,7 @@ static int msdos_unlink(struct inode *dir, struct dentry *dentry)
+ 	if (err)
+ 		goto out;
+ 	clear_nlink(inode);
+-	inode->i_ctime = current_time(inode);
++	fat_update_time(inode, NULL, S_CTIME);
+ 	fat_detach(inode);
+ out:
+ 	mutex_unlock(&MSDOS_SB(sb)->s_lock);
+@@ -478,7 +478,7 @@ static int do_msdos_rename(struct inode *old_dir, unsigned char *old_name,
+ 				mark_inode_dirty(old_inode);
+ 
+ 			inode_inc_iversion(old_dir);
+-			old_dir->i_ctime = old_dir->i_mtime = current_time(old_dir);
++			fat_truncate_time(old_dir, NULL, S_CTIME|S_MTIME);
+ 			if (IS_DIRSYNC(old_dir))
+ 				(void)fat_sync_inode(old_dir);
+ 			else
+@@ -538,7 +538,7 @@ static int do_msdos_rename(struct inode *old_dir, unsigned char *old_name,
+ 	if (err)
+ 		goto error_dotdot;
+ 	inode_inc_iversion(old_dir);
+-	old_dir->i_ctime = old_dir->i_mtime = ts;
++	fat_truncate_time(old_dir, &ts, S_CTIME|S_MTIME);
+ 	if (IS_DIRSYNC(old_dir))
+ 		(void)fat_sync_inode(old_dir);
+ 	else
+@@ -548,7 +548,7 @@ static int do_msdos_rename(struct inode *old_dir, unsigned char *old_name,
+ 		drop_nlink(new_inode);
+ 		if (is_dir)
+ 			drop_nlink(new_inode);
+-		new_inode->i_ctime = ts;
++		fat_truncate_time(new_inode, &ts, S_CTIME);
+ 	}
+ out:
+ 	brelse(sinfo.bh);
+diff --git a/fs/fat/namei_vfat.c b/fs/fat/namei_vfat.c
+index 1daa57c..e384f2b 100644
+--- a/fs/fat/namei_vfat.c
++++ b/fs/fat/namei_vfat.c
+@@ -678,7 +678,7 @@ static int vfat_add_entry(struct inode *dir, const struct qstr *qname,
+ 		goto cleanup;
+ 
+ 	/* update timestamp */
+-	dir->i_ctime = dir->i_mtime = dir->i_atime = *ts;
++	fat_truncate_time(dir, ts, S_CTIME|S_MTIME);
+ 	if (IS_DIRSYNC(dir))
+ 		(void)fat_sync_inode(dir);
+ 	else
+@@ -779,7 +779,7 @@ static int vfat_create(struct inode *dir, struct dentry *dentry, umode_t mode,
+ 		goto out;
+ 	}
+ 	inode_inc_iversion(inode);
+-	inode->i_mtime = inode->i_atime = inode->i_ctime = ts;
++	fat_truncate_time(inode, &ts, S_ATIME|S_CTIME|S_MTIME);
+ 	/* timestamp is already written, so mark_inode_dirty() is unneeded. */
+ 
+ 	d_instantiate(dentry, inode);
+@@ -810,7 +810,7 @@ static int vfat_rmdir(struct inode *dir, struct dentry *dentry)
+ 	drop_nlink(dir);
+ 
+ 	clear_nlink(inode);
+-	inode->i_mtime = inode->i_atime = current_time(inode);
++	fat_update_time(inode, NULL, S_ATIME|S_MTIME);
+ 	fat_detach(inode);
+ 	vfat_d_version_set(dentry, inode_query_iversion(dir));
+ out:
+@@ -836,7 +836,7 @@ static int vfat_unlink(struct inode *dir, struct dentry *dentry)
+ 	if (err)
+ 		goto out;
+ 	clear_nlink(inode);
+-	inode->i_mtime = inode->i_atime = current_time(inode);
++	fat_update_time(inode, NULL, S_ATIME|S_MTIME);
+ 	fat_detach(inode);
+ 	vfat_d_version_set(dentry, inode_query_iversion(dir));
+ out:
+@@ -876,7 +876,7 @@ static int vfat_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
+ 	}
+ 	inode_inc_iversion(inode);
+ 	set_nlink(inode, 2);
+-	inode->i_mtime = inode->i_atime = inode->i_ctime = ts;
++	fat_truncate_time(inode, &ts, S_ATIME|S_CTIME|S_MTIME);
+ 	/* timestamp is already written, so mark_inode_dirty() is unneeded. */
+ 
+ 	d_instantiate(dentry, inode);
+@@ -969,7 +969,7 @@ static int vfat_rename(struct inode *old_dir, struct dentry *old_dentry,
+ 	if (err)
+ 		goto error_dotdot;
+ 	inode_inc_iversion(old_dir);
+-	old_dir->i_ctime = old_dir->i_mtime = ts;
++	fat_truncate_time(old_dir, &ts, S_CTIME|S_MTIME);
+ 	if (IS_DIRSYNC(old_dir))
+ 		(void)fat_sync_inode(old_dir);
+ 	else
+@@ -979,7 +979,7 @@ static int vfat_rename(struct inode *old_dir, struct dentry *old_dentry,
+ 		drop_nlink(new_inode);
+ 		if (is_dir)
+ 			drop_nlink(new_inode);
+-		new_inode->i_ctime = ts;
++		fat_truncate_time(new_inode, &ts, S_CTIME);
+ 	}
+ out:
+ 	brelse(sinfo.bh);

@@ -1,0 +1,28 @@
+From a877c9c93c1431addb15eef0a6c4519e1f4948f6 Mon Sep 17 00:00:00 2001
+From: Frank Sorenson <sorenson@redhat.com>
+Date: Sat, 22 Sep 2018 14:37:40 -0500
+Subject: [PATCH 1/4] fat: set the s_time_gran for msdos or vfat mounts
+
+For vfat, ctime granularity is 10ms; set the super_block's
+s_time_gran to 10ms for vfat and 1 second for msdos mounts.
+
+Signed-off-by: Frank Sorenson <sorenson@redhat.com>
+---
+ fs/fat/inode.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/fs/fat/inode.c b/fs/fat/inode.c
+index d6b81e31f9f5..36071866a324 100644
+--- a/fs/fat/inode.c
++++ b/fs/fat/inode.c
+@@ -1626,6 +1626,7 @@ int fat_fill_super(struct super_block *sb, void *data, int silent, int isvfat,
+ 	sb->s_magic = MSDOS_SUPER_MAGIC;
+ 	sb->s_op = &fat_sops;
+ 	sb->s_export_op = &fat_export_ops;
++	sb->s_time_gran = isvfat ? 10000000 : 1000000000;
+ 	mutex_init(&sbi->nfs_build_inode_lock);
+ 	ratelimit_state_init(&sbi->ratelimit, DEFAULT_RATELIMIT_INTERVAL,
+ 			     DEFAULT_RATELIMIT_BURST);
+-- 
+2.13.6
+
