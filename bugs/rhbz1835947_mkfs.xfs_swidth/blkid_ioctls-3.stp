@@ -1,0 +1,61 @@
+# /dev/loop0 is 7,0
+@define target_dev_major %( 7 %)
+@define target_dev_minor %( 0 %)
+
+@define new_ioopt %( 262144 %)
+@define new_iomin %( 262144 %)
+@define new_pbsz %( 4096 %)
+
+%{
+#include <linux/fs.h>
+%}
+
+@define printkf(s) %( printf("%s\n", @s) ; printk(3, @s); %)
+
+probe kernel.function("blkdev_ioctl").return {
+	bdev = &@cast(@entry($bdev), "struct block_device")
+
+	if (MAJOR(bdev->bd_dev) == @target_dev_major && MINOR(bdev->bd_dev) == @target_dev_minor) {
+		cmd = @entry($cmd)
+		arg_ptr = @entry($arg)
+
+		if (cmd == %{ BLKIOOPT %}) {
+			arg_val = user_uint32(arg_ptr)
+			set_user_int(arg_ptr, @new_ioopt)
+
+			@printkf(sprintf("%s(%d): %s(cmd: %d - BLKIOOPT) result is %d - changing to %d",
+				execname(), tid(), ppfunc(), cmd, arg_val, @new_ioopt))
+		} else if (cmd == %{ BLKIOMIN %}) {
+			arg_val = user_uint32(arg_ptr)
+			set_user_int(arg_ptr, @new_iomin)
+
+			@printkf(sprintf("%s(%d): %s(cmd: %d - BLKIOMIN) result is %d - changing to %d",
+				execname(), tid(), ppfunc(), cmd, arg_val, @new_iomin))
+		} else if (cmd == %{ BLKPBSZGET %}) {
+			arg_val = user_uint32(arg_ptr)
+			set_user_int(arg_ptr, @new_pbsz)
+
+			@printkf(sprintf("%s(%d): %s(cmd: %d - BLKPBSZGET) result is %d - changing to %d",
+				execname(), tid(), ppfunc(), cmd, arg_val, @new_pbsz))
+		} else if (cmd == %{ BLKSECTGET %}) {
+			arg_val = user_uint32(arg_ptr)
+			set_user_int(arg_ptr, 512)
+
+			@printkf(sprintf("%s(%d): %s(cmd: %d - BLKSECTGET) result is %d - changing to %d",
+				execname(), tid(), ppfunc(), cmd, arg_val, 512))
+		} else if (cmd == %{ BLKSSZGET %}) {
+			arg_val = user_uint32(arg_ptr)
+			@printkf(sprintf("%s(%d): %s(cmd: %d - BLKSSZGET) result is %d - changing to %d",
+				execname(), tid(), ppfunc(), cmd, arg_val, arg_val))
+		}
+	}
+# /sys/block/sdb/queue/optimal_io_size:  262144
+# /sys/block/sdb/queue/minimum_io_size:  1048576
+}
+probe begin {
+	@printkf(sprintf("loaded systemtap to modify device(%d:%d) optimal IO size to %d and minimum IO size to %d",
+		@target_dev_major, @target_dev_minor, @new_ioopt, @new_iomin))
+}
+probe end {
+	@printkf("systemtap removed")
+}
