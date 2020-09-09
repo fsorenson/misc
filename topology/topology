@@ -1,0 +1,257 @@
+#!/usr/bin/perl -w
+
+use Data::Dumper;
+
+my $root_base = "/";
+
+if ($#ARGV == 0) {
+	$root_base = $ARGV[0];
+}
+
+open(CPUINFO, "$root_base/proc/cpuinfo") or die("failed to open cpuinfo: $!\n");
+
+my %topology;
+
+sub read_sysfs_file {
+	my $file_name = shift;
+	open FILE, "<$file_name";
+	@lines = <FILE>;
+	close FILE;
+	chomp(@lines);
+	return $lines[0];
+}
+
+sub cache_cmp {
+	if ($$a{level} eq $$b{level}) {
+		$$a{type} cmp $$b{type};
+	} else {
+		$$a{level} <=> $$b{level};
+	}
+}
+
+# ugly if tree...  need to rework
+sub get_family {
+	my $model = shift;
+
+	if ($model =~ /Intel/) { # Intel
+
+		if ($model =~ /Intel.+([EX])([0-9]{4}).*/) { # Intel
+			# some info from http://en.wikipedia.org/wiki/Xeon
+			# some mobile CPU info from http://www.cpu-world.com/info/Intel/Intel_Core_i7_Mobile.html
+			$model_class = $1;
+			$model_num = $2;
+			if ($model_class eq 'E') {
+				if ($model_num =~ /33[0-9]{2}/) {
+					return "Yorkfield";
+				} elsif ($model_num =~ /51[0-9]{2}/) {
+					return "Woodcrest";
+				} elsif ($model_num =~ /53[0-9]{2}/) {
+					return "Clovertown";
+				} elsif ($model_num =~ /54[0-9]{2}/) {
+					return "Harpertown";
+				} elsif ($model_num =~ /55[0-9]{2}/) {
+					return "Gainestown";
+				} elsif ($model_num =~ /73[0-9]{2}/) {
+					return "Tigerton";
+				} elsif ($model_num =~ /74[0-9]{2}/) {
+					return "Dunnington";
+				}
+			} elsif ($model_class eq 'X') {
+				if ($model_num =~ /75[0-9]{2}/) {
+					return "Nehalem-EX";
+				} elsif ($model_num =~ /55[0-9]{2}/) {
+					return "Nehalem-Gainestown";
+				}
+			}
+		} elsif ($model =~ /Intel.+CPU (E5)-([0-9]{4}) v3/) {
+			my $model_class = $1;
+			my $model_num = $2;
+
+			if ($model_class eq 'E5') {
+				if ($model_num =~ /26[0-9]{2}/) {
+					return "Haswell";
+				}
+			}
+		} elsif ($model =~ /Core.+i([357])-([0-9]+)([A-Z]+) /) {
+			my $core = $1;
+			my $model_num = $2;
+			my $model_type = $3;
+
+			if ($core eq '3') {
+			} elsif ($core eq '5') {
+			} elsif ($core eq '7') {
+				if ($model_num =~ /^[0-9]{3}$/) { # 3-digit
+					if ($model_num =~ /^6/) {
+						return "Arrandale";
+					} elsif ($model_num =~ /^7/) {
+						return "Clarksfield";
+					}
+				} elsif ($model_num =~ /^[0-9]{4}$/) { # 4-digit
+					if ($model_num =~ /^2/) {
+						return "Sandy Bridge";
+					} elsif ($model_num =~ /^3/) {
+						return "Ivy Bridge";
+					} elsif ($model_num =~ /^4/) {
+						if ($model_num =~ /^470/) {
+							return "Haswell";
+						} elsif ($model_num =~ /^4750/) {
+							return "Crystal Well";
+						} elsif ($model_num =~ /^4[89]/) {
+							return "Crystal Well";
+						}
+					}
+				}
+			}
+		}
+	} elsif ($model =~ /.*AMD Opteron.+([0-9]{3,4})/) { # AMD Opteron
+		# some info from http://en.wikipedia.org/wiki/Opteron
+		$model_num = $1;
+	}
+	return "";
+}
+
+while (<CPUINFO>) {
+	$current_line = $_;
+	$current_line =~ s/^\s+//;
+	$current_line =~ s/\s+$//;
+
+	if ($current_line =~ /^processor[[:space:]]+: ([0-9]+)/) {
+		$cpunum = $1;
+	} elsif ($current_line =~ /^model name[[:space:]]+: (.+)$/) {
+		$model = $1;
+	} elsif ($current_line =~ /^vendor_id[[:space:]]+: (.+)$/) {
+		$vendor = $1;
+	} elsif ($current_line =~ /^cpu MHz[[:space:]]+: (.+)$/) {
+		$speed = $1;
+	} elsif ($current_line =~ /^physical id[[:space:]]+: (.+)$/) {
+		$physical_id = $1;
+	} elsif ($current_line =~ /^core id[[:space:]]+: (.+)$/) {
+		$core_id = $1;
+	} elsif ($current_line =~ /^flags[[:space:]]+: (.+)$/) {
+		$flags = $1;
+	} elsif ($current_line =~ /^$/) {
+		if (! defined($core_id)) {
+			$core_id = 0;
+		}
+		$cpuinfo[$cpunum]{"physical_id"} = $physical_id;
+		$cpuinfo[$cpunum]{"core_id"} = $core_id;
+		$cpuinfo[$cpunum]{"model"} = $model;
+		$cpuinfo[$cpunum]{"family"} = get_family($model);
+		$cpuinfo[$cpunum]{"vendor"} = $vendor;
+		$cpuinfo[$cpunum]{"speed"} = $speed;
+		$cpuinfo[$cpunum]{"flags"} = $flags;
+
+		if (defined($physical_id)) {
+if (! defined($topology{$physical_id}->{$core_id})) {
+	$topology{$physical_id}->{$core_id} = ();
+#print "looks like cpunum $cpunum is overwriting the current value for P$physical_id.C$core_id:  " . $topology{$physical_id}->{$core_id} . "\n";
+#	$topology{$physical_id}->{$core_id} = (
+}
+			push @{$topology{$physical_id}->{$core_id}}, $cpunum;
+		} else {
+			$topology{$cpunum}->{$core_id} = $cpunum;
+		}
+	}
+}
+
+#        for $href ( @cpuinfo ) {
+#            print "{ ";
+#            for $role ( keys %$href ) {
+#                 print "$role=$href->{$role} ";
+#            }
+#            print "}\n";
+#        }
+
+
+for $phys_id (sort(keys(%topology))) {
+	@core_ids = keys %{$topology{$phys_id}};
+	$num_cores = scalar(@core_ids);
+
+	@sample_thread_ids = @{$topology{$phys_id}->{$core_ids[0]}};
+	$num_threads = @sample_thread_ids;
+
+	%sample = %{$cpuinfo[$sample_thread_ids[0]]};
+
+	print "Socket $phys_id: $num_cores-core";
+	if ($num_threads > 1) { print ", $num_threads thread/core"; }
+	print " '" . $sample{'vendor'} . "' @ " . $sample{'speed'} . "MHz";
+	if ($sample{"flags"} =~ /\blm\b/) { print " (64-bit capable)"; }
+
+	print "\n";
+	print "\t| Model: " . $sample{'model'};
+	if ($sample{'family'} ne "") { print " (" . $sample{'family'} . ")"; }
+	print "\n";
+
+	if ( -f "$root_base/sys/devices/system/cpu/cpu$phys_id/cpufreq/scaling_available_frequencies" ) {
+		$cpu_freqs = read_sysfs_file("$root_base/sys/devices/system/cpu/cpu$phys_id/cpufreq/scaling_available_frequencies");
+		print "\t| CPU frequencies: $cpu_freqs\n";
+
+		my $govs = read_sysfs_file("$root_base/sys/devices/system/cpu/cpu$phys_id/cpufreq/scaling_available_governors");
+		my $current_gov = read_sysfs_file("$root_base/sys/devices/system/cpu/cpu$phys_id/cpufreq/scaling_governor");
+
+		print "\t| CPU scaling governors: $govs (active: $current_gov)\n";
+	} else {
+		print "\t| CPU frequency adjustment not available or not enabled\n";
+	}
+
+	for $core_id (sort { $a <=> $b} @core_ids) {
+		@cpunums = @{$topology{$phys_id}->{$core_id}};
+		$cpunum = $topology{$phys_id}->{$core_id};
+
+		print "\t+->core $core_id: ";
+		$thread_count = @cpunums;
+		if ($thread_count > 1) {
+			print "$thread_count threads: ";
+		}
+		print "cpu";
+		print join(", cpu", @cpunums);
+
+		$cpunum = $cpunums[0];
+
+		# print cache info
+		@cache_info = ();
+		opendir DH, "$root_base/sys/devices/system/cpu/cpu$cpunum/cache";
+		while ($dirent = readdir(DH)) {
+			next if ($dirent eq "." || $dirent eq "..");
+			if (-d "$root_base/sys/devices/system/cpu/cpu$cpunum/cache/$dirent") {
+				$level = read_sysfs_file("$root_base/sys/devices/system/cpu/cpu$cpunum/cache/$dirent/level");
+				$type = read_sysfs_file("$root_base/sys/devices/system/cpu/cpu$cpunum/cache/$dirent/type");
+				$size = read_sysfs_file("$root_base/sys/devices/system/cpu/cpu$cpunum/cache/$dirent/size");
+
+				if ($size =~ /([0-9]+)K$/) {
+					my $kb = $1;
+					if (($kb % 1024) == 0) {
+						$size = ($kb / 1024) . "M";
+					}
+				}
+				push @cache_info, {level => "$level", type => "$type", size => "$size"};
+			}
+		}
+		closedir(DH);
+
+#		print Dumper(@cache_info) . "\n";
+		@sorted = sort cache_cmp @cache_info;
+#		print "sorted: " . Dumper(@sorted) . "\n";
+
+		print " (cache: ";
+		@output = ();
+		foreach $key (@sorted) {
+			push @output, "L" . $$key{level} . "-" . $$key{type} . ": " . $$key{size};
+		}
+		print join(", ", @output);
+		print ") ";
+
+		my $online = '1';
+		if ($cpunum ne 0) { # can't offline cpu0
+			$online = read_sysfs_file("$root_base/sys/devices/system/cpu/cpu$cpunum/online");
+		}
+		if ($online eq '1') {
+			print "ONLINE";
+		} else {
+			print "OFFLINE";
+		}
+
+		print "\n";
+	}
+}
+
