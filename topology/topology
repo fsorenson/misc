@@ -2,19 +2,23 @@
 
 use Data::Dumper;
 
-my $root_base = "/";
+my $root_base = "/asdf";
+my $input_file;
 
+#if ($#ARGV == 0) {
+#	$root_base = $ARGV[0];
+#}
 if ($#ARGV == 0) {
-	$root_base = $ARGV[0];
+	$input_file = $ARGV[0];
 }
-
-open(CPUINFO, "$root_base/proc/cpuinfo") or die("failed to open cpuinfo: $!\n");
+#open(CPUINFO, "$root_base/proc/cpuinfo") or die("failed to open cpuinfo: $!\n");
+open(CPUINFO, $input_file) or die("failed to open cpuinfo: $!\n");
 
 my %topology;
 
 sub read_sysfs_file {
 	my $file_name = shift;
-	open FILE, "<$file_name";
+	open FILE, "<$file_name" or return "";
 	@lines = <FILE>;
 	close FILE;
 	chomp(@lines);
@@ -110,7 +114,16 @@ sub get_family {
 	return "";
 }
 
+my $cpunum = -1;
+my $core_id = -1;
+my $flags = "";
+my $physical_id = -1;
+my $vendor = "";
+my $family = "";
+my $model = "";
+my $speed = 0;
 while (<CPUINFO>) {
+
 	$current_line = $_;
 	$current_line =~ s/^\s+//;
 	$current_line =~ s/\s+$//;
@@ -130,6 +143,9 @@ while (<CPUINFO>) {
 	} elsif ($current_line =~ /^flags[[:space:]]+: (.+)$/) {
 		$flags = $1;
 	} elsif ($current_line =~ /^$/) {
+		if ($cpunum < 0) {
+			next;
+		}
 		if (! defined($core_id)) {
 			$core_id = 0;
 		}
@@ -141,7 +157,7 @@ while (<CPUINFO>) {
 		$cpuinfo[$cpunum]{"speed"} = $speed;
 		$cpuinfo[$cpunum]{"flags"} = $flags;
 
-		if (defined($physical_id)) {
+		if (defined($physical_id) && ($physical_id >= 0)) {
 if (! defined($topology{$physical_id}->{$core_id})) {
 	$topology{$physical_id}->{$core_id} = ();
 #print "looks like cpunum $cpunum is overwriting the current value for P$physical_id.C$core_id:  " . $topology{$physical_id}->{$core_id} . "\n";
@@ -151,8 +167,20 @@ if (! defined($topology{$physical_id}->{$core_id})) {
 		} else {
 			$topology{$cpunum}->{$core_id} = $cpunum;
 		}
+		$cpunum = -1;
+		$core_id = -1;
+		$flags = "";
+		$physical_id = -1;
+		$vendor = "";
+		$family = "";
+		$model = "";
+		$speed = 0;
 	}
 }
+
+
+
+
 
 #        for $href ( @cpuinfo ) {
 #            print "{ ";
@@ -210,36 +238,42 @@ for $phys_id (sort(keys(%topology))) {
 
 		# print cache info
 		@cache_info = ();
-		opendir DH, "$root_base/sys/devices/system/cpu/cpu$cpunum/cache";
-		while ($dirent = readdir(DH)) {
-			next if ($dirent eq "." || $dirent eq "..");
-			if (-d "$root_base/sys/devices/system/cpu/cpu$cpunum/cache/$dirent") {
-				$level = read_sysfs_file("$root_base/sys/devices/system/cpu/cpu$cpunum/cache/$dirent/level");
-				$type = read_sysfs_file("$root_base/sys/devices/system/cpu/cpu$cpunum/cache/$dirent/type");
-				$size = read_sysfs_file("$root_base/sys/devices/system/cpu/cpu$cpunum/cache/$dirent/size");
+		my $have_cache_info = 0;
+		if (opendir DH, "$root_base/sys/devices/system/cpu/cpu$cpunum/cache") {
+			$have_cache_info = 1;
+			while ($dirent = readdir(DH)) {
+				next if ($dirent eq "." || $dirent eq "..");
+				if (-d "$root_base/sys/devices/system/cpu/cpu$cpunum/cache/$dirent") {
+					$level = read_sysfs_file("$root_base/sys/devices/system/cpu/cpu$cpunum/cache/$dirent/level");
+					$type = read_sysfs_file("$root_base/sys/devices/system/cpu/cpu$cpunum/cache/$dirent/type");
+					$size = read_sysfs_file("$root_base/sys/devices/system/cpu/cpu$cpunum/cache/$dirent/size");
 
-				if ($size =~ /([0-9]+)K$/) {
-					my $kb = $1;
-					if (($kb % 1024) == 0) {
-						$size = ($kb / 1024) . "M";
+					if ($size =~ /([0-9]+)K$/) {
+						my $kb = $1;
+						if (($kb % 1024) == 0) {
+							$size = ($kb / 1024) . "M";
+						}
 					}
+					push @cache_info, {level => "$level", type => "$type", size => "$size"};
 				}
-				push @cache_info, {level => "$level", type => "$type", size => "$size"};
 			}
+			closedir(DH);
 		}
-		closedir(DH);
 
-#		print Dumper(@cache_info) . "\n";
-		@sorted = sort cache_cmp @cache_info;
-#		print "sorted: " . Dumper(@sorted) . "\n";
+		if ($have_cache_info) {
+#			print Dumper(@cache_info) . "\n";
+			@sorted = sort cache_cmp @cache_info;
+#			print "sorted: " . Dumper(@sorted) . "\n";
 
-		print " (cache: ";
-		@output = ();
-		foreach $key (@sorted) {
-			push @output, "L" . $$key{level} . "-" . $$key{type} . ": " . $$key{size};
+			print " (cache: ";
+			@output = ();
+			foreach $key (@sorted) {
+				push @output, "L" . $$key{level} . "-" . $$key{type} . ": " . $$key{size};
+			}
+			print join(", ", @output);
+			print ")";
 		}
-		print join(", ", @output);
-		print ") ";
+		print " ";
 
 		my $online = '1';
 		if ($cpunum ne 0) { # can't offline cpu0
@@ -247,8 +281,10 @@ for $phys_id (sort(keys(%topology))) {
 		}
 		if ($online eq '1') {
 			print "ONLINE";
-		} else {
+		} elsif ($online eq '0'){
 			print "OFFLINE";
+		} else {
+#			print "UNKNOWN";
 		}
 
 		print "\n";
