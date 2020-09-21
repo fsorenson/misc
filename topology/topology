@@ -2,17 +2,15 @@
 
 use Data::Dumper;
 
-my $root_base = "/asdf";
+my $root_base = "/";
 my $input_file;
 
-#if ($#ARGV == 0) {
-#	$root_base = $ARGV[0];
-#}
 if ($#ARGV == 0) {
-	$input_file = $ARGV[0];
+	$root_base = $ARGV[0];
 }
-#open(CPUINFO, "$root_base/proc/cpuinfo") or die("failed to open cpuinfo: $!\n");
-open(CPUINFO, $input_file) or die("failed to open cpuinfo: $!\n");
+
+open(CPUINFO, "$root_base/proc/cpuinfo") or die("failed to open cpuinfo: $!\n");
+#open(CPUINFO, $input_file) or die("failed to open cpuinfo: $!\n");
 
 my %topology;
 
@@ -34,7 +32,7 @@ sub cache_cmp {
 }
 
 # ugly if tree...  need to rework
-sub get_family {
+sub get_family_old {
 	my $model = shift;
 
 	if ($model =~ /Intel/) { # Intel
@@ -113,6 +111,27 @@ sub get_family {
 	}
 	return "";
 }
+sub get_family {
+
+	my $out = `cpuinfo2cpuid <$root_base/proc/cpuinfo | cpuid -f - | grep "simple synth"`;
+	if ($? == 0 && $out =~ /.+simple synth.+ = (.+)$/) {
+#		printf("family info: %s\n", $1);
+		return $1;
+	}
+	my $model = shift;
+	return get_family_old($model);
+#	return "?";
+#		my 
+
+#		      (simple synth)  = Intel Core (unknown type) (Sandy Bridge-E) {Sandy Bridge}, 32nm
+
+#	} elsif ($current_line =~ /^core id[[:space:]]+: (.+)$/) {
+
+#	simple synth`;
+#	cpuid -f
+#$root_base/
+
+}
 
 my $cpunum = -1;
 my $core_id = -1;
@@ -153,6 +172,7 @@ while (<CPUINFO>) {
 		$cpuinfo[$cpunum]{"core_id"} = $core_id;
 		$cpuinfo[$cpunum]{"model"} = $model;
 		$cpuinfo[$cpunum]{"family"} = get_family($model);
+
 		$cpuinfo[$cpunum]{"vendor"} = $vendor;
 		$cpuinfo[$cpunum]{"speed"} = $speed;
 		$cpuinfo[$cpunum]{"flags"} = $flags;
@@ -160,8 +180,6 @@ while (<CPUINFO>) {
 		if (defined($physical_id) && ($physical_id >= 0)) {
 if (! defined($topology{$physical_id}->{$core_id})) {
 	$topology{$physical_id}->{$core_id} = ();
-#print "looks like cpunum $cpunum is overwriting the current value for P$physical_id.C$core_id:  " . $topology{$physical_id}->{$core_id} . "\n";
-#	$topology{$physical_id}->{$core_id} = (
 }
 			push @{$topology{$physical_id}->{$core_id}}, $cpunum;
 		} else {
@@ -177,19 +195,6 @@ if (! defined($topology{$physical_id}->{$core_id})) {
 		$speed = 0;
 	}
 }
-
-
-
-
-
-#        for $href ( @cpuinfo ) {
-#            print "{ ";
-#            for $role ( keys %$href ) {
-#                 print "$role=$href->{$role} ";
-#            }
-#            print "}\n";
-#        }
-
 
 for $phys_id (sort(keys(%topology))) {
 	@core_ids = keys %{$topology{$phys_id}};
@@ -219,7 +224,7 @@ for $phys_id (sort(keys(%topology))) {
 
 		print "\t| CPU scaling governors: $govs (active: $current_gov)\n";
 	} else {
-		print "\t| CPU frequency adjustment not available or not enabled\n";
+		print "\t| CPU frequency adjustment not available or not enabled (or this code is borken)\n";
 	}
 
 	for $core_id (sort { $a <=> $b} @core_ids) {
