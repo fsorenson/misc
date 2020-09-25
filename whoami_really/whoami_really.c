@@ -15,9 +15,16 @@
 #define _STR(s...)	__STR(s)
 #define STR(s)		_STR(s)
 
+#define RES_DESC_r "real "
+#define RES_DESC_e "effective "
+#define RES_DESC_s "saved "
+
+#define UG_DESC_WIDTH "13"
+#define UG_WIDTH "7"
+
 #define show_id(ugid) do { \
 	PASTE(ugid,_t) ugid = PASTE(get, ugid)(); \
-	printf("\t" #ugid ": %u -> '%s'\n", ugid, \
+	printf("\t%" UG_DESC_WIDTH "s: %" UG_WIDTH "u -> '%s'\n", #ugid, ugid, \
 		PASTE(idtoname_,ugid)(ugid)); \
 } while (0)
 #define show_uid(uid) show_id(uid)
@@ -26,10 +33,10 @@
 #define show_resid(type, ugid) do { \
 	PASTE(ugid,_t) PASTE(r,ugid), PASTE(e,ugid), PASTE(s,ugid); \
 	PASTE(getres,ugid)(&PASTE(r,ugid), &PASTE(e,ugid), &PASTE(s,ugid)); \
-	printf("\t" STR(PASTE(type,ugid)) ": %u -> '%s'\n", PASTE(type,ugid), \
-		PASTE(idtoname_,ugid)(PASTE(type,ugid)) \
-			); \
+	printf("\t%" UG_DESC_WIDTH "s: %" UG_WIDTH "u -> '%s'\n", PASTE(RES_DESC_,type) "" STR(ugid), \
+		PASTE(type,ugid), PASTE(idtoname_,ugid)(PASTE(type,ugid))); \
 } while (0)
+
 #define show_ruid(gid) show_resid(r, uid)
 #define show_euid(gid) show_resid(e, uid)
 #define show_suid(gid) show_resid(s, uid)
@@ -39,7 +46,8 @@
 
 #define show_fsid(ugid) do { \
 	PASTE(ugid,_t) ugid = PASTE(setfs,ugid)(-1); \
-	printf("\tfs" #ugid ": %u - '%s'\n", ugid, PASTE(idtoname_,ugid)(ugid)); \
+	printf("\t%" UG_DESC_WIDTH "s: %" UG_WIDTH "u -> '%s'\n", STR(PASTE(fs,ugid)), \
+		ugid, PASTE(idtoname_,ugid)(ugid)); \
 } while (0)
 #define show_fsuid(uid) show_fsid(uid)
 #define show_fsgid(gid) show_fsid(gid)
