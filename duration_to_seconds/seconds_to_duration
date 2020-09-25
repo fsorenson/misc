@@ -31,36 +31,54 @@ if [[ $cmd == "seconds_to_duration" ]] ; then
 	printf "$total seconds => %s%d:%02d:%02d%s\n" "$days" $h $m $s $ss
 elif [[ $cmd == "duration_to_seconds" ]] ; then
 	duration="$@"
-	if [[ $duration =~ (((([0-9]+)?(| days?)? )?(([0-9]{1,2}):)(([0-9]+):(([0-9]{2})(.([0-9]+)?)?)))) ]] ; then
+#	if [[ $duration =~ (((([0-9]+)?(| days?)? )?(([0-9]{1,2}):)(([0-9]+):(([0-9]{2})(.([0-9]+)?)?)))) ]] ; then
+#if [[ $duration =~ (((([0-9]+)?(| days?)? )?((([0-9]{1,2}):)(([0-9]+):(([0-9]{2})(.([0-9]+)?)?))|))) ]] ; then
+#	if [[ $duration =~ ^((1 day\s+)|[0-9]+ days\s+)?(2[0-3]|[01][0-9][1-9]):([0-5][0-9]):([0-5][0-9])(:?\.([0-9]+))?$ ]] ; then
+#	if [[ $duration =~ ^((1 day\s+)|[0-9]+ days\s+)?(2[0-3]|[01][0-9][1-9]):([0-5][0-9]):([0-5][0-9])(:?\.([0-9]+))?$ ]] ; then
+#if [[ $duration =~ ^(((1) day([[:space:]]+|$))|([0-9]+) days([[:space:]]+|$))?((2[0-3]|[01][0-9]|[1-9]):([0-5][0-9]):([0-5][0-9])(\.([0-9]+))?)?$ ]] ; then
+	if [[ $duration =~ ^(((1) day)|([0-9]+) days)([[:space:]]+(2[0-3]|[01][0-9]|[1-9]|[0]{1,2})(:([0-5][0-9])(:([0-5][0-9])(\.([0-9]+))?)?)?)?$ ]] ; then
 
-		[[ -n ${BASH_REMATCH[4]} ]] && d=${BASH_REMATCH[4]} || d=0
-		[[ -n ${BASH_REMATCH[7]} ]] && h=${BASH_REMATCH[7]} || h=0
-		[[ -n ${BASH_REMATCH[9]} ]] && m=${BASH_REMATCH[9]} || m=0
-		[[ -n ${BASH_REMATCH[11]} ]] && s=${BASH_REMATCH[11]} || s=0
-		[[ -n ${BASH_REMATCH[12]} ]] && ss=${BASH_REMATCH[12]} || ss=""
+		[[ -n ${BASH_REMATCH[3]} ]] && d=${BASH_REMATCH[3]} || d=0 # 1 day
+		[[ -n ${BASH_REMATCH[4]} ]] && d=${BASH_REMATCH[4]} # # days
+
+		[[ -n ${BASH_REMATCH[6]} ]] && h=${BASH_REMATCH[6]} || h=0
+		[[ -n ${BASH_REMATCH[8]} ]] && m=${BASH_REMATCH[8]} || m=0
+		[[ -n ${BASH_REMATCH[10]} ]] && s=${BASH_REMATCH[10]} || s=0
+		[[ -n ${BASH_REMATCH[11]} ]] && ss=${BASH_REMATCH[11]} || ss=""
+
 
 		s=$(( ((((($d * 24) + $h)*60) + $m) * 60) + $s ))
 
 		echo "$duration => $s$ss seconds"
+#for i in {1..20} ; do
+#	echo "  $i: ${BASH_REMATCH[$i]}"
+#done
+	elif [[ $duration =~ ^((([0-1][0-9]|2[0-3]|00):)?(([1-5][0-9]|[0-9]|00):)?)([1-5][0-9]|[0-9]|00)(\.([0-9]+))?$ ]] ; then
 
-		false && {
-			for i in {1..20} ; do
-				echo "  $i: ${BASH_REMATCH[$i]}"
-			done
-			1: 2 days 23:14:56.789
-			2: 2 days 23:14:56.789
-			3: 2 days
-			4: 2
-			5:  days
-			6: 23:
-			7: 23
-			8: 14:56.789
-			9: 14
-			10: 56.789
-			11: 56
-			12: .789
-			13: 789
-		}
+#			for i in {1..20} ; do
+#				echo "  $i: ${BASH_REMATCH[$i]}"
+#			done
+		d=0
+		[[ -n ${BASH_REMATCH[3]} ]] && h=${BASH_REMATCH[3]} || h=0
+		[[ -n ${BASH_REMATCH[5]} ]] && m=${BASH_REMATCH[5]} || m=0
+		[[ -n ${BASH_REMATCH[6]} ]] && s=${BASH_REMATCH[6]} || s=0
+		[[ -n ${BASH_REMATCH[7]} ]] && ss=${BASH_REMATCH[7]} || ss=""
+
+		s=$(( ((((($d * 24) + $h)*60) + $m) * 60) + $s ))
+		echo "$duration => $s$ss seconds"
+	elif [[ $duration =~ ^(|([0-9])h)([0-9]+)m([0-9]+)(.[0-9]+)s$ ]] ; then
+		h=0
+		m=0
+		sec=0
+		ss=".0"
+
+		[[ -n ${BASH_REMATCH[2]} ]] && h=${BASH_REMATCH[2]}
+		[[ -n ${BASH_REMATCH[3]} ]] && m=${BASH_REMATCH[3]}
+		[[ -n ${BASH_REMATCH[4]} ]] && s=${BASH_REMATCH[4]}
+		[[ -n ${BASH_REMATCH[5]} ]] && ss=${BASH_REMATCH[5]}
+
+		s=$(( ((($h * 60) + $m) * 60) + $s ))
+		echo "$duration => $s$ss seconds"
 	else
 		echo "Unable to parse '$duration'"
 	fi
