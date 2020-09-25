@@ -2,31 +2,19 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
-#include <sys/types.h>
-#include <sys/fsuid.h>
 #include <pwd.h>
 #include <grp.h>
+#include <sys/types.h>
+#include <sys/fsuid.h>
 #include <errno.h>
 
 #define _PASTE(a,b) a##b
 #define PASTE(a,b) _PASTE(a,b)
 
-#define _PASTE3(a,b,c) a##b##c
-#define PASTE3(a,b,c) _PASTE3(a,b,c)
-
-#define _PASTE4(a,b,c,d) a##b##c##d
-#define PASTE4(a,b,c,d) _PASTE4(a,b,c,d)
-
 #define __STR(s...)	#s
 #define _STR(s...)	__STR(s)
 #define STR(s)		_STR(s)
 
-#define show_id_old(type) do { \
-	printf("\t" #type ": %u\n", PASTE(get, type)()); \
-} while (0)
-#define show_id_old2(ext, type) do { \
-	printf("\t" #ext#type "id: %u\n", PASTE4(get, ext, type, id)()); \
-} while (0)
 #define show_id(ugid) do { \
 	PASTE(ugid,_t) ugid = PASTE(get, ugid)(); \
 	printf("\t" #ugid ": %u -> '%s'\n", ugid, \
@@ -35,11 +23,6 @@
 #define show_uid(uid) show_id(uid)
 #define show_gid(gid) show_id(gid)
 
-#define show_resid_old(type, ug) do { \
-	PASTE(ug,id_t) PASTE3(r,ug,id), PASTE3(e,ug,id), PASTE3(s,ug,id); \
-	PASTE3(getres,ug,id)(&PASTE3(r,ug,id), &PASTE3(e,ug,id), &PASTE3(s,ug,id)); \
-	printf("\t" STR(PASTE3(type,ug,id)) ": %u\n", PASTE3(type,ug,id)); \
-} while (0)
 #define show_resid(type, ugid) do { \
 	PASTE(ugid,_t) PASTE(r,ugid), PASTE(e,ugid), PASTE(s,ugid); \
 	PASTE(getres,ugid)(&PASTE(r,ugid), &PASTE(e,ugid), &PASTE(s,ugid)); \
@@ -54,9 +37,6 @@
 #define show_egid(gid) show_resid(e, gid)
 #define show_sgid(gid) show_resid(s, gid)
 
-#define show_fsid_old(type) do { \
-	printf("\tfs" #type ": %u\n", PASTE(setfs, type)(-1)); \
-} while (0)
 #define show_fsid(ugid) do { \
 	PASTE(ugid,_t) ugid = PASTE(setfs,ugid)(-1); \
 	printf("\tfs" #ugid ": %u - '%s'\n", ugid, PASTE(idtoname_,ugid)(ugid)); \
@@ -125,69 +105,26 @@ retry:
 }
 
 int main(int argc, char *argv[]) {
-//	getgrgid_r(getgid(), &group, grbuf, grsize, 
-/*
-printf("uid %d -> %s\n", 100, idtoname_uid(100));
-printf("gid %d -> %s\n", 9000000, idtoname_gid(9000000));
-printf("gid %d -> %s\n", 11, idtoname_gid(11));
-printf("gid %d -> %s\n", 1001, idtoname_gid(1001));
-*/
+	int grp_count;
 
 	printf("uid:\n");
-//	show_id_old(uid);
-//	show_id_old2(,u);
-	show_id(uid);
 	show_uid(uid);
-/*
-	show_id_old(euid);
-	show_id_old2(e,u);
-
-	show_resid_old(r, u);
-	show_resid_old(e, u);
-	show_resid_old(s, u);
-	show_fsid_old(uid);
-
-	show_resid(r, uid);
-	show_resid(e, uid);
-	show_resid(s, uid);
-*/
 
 	show_ruid(uid);
 	show_euid(uid);
 	show_suid(uid);
 
-
-	show_fsid(uid);
+	show_fsuid(uid);
 
 	printf("gid:\n");
-
-//	show_id_old(gid);
-//	show_id_old2(,g);
-	show_id(gid);
 	show_gid(gid);
-/*
-	show_id_old(egid);
-	show_id_old2(e,g);
-
-	show_resid_old(r, g);
-	show_resid_old(e, g);
-	show_resid_old(s, g);
-	show_fsid_old(gid);
-
-	show_resid(r, gid);
-	show_resid(e, gid);
-	show_resid(s, gid);
-*/
 
 	show_rgid(gid);
 	show_egid(gid);
 	show_sgid(gid);
 
-
-	show_fsid(gid);
 	show_fsgid(gid);
 
-	int grp_count;
 	if ((grp_count = getgroups(0, NULL)) > 0) {
 		gid_t *groups = calloc(grp_count, sizeof(gid_t));
 		int ret, i;
@@ -202,20 +139,10 @@ printf("gid %d -> %s\n", 1001, idtoname_gid(1001));
 				printf("error occurred while getting groups: %m\n");
 		}
 		free(groups);
-	} else if (grp_count == 0) {
-		printf("user is not a member of any groups?\n");
-	} else
+	} else if (grp_count == 0)
+		printf("\tuser is not a member of any groups?\n");
+	else
 		printf("error occurred while getting groups: %m\n");
-/*
-	getresuid
-		getresgid
-		getegid
-
-          real user ID and saved set-user-ID.  This switching is done via calls to seteuid(2), setreuid(2), or  setresuid(2).
-          A  set-group-ID program performs the analogous tasks using setegid(2), setregid(2), or setresgid(2).  A process can
-          obtain its saved set-user-ID (set-group-ID) using getresuid(2) (getresgid(2)).
-*/
 
 	return EXIT_SUCCESS;
 }
-
