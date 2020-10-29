@@ -1,0 +1,37 @@
+#!/bin/bash
+
+cgroup=$1
+freezer_base=/sys/fs/cgroup/freezer
+[[ -z $cgroup ]] && {
+        echo "No freezer cgroup specified"
+        echo "usage: $(readlink -f $0) <frozen_cgroup>"
+        exit 11
+}
+[[ -d $freezer_base && $(stat -f -c %T $freezer_base) == "cgroupfs" ]] || {
+        echo "Unable to locate freezer cgroup directory at '$freezer_base'"
+        exit 12
+}
+[[ -d $freezer_base/$cgroup ]] || {
+        echo "Freezer cgroup '$cgroup' could not be found"
+        exit 13
+}
+unsafe_count=0
+while [[ 42 ]] ; do
+	state=$(<$freezer_base/$cgroup/freezer.state)
+	case $state in
+		FROZEN)
+			for t in $(<$freezer_base/$cgroup/tasks) ; do
+				awk '{printf "%s ", gensub(/(.+)+(+.+)/, "\\1", "g", $2)} END{printf "\n"}' /proc/$t/stack 2>/dev/null
+			done | egrep -q '^__refrigerator rpc_wait_bit_killable __rpc_execute'
+			if [[ $? -ne 0 ]] ; then break ; fi
+
+			unsafe_count=$(($unsafe_count + 1))
+			echo THAWED > $freezer_base/$cgroup/freezer.state
+		;;
+		THAWED) echo FROZEN > $freezer_base/$cgroup/freezer.state ;;
+		FREEZING) ;; # still frozen
+	esac
+	sleep 0.01
+done
+
+echo "successfully froze '$cgroup' after $unsafe_count failures"

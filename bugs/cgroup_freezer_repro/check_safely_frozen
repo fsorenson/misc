@@ -1,0 +1,30 @@
+#!/bin/bash
+
+cgroup=$1
+freezer_base=/sys/fs/cgroup/freezer
+[[ -z $cgroup ]] && {
+	echo "No freezer cgroup specified"
+	echo "usage: $(readlink -f $0) <frozen_cgroup>"
+	exit 11
+}
+[[ -d $freezer_base && $(stat -f -c %T $freezer_base) == "cgroupfs" ]] || {
+	echo "Unable to locate freezer cgroup directory at '$freezer_base'"
+	exit 12
+}
+[[ -d $freezer_base/$cgroup ]] || {
+	echo "Freezer cgroup '$cgroup' could not be found"
+	exit 13
+}
+[[ $(cat $freezer_base/$cgroup/freezer.state) == "FROZEN" ]] || {
+	echo "Freezer cgroup '$cgroup' is not frozen"
+	exit 14
+}
+blocked=$(for t in $(cat $freezer_base/$cgroup/tasks 2>/dev/null) ; do
+	awk '{printf "%s ", gensub(/(.+)+(+.+)/, "\\1", "g", $2)}' /proc/$t/stack 2>/dev/null | \
+		egrep -q '^__refrigerator rpc_wait_bit_killable __rpc_execute' && echo $t
+done)
+[[ -n $blocked ]] && {
+	echo "pids blocked: $blocked"
+	exit 1
+}
+exit 0
