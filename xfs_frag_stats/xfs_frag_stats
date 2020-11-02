@@ -10,17 +10,51 @@ use File::Find;
 use File::stat;
 use Fcntl ':mode';
 use POSIX;
+use Cwd 'realpath';
 
 my $search_maj_min;
+my $found_dev = "";
 
 my $fmt = "";
 my $fmt_LNK = "";
 my $fmt_IGNORED = "";
 my $skip_field_width = 0;
 
-my @field_widths = ( 10, 12, 8, 8, 6, 0 );
+my @field_widths = ( 10, 12, 12, 8, 8, 6, 0 );
+
+my $show_dev = 1;
+my $show_df = 1;
+my $show_dirs = 1;
+my $show_files = 1;
+my $verbose = 0;
+
+GetOptions(
+	'dev' => sub { $show_dev = 1; },
+	'nodev' => sub { $show_dev = 0; },
+	'df' => sub { $show_df = 1; },
+	'nodf' => sub { $show_df = 0; },
+	'dirs' => sub { $show_dirs = 1; $show_files = 0; },
+	'files' => sub { $show_files = 1; $show_dirs = 0; },
+	'quiet' => sub { $verbose--; },
+	'verbose' => sub { $verbose++; },
+);
 
 sub center_str {
+	my $str = shift;
+	my $len = shift;
+
+	my $lpad = int(($len - length($str))/2 - 1) - 1;
+	my $lpadstr = ($lpad <= 0) ? "" :
+		"."x ($lpad - 1) . " ";
+	my $rpad = $len - length($str) - length($lpadstr) - 1;
+	my $rpadstr = ($rpad <= 0) ? "" :
+		" " . "."x ($rpad - 1);
+
+	$str = $lpadstr . $str . $rpadstr;
+	$len = $len - 1;
+	return sprintf("%-${len}s", $str);
+}
+sub center_str_old {
 	my $str = shift;
 	my $len = shift;
 
@@ -38,33 +72,19 @@ for (my $i = 0 ; $i < (scalar @field_widths) ; $i++) {
 	else { $tmp_s .= "%s"; }
 
 	$fmt .= $tmp_s;
-	if ($i < 2 || $i > 4) {
+	if ($i < 3 || $i > 5) {
 		$fmt_LNK .= $tmp_s;
 		$fmt_IGNORED .= $tmp_s;
 	} else {
 		$skip_field_width += $w + 1;
 
-		if ($i == 4) {
+		if ($i == 5) {
 			$fmt_LNK .= " " . center_str("N/A", $skip_field_width);
 			$fmt_IGNORED .= " " . center_str("IGNORED", $skip_field_width);
 		}
 	}
 }
 $fmt_LNK .= " => %s";
-
-my $show_dirs = 1;
-my $show_files = 1;
-my $quiet = 0;
-
-GetOptions(
-	'dirs' => sub { $show_dirs = 1; $show_files = 0; },
-	'files' => sub { $show_files = 1; $show_dirs = 0; },
-	'quiet' => sub { $quiet = 1; }
-);
-
-if (!defined($ARGV[0])) {
-	$ARGV[0] = ".";
-}
 
 sub logn {
 	my $val = shift;
@@ -145,6 +165,17 @@ sub get_hint {
 	return 0;
 }
 
+sub exec_command {
+	my $out = "";
+
+	open EXEC, join(" ", @_) . " 2>&1 |";
+	while (<EXEC>) {
+		$out .= $_;
+	}
+	close EXEC;
+	return ($? >> 8, $out);
+}
+
 sub file_stats {
 	my ($extents, $holes, $hint);
 	my $hint_str = "";
@@ -187,13 +218,16 @@ sub file_stats {
 	my $symbolic = mode_type_char($mode) . mode_bits_string($mode);
 	my $size_str = byte_units($size, 1024);
 
+	my $alloc_size = $stats->blocks * 512;
+	my $alloc_size_str = byte_units($alloc_size, 1024);
+
 	if (S_ISLNK($mode)) {
-		printf("${fmt_LNK}\n", $symbolic, $size_str, $path, readlink($path)) if (! $quiet);
+		printf("${fmt_LNK}\n", $symbolic, $size_str, $alloc_size_str, $path, readlink($path)) if ($verbose);
 		return;
 	} elsif ((! $show_dirs && S_ISDIR($mode)) ||
 		(! $show_files && S_ISREG($mode))) {
 
-		printf("${fmt_IGNORED}\n", $symbolic, $size_str, $path) if (! $quiet);
+		printf("${fmt_IGNORED}\n", $symbolic, $size_str, $alloc_size_str, $path) if ($verbose);
 		return;
 	} else {
 		($extents, $holes) = get_extent_count($path);
@@ -203,7 +237,7 @@ sub file_stats {
 		else { $hint_str = "0"; }
 	}
 
-	printf("${fmt}\n", $symbolic, $size_str, $extents, $holes, $hint_str, $path);
+	printf("${fmt}\n", $symbolic, $size_str, $alloc_size_str, $extents, $holes, $hint_str, $path);
 }
 
 sub is_xfs_fs {
@@ -224,14 +258,91 @@ sub is_xfs_fs {
 	return 1 if ($fstype eq "xfs");
 	return 0;
 }
+sub is_xfs_fs2 {
+	my $path = shift;
 
-printf("${fmt} (=>link target)\n", "mode", "size", "extents", "holes", "hint", "path");
+	my ($ret, $out) = exec_command("/usr/bin/stat", $path, "-f" , "-c", "%T");
+	if ($ret ne 0) {
+		printf("Couldn't stat $path: $!\n");
+		return 0;
+	}
+	$out =~ s/^\s+|\s+$|\n//g;
+	return 1 if ($out eq "xfs");
+	return 0;
+}
+
+sub find_blkdev {
+	if ($found_dev ne "") {
+		$File::Find::prune = 1;
+	} else {
+		my $path = $File::Find::name;
+		my $stats = lstat($path);
+
+		if (S_ISBLK($stats->mode) && $stats->rdev == $search_maj_min) {
+			$found_dev = $path;
+			$File::Find::prune = 1;
+		}
+	}
+}
+
+if (!defined($ARGV[0])) {
+	$ARGV[0] = ".";
+}
+
+sub print_path_header {
+	my $path = shift;
+	my $hdr_width = 75;
+
+	my $lpad = int(($hdr_width - length($path))/2 - 1) - 1;
+	my $lpadstr = ($lpad <= 0) ? "" : "*"x ($lpad - 1) . " ";
+	my $rpad = $hdr_width - length($path) - length($lpadstr) - 1;
+	my $rpadstr = ($rpad <= 0) ? "" : " " . "*"x ($rpad - 1);
+
+	my $str = $lpadstr . $path . $rpadstr;
+	$hdr_width = $hdr_width - 1;
+	return sprintf("%-${hdr_width}s", $str);
+}
+
 for my $dir (@ARGV) {
-	if (is_xfs_fs($dir)) {
+	my ($ret, $out);
+	$dir = Cwd::realpath($dir); # resolve the real path
+
+	printf("%s\n", print_path_header($dir));
+
+	if (is_xfs_fs2($dir)) {
 		my $stats = lstat($dir);
 		$search_maj_min = $stats->dev;
 
+		if ($show_dev) {
+			find({ wanted => \&find_blkdev, no_chdir => 1}, "/dev/");
+
+			if ($found_dev ne "") {
+#				printf("device: %s\n", $found_dev);
+
+				($ret, $out) = exec_command("/usr/sbin/xfs_db", "-r", "-c", "freesp", $found_dev);
+				if ($ret == 0) {
+					printf("filesystem free space:\n%s\n", $out);
+				}
+
+#				get_freesp($found_dev);
+#				printf("\n");
+			} else {
+				printf("unable to locate the device file for device 0x%04x under /dev", $search_maj_min);
+			}
+		}
+		if ($show_df) {
+			printf("filesystem usage:\n");
+			($ret, $out) = exec_command("df", $found_dev);
+			if ($ret == 0) { print $out; };
+			printf("\nfilesystem inode usage\n");
+			($ret, $out) = exec_command("df", "-i", $found_dev);
+			if ($ret == 0) { print $out; };
+			printf("\n");
+		}
+
+		printf("${fmt} (=>link target)\n", "mode", "size", "alloc", "extents", "holes", "hint", "path");
 		find({ wanted => \&file_stats, no_chdir => 1}, $dir);
+
 	} else {
 		printf("skipping non-xfs filesystem $dir\n");
 	}
