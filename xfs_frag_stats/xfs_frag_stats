@@ -125,9 +125,9 @@ sub mode_bits_string {
 	my @grp = @{$mode_bits[($mode & S_IRWXG) >> 3]};
 	my @oth = @{$mode_bits[$mode & S_IRWXO]};
 
-	if ($mode & S_ISUID) { $usr[2] = $usr[2] == 'x' ? 's' : 'S'; }
-	if ($mode & S_ISGID) { $grp[2] = $grp[2] == 'x' ? 's' : 'S'; }
-	if ($mode & S_ISVTX) { $oth[2] = $oth[2] == 'x' ? 't' : 'T'; }
+	if ($mode & S_ISUID) { $usr[2] = $usr[2] eq 'x' ? 's' : 'S'; }
+	if ($mode & S_ISGID) { $grp[2] = $grp[2] eq 'x' ? 's' : 'S'; }
+	if ($mode & S_ISVTX) { $oth[2] = $oth[2] eq 'x' ? 't' : 'T'; }
 	return join("", @usr, @grp, @oth);
 }
 sub mode_type_char {
