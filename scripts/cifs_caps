@@ -1,0 +1,111 @@
+#!/usr/bin/perl -w
+
+# Frank Sorenson <sorenson@redhat.com>, 2020
+
+# script to interpret cifs capabilities value from /proc/fs/cifs/DebugData
+#
+# 1) Name: 192.168.122.99 Uses: 1 Capability: 0x300047	Session Status: 1	TCP status: 1
+#                                             ^^^^^^^^
+# usage: cifs_caps <smb_major_vers> <capabilities_value>
+#
+#
+
+
+
+use strict;
+use warnings;
+
+use Data::Dumper;
+#use Scalar::Util qw(looks_like_number);
+
+#grep -r '^#define CAP_' fs/cifs/cifspdu.h | awk --non-decimal-data '{printf "\t0x%08x => \"%s\",\n", int($3),$2}'
+
+
+my %smb1_caps = (
+	0x00000001 => "RAW_MODE",
+	0x00000002 => "MPX_MODE",
+	0x00000004 => "UNICODE",
+	0x00000008 => "LARGE_FILES",
+	0x00000010 => "NT_SMBS",
+	0x00000020 => "RPC_REMOTE_APIS",
+	0x00000040 => "STATUS32",
+	0x00000080 => "LEVEL_II_OPLOCKS",
+	0x00000100 => "LOCK_AND_READ",
+	0x00000200 => "NT_FIND",
+	0x00001000 => "DFS",
+	0x00002000 => "INFOLEVEL_PASSTHRU",
+	0x00004000 => "LARGE_READ_X",
+	0x00008000 => "LARGE_WRITE_X",
+	0x00010000 => "LWIO",
+
+	0x00100000 => "NT_FIND",
+	0x00200000 => "LARGE_FILES",
+
+	0x00800000 => "UNIX",
+	0x02000000 => "COMPRESSED_DATA",
+	0x20000000 => "DYNAMIC_REAUTH",
+	0x40000000 => "PERSISTENT_HANDLES",
+	0x80000000 => "EXTENDED_SECURITY",
+);
+
+# from smb2pdu.h
+#/* Capabilities flags */
+my %smb2_caps = (
+	0x00000001 => "DFS",
+	0x00000002 => "LEASING",
+	0x00000004 => "LARGE_MTU",
+	0x00000008 => "MULTI_CHANNEL",
+	0x00000010 => "PERSISTENT_HANDLES",
+	0x00000020 => "DIRECTORY_LEASING",
+	0x00000040 => "ENCRYPTION",
+	0x00100000 => "NT_FIND",
+	0x00200000 => "LARGE_FILES",
+);
+
+sub get_caps {
+	my $caps_val = shift;
+	my $pcaps_bits = shift;
+	my %caps_bits = %{$pcaps_bits};
+	my @ret = ();
+
+	foreach my $key (sort keys %caps_bits) {
+		if ($caps_val & $key) {
+			push @ret, $caps_bits{$key};
+			$caps_val = $caps_val & ~$key;
+		}
+	}
+	push @ret, sprintf("0x%x", $caps_val) if ($caps_val);
+	return join " | ", @ret;
+}
+
+sub get_caps_v1 {
+	my $caps_val = shift;
+	return get_caps($caps_val, \%smb1_caps);
+}
+sub get_caps_v2 {
+	my $caps_val = shift;
+	return get_caps($caps_val, \%smb2_caps);
+}
+
+sub parse_input {
+	my $major_vers = shift;
+	my $str = shift;
+	my @ret = ();
+
+	if ($major_vers eq "1") {
+		return get_caps_v1(hex($1)) if ($str =~ /(0x[0-9a-f]+)/);
+	} elsif ($major_vers eq "2" || $major_vers eq "3") {
+		return get_caps_v2(hex($1)) if ($str =~ /(0x[0-9a-f]+)/);
+	}
+
+	return ""
+}
+
+if ($ARGV[0] && $ARGV[1]) {
+	my $str = parse_input($ARGV[0], $ARGV[1]);
+	printf("%s\n", $str);
+} else {
+	printf("usage:  cifs_caps> <smb_major_vers> <capabilities_value>\n");
+	printf("\tsmb_major_vers - [ 1 | 2 | 3 ]\n");
+	printf("\tcapabilities_value - hex value from /proc/fs/cifs/DebugData\n");
+}
