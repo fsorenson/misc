@@ -1,3 +1,19 @@
+/*
+
+   Frank Sorenson <sorenson@redhat.com>, 2020
+
+   	output the results of various getuid()- and getgid()-related calls
+
+	-rwxrwxr-x.   1 sorenson sorenson 20632 Sep 25 15:39 whoami_really*
+	-rw-rw-r--.   1 sorenson sorenson  3808 Sep 25 16:00 whoami_really.c
+	-rwxr-sr-x.   1 root     root     20632 Sep 25 15:12 whoami_really-sgid-root*
+	-rwxrwxr-x.   1 sorenson sorenson 20632 Sep 25 11:46 whoami_really-sgid-sorenson*
+	-rwsr-sr-x.   1 root     root     20632 Sep 25 15:12 whoami_really-sugid-root*
+	-rwsrwsr-x.   1 sorenson sorenson 20632 Sep 25 11:46 whoami_really-sugid-sorenson*
+	-rwsr-xr-x.   1 root     root     20632 Sep 25 15:12 whoami_really-suid-root*
+	-rwsrwxr-x.   1 sorenson sorenson 20632 Sep 25 11:46 whoami_really-suid-sorenson*
+*/
+
 #define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
