@@ -36,22 +36,6 @@
 
 #define BUF_SIZE (1 * MiB)
 
-int usage(int argc, char *argv[], int ret) {
-	printf("usage: %s [-v | --verbose ] [ -q | --quiet ] [ -n | --dry-run ] [ -d | --check-space ] [ <file_to_make_unsparse>\n", argv[0]);
-	printf("\t-h | --help - show this help message\n");
-	printf("\t-v | --verbose - increase verbosity (may be specified more than once)\n");
-	printf("\t-q | --quiet - decrease verbosity\n");
-	printf("\t-n | --dry-run - go through the motions, but do not actually make changes\n");
-	printf("\t\t(useful for testing whether holes exist,\n");
-	printf("\t\t and/or whether there is enough disk space)\n");
-
-	printf("\t-d | --check-space - test whether disk space is available\n");
-	printf("\t\tto contain the newly-occupied holes\n");
-	printf("\t-f | --force - force execution, even if disk space is not available\n");
-	printf("\t\t(note: a disk write will most likely fail)\n");
-	return ret;
-}
-
 struct config_struct {
 	int verbosity;
 	bool check_space;
@@ -68,6 +52,31 @@ struct config_struct {
 	.file_path = NULL
 };
 
+#define output(args...) do { \
+	printf(args); \
+	fflush(stdout); \
+} while (0)
+#define debug_output(_v, args...) do { \
+	if (config.verbosity >= _v) \
+		output(args); \
+} while (0)
+
+int usage(int argc, char *argv[], int ret) {
+	output("usage: %s [-v | --verbose ] [ -q | --quiet ] [ -n | --dry-run ] [ -d | --check-space ] [ <file_to_make_unsparse>\n", argv[0]);
+	output("\t-h | --help - show this help message\n");
+	output("\t-v | --verbose - increase verbosity (may be specified more than once)\n");
+	output("\t-q | --quiet - decrease verbosity\n");
+	output("\t-n | --dry-run - go through the motions, but do not actually make changes\n");
+	output("\t\t(useful for testing whether holes exist,\n");
+	output("\t\t and/or whether there is enough disk space)\n");
+
+	output("\t-c | --check-space - test whether disk space is available\n");
+	output("\t\tto contain the newly-occupied holes\n");
+	output("\t-f | --force - force execution, even if disk space is not available\n");
+	output("\t\t(note: a disk write will most likely fail)\n");
+	return ret;
+}
+
 int parse_args(int argc, char *argv[]) {
 	static struct option long_options[] = {
 		{ "help", no_argument, NULL, 'h' },
@@ -75,6 +84,7 @@ int parse_args(int argc, char *argv[]) {
 		{ "quiet", no_argument, NULL, 'q' },
 		{ "dry-run", no_argument, NULL, 'n'},
 		{ "check-space", no_argument, NULL, 'c' },
+		{ "check", no_argument, NULL, 'c' },
 		{ "force", no_argument, NULL, 'f' },
 		{ NULL, 0, NULL, 0}
 	};
@@ -105,7 +115,7 @@ int parse_args(int argc, char *argv[]) {
 				config.force = true;
 				break;
 			default:
-				printf("unknown argument: %c\n", opt);
+				output("unknown argument: %c\n", opt);
 				break;
 		}
 	}
@@ -149,7 +159,7 @@ uint64_t get_disk_free(const char *path, uint64_t *fs_free) {
 	struct statvfs st_vfs;
 
 	if ((statvfs(path, &st_vfs)) < 0) {
-		printf("unable to stat the filesystem for '%s': %m\n", path);
+		output("unable to stat the filesystem for '%s': %m\n", path);
 		return EXIT_FAILURE;
 	}
 	*fs_free = st_vfs.f_bsize * st_vfs.f_bfree;
@@ -171,15 +181,14 @@ int execute(uint64_t *new_disk_required) {
 		open_opts = O_RDONLY;
 	else {
 		if (! (buf = malloc(BUF_SIZE))) {
-			printf("failed to allocate %llu bytes for buffer\n", BUF_SIZE);
+			output("failed to allocate %llu bytes for buffer\n", BUF_SIZE);
 			ret = EXIT_FAILURE;
 			goto out;
 		}
 		memset(buf, 0, BUF_SIZE);
 	}
-
 	if ((fd = open(config.file_path, open_opts)) < 0) {
-		printf("error opening file: %m\n");
+		output("error opening file: %m\n");
 		ret = EXIT_FAILURE;
 		goto out;
 	}
@@ -189,9 +198,10 @@ int execute(uint64_t *new_disk_required) {
 	while (42) {
 		if (current_pos == file_size)
 			break;
+		debug_output(2, "seeking to next hole above %" PRIu64 "\n", current_pos);
 		if ((new_pos = lseek(fd, current_pos, SEEK_HOLE)) == (off_t)(-1)) {
 			if (errno != ENXIO) {
-				printf("lseek(%d, %lu, SEEK_HOLE) failed with %m\n",
+				output("lseek(%d, %lu, SEEK_HOLE) failed with %m\n",
 					fd, current_pos);
 				ret = EXIT_FAILURE;
 				goto out;
@@ -199,17 +209,17 @@ int execute(uint64_t *new_disk_required) {
 			break;
 		}
 		len = new_pos - current_pos;
-		if (config.verbosity > 1)
-			printf("data from %lu to %lu (%lu bytes)\n", current_pos, new_pos, len);
+		debug_output(2, "data from %lu to %lu (%lu bytes)\n", current_pos, new_pos, len);
 
 		current_pos = new_pos;
 
+		debug_output(2, "seeking to next data above %" PRIu64 "\n", current_pos);
 		if ((new_pos = lseek(fd, current_pos, SEEK_DATA)) == (off_t)(-1)) {
 			if (errno == ENXIO && current_pos < file_size) { /* file ends with a hole */
 				new_pos = file_size;
 			} else {
 				if (errno != ENXIO) {
-					printf("lseek(%d, %lu, SEEK_DATA) failed with %m\n",
+					output("lseek(%d, %lu, SEEK_DATA) failed with %m\n",
 						fd, current_pos);
 					ret = EXIT_FAILURE;
 					goto out;
@@ -219,8 +229,7 @@ int execute(uint64_t *new_disk_required) {
 		}
 
 		len = new_pos - current_pos;
-		if (config.verbosity > 1)
-			printf("hole from %lu to %lu (%lu bytes)\n", current_pos, new_pos, len);
+		debug_output(2, "hole from %lu to %lu (%lu bytes)\n", current_pos, new_pos, len);
 
 		if (new_disk_required)
 			*new_disk_required += len;
@@ -231,7 +240,7 @@ int execute(uint64_t *new_disk_required) {
 				this_write_len = BUF_SIZE;
 			if ((pwrite(fd, buf, this_write_len, current_pos)) < 0) {
 				if (errno == ENOSPC || errno == EDQUOT || errno == EIO) {
-					printf("write failed due to %s\n",
+					output("write failed due to %s\n",
 						errno == ENOSPC ? "full disk" :
 						errno == EDQUOT ? "disk quota" :
 						errno == EIO ? "IO error" :
@@ -239,15 +248,14 @@ int execute(uint64_t *new_disk_required) {
 					ret = EXIT_FAILURE;
 					goto out;
 				} else { /* maybe just wrap this in the previous print statement? */
-					printf("write failed: %m\n");
+					output("write failed: %m\n");
 				}
 			}
 			current_pos += this_write_len;
 		}
-
 /*
 		if ((fallocate(fd, FALLOC_FL_KEEP_SIZE|FALLOC_FL_ZERO_RANGE, current_pos, len)) < 0) {
-			printf("fallocate returned an error: %m\n");
+			output("fallocate returned an error: %m\n");
 		}
 */
 		holes_chewed++;
@@ -258,14 +266,15 @@ out:
 		close(fd);
 
 	if (ret == EXIT_SUCCESS) {
-		if (config.verbosity > 1 && errno == ENXIO)
-			printf("looks like we're complete\n");
+		if (errno == ENXIO)
+			debug_output(2, "looks like we're complete\n");
 
-		if (config.verbosity > 0 && ! holes_chewed)
-			printf("no holes found\n");
-		else if (config.verbosity > 0 && ! config.dry_run)
-			printf("chewed %lu hole%s\n", holes_chewed, holes_chewed == 1 ? "" : "s");
-	}
+		if (! holes_chewed)
+			debug_output(1, "no holes found\n");
+		else debug_output(1, "%s %lu hole%s\n",
+			config.dry_run ? "found" : "chewed", holes_chewed,
+			holes_chewed == 1 ? "" : "s");
+	} else output("ret = %d, errno = %d\n", ret, errno);
 
 	if (! new_disk_required)
 		free(buf);
@@ -281,14 +290,17 @@ int main(int argc, char *argv[]) {
 		return usage(argc, argv, EXIT_SUCCESS);
 
 	if (optind >= argc) {
-		printf("no file specified\n");
+		output("no file specified\n");
 		return usage(argc, argv, EXIT_FAILURE);
 	}
 	config.file_path = canonicalize_file_name(argv[optind]);
 	if (! config.file_path) {
-		printf("unable to find file '%s': %m\n", argv[optind]);
+		output("unable to find file '%s': %m\n", argv[optind]);
 		return EXIT_FAILURE;
 	}
+//	if (config.dry_run && config.verbosity)
+	if (config.dry_run) // if doing dry-run, what would the user mean, besides 'check'?
+		config.check_space = true;
 	if (config.check_space) {
 		uint64_t new_disk_required = 0;
 		uint64_t fs_free;
@@ -302,13 +314,13 @@ int main(int argc, char *argv[]) {
 		if (fs_free < new_disk_required) {
 			char *size_str = byte_units(new_disk_required - fs_free);
 
-
-			printf("Insufficient disk space to unsparse '%s'; need %s more\n",
+			output("Insufficient disk space to unsparse '%s'; need %s more\n",
 				config.file_path, size_str);
-			free(size_str);
+			if (size_str)
+				free(size_str);
 			if (! config.force)
 				return EXIT_FAILURE;
-			printf("attempt to unsparse forced; this may fail due to insufficient disk space remaining\n");
+			output("attempt to unsparse forced; this may fail due to insufficient disk space remaining\n");
 		}
 	}
 
