@@ -1,0 +1,80 @@
+#!/usr/bin/perl -w
+
+# Frank Sorenson <sorenson@redhat.com>, 2021
+
+use warnings;
+use strict;
+
+use Time::HiRes qw(usleep);
+
+my ($localdir, $cifsdir, $sizes_str) = ( "/home/user1", "/mnt/tmp", "10411,55431" );
+# alt: 10411,16385,55431,65536,75678
+
+my $ARGC = scalar @ARGV;
+
+$localdir = $ARGV[0] if ($ARGC > 0);
+$cifsdir = $ARGV[1] if ($ARGC > 1);
+$sizes_str = $ARGV[2] if ($ARGC > 2);
+
+my @sizes = split(/,/, $sizes_str);
+my $sizes_count = scalar @sizes;
+
+sub write_file {
+	my ($fname, $char, $count) = @_;
+
+	open(FH, '>', $fname) or die $!;
+	printf FH '%s', ${char}x$count;
+	close FH;
+}
+sub read_to_devnull {
+	my $fname = shift;
+	open(FH, $fname) or die $!;
+	while (read(FH, my $data, 1048576)) {
+
+	}
+	close(FH);
+}
+
+sub usage() {
+	printf("%s [ <local_directory> [ <cifs_directory> [ <file_size>,<file_size>[,<file_size>[,<file_size>]] ] ] ]\n",
+		$0);
+}
+
+
+if ( $sizes_count lt 2) {
+	printf("need sequence of file sizes, separated by ','\n");
+	usage();
+	exit(1);
+}
+
+my $chars = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+if ($sizes_count gt length($chars)) {
+	printf("exceeded maximum number of file sizes (%d)\n", length($chars));
+	usage();
+	exit(1);
+}
+
+unlink glob("$cifsdir/testdir/data*");
+system("/usr/bin/sync");
+system("/usr/sbin/sysctl vm.drop_caches=3 >/dev/null 2>&1");
+
+my $last_file="";
+my $filenum = 0;
+for ($filenum = 0 ; $filenum < $sizes_count ; $filenum++) {
+	my $this_count = $sizes[$filenum];
+	my $this_char = substr($chars, $filenum, 1);
+	my $this_file = "testdir/data$filenum";
+
+	if ($filenum ne 0) {
+		usleep(100000); # sleep 0.10 sec
+		unlink("$localdir/$last_file");
+	}
+	write_file("$localdir/$this_file", $this_char, $this_count);
+
+	if ($filenum < ($sizes_count - 1)) {
+		read_to_devnull("$cifsdir/$this_file");
+	}
+	$last_file = $this_file;
+}
+printf("resulting file:\n");
+system("/usr/bin/hexdump -C $cifsdir/$last_file");
