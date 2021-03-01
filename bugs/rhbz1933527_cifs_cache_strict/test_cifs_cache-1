@@ -1,0 +1,77 @@
+#!/bin/bash
+
+localdir=${1:-/home/user1}
+cifsdir=${2:-/mnt/tmp}
+#sizes_str=${3:-10411:55431}
+sizes_str=${3:-10411:16385:55431:65536:75678}
+OIFS="$IFS"
+IFS=: sizes=( $sizes_str )
+IFS="$OIFS"
+sizes_count=${#sizes[*]}
+
+DEBUG=0
+
+localdir="$localdir/testdir"
+cifsdir="$cifsdir/testdir"
+
+mkdir -p $cifsdir
+#chmod 06777 $cifsdir
+#chmod 06777 $cifsdir
+#chown root:root $localdir
+#chown user1:user1 $localdir
+#chmod 06777 $localdir
+
+
+usage() {
+	echo "$0 [ <local_directory> [ <cifs_directory> [ <file_size>:<file_size>[:<file_size>[:<file_size>]] ] ] ]"
+}
+exec_cmd() {
+	[[ $DEBUG -gt 0 ]] && echo "${@}"
+	eval "${@}"
+}
+
+[[ $sizes_count -lt 2 ]] && {
+	echo "Need sequence of file sizes, separated by ':'"
+	usage
+	exit 1
+}
+
+chars="0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+[[ $sizes_count -gt $(expr length $chars) ]] && {
+	echo "Exceeded maximum number of file sizes ($(expr length $sizes))"
+	usage
+	exit 1
+}
+
+
+exec_cmd "rm -f $cifsdir/data[0-9]*"
+exec_cmd "sync"
+exec_cmd "sysctl vm.drop_caches=3 >/dev/null 2>&1"
+
+lastfile=""
+for filenum in $(eval echo {0..$(( $sizes_count - 1))}) ; do
+	this_count="${sizes[$filenum]}"
+	this_char=${chars:$filenum:1}
+	this_file="data$filenum"
+
+	if [[ $filenum -eq 0 ]] ; then
+:
+#		exec_cmd "perl -e \"printf('%s', '$this_char'x$this_count);\" >$cifsdir/$this_file"
+	else
+		exec_cmd "sleep 0.10"
+		exec_cmd "rm -f $localdir/$last_file"
+#		exec_cmd "perl -e \"printf('%s', '$this_char'x$this_count);\" >$localdir/$this_file"
+	fi
+
+
+#	exec_cmd "perl -e \"printf('%s', '$this_char'x$this_count);\" >$localdir/$this_file"
+	exec_cmd "perl -e \"printf('%s', '$this_char'x$this_count);\" >$localdir/$this_file"
+
+
+	[[ $filenum -lt $(($sizes_count - 1)) ]] && exec_cmd "cat $cifsdir/$this_file >/dev/null"
+
+	last_file=$this_file
+done
+
+echo "resulting file:"
+hexdump -C $cifsdir/data$filenum
