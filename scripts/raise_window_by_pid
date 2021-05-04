@@ -1,0 +1,35 @@
+#!/bin/bash
+
+# raise_window_by_pid - Frank Sorenson <sorenson@redhat.com>, 2021
+#
+# usage:  raise_window_by_pid <PID>
+#
+# raise the X window that has <PID>, if <PID> is the process associated
+#     with the X window ID, or the X window ID associated with an
+#     ancestor pid of <PID>
+
+pid=${1:-}
+[[ -z $pid ]] && {
+	echo "usage: $0 <pid>"
+	exit 1
+}
+current_pid=$(ps h -p $pid -o pid:1)
+[[ -z $current_pid ]] && {
+	echo "pid $pid not found"
+	exit 1
+}
+while [[ 42 ]] ; do
+	window_id=$(wmctrl -lp | awk -vpid=$current_pid '($3==pid){print $1}')
+	[[ -n $window_id ]] && break # found a window
+
+	ppid=$(ps h -p $current_pid -o ppid:1)
+	[[ -z $ppid ]] && break # no parent pid? maybe the process exited
+	[[ $ppid -eq 0 || $ppid -eq 1 ]] && { current_pid=0 ; break ; } # can't raise pid 0/1
+	current_pid=$ppid
+done
+if [[ -z $window_id ]] ; then
+	echo "unable to locate a window id for pid $pid"
+	exit 1
+fi
+echo "raising window id '$window_id'"
+xdotool windowraise $window_id
