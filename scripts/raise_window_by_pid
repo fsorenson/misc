@@ -31,5 +31,7 @@ if [[ -z $window_id ]] ; then
 	echo "unable to locate a window id for pid $pid"
 	exit 1
 fi
-echo "raising window id '$window_id'"
-xdotool windowraise $window_id
+for id in $window_id ; do
+	echo "raising window id '$id'"
+	xdotool windowraise $id
+done
