@@ -116,13 +116,14 @@ realloc_buf:
 	buf = malloc(sizeof(*buf) + buflen);
 //	while (buf != NULL && ((err = getgrnam(group_name, &buf->grbuf, buf->buf, buflen, &gr)) == ERANGE)) {
 	while (buf != NULL && ((err = getgrnam_r(group_name, &buf->grbuf, buf->buf, buflen, &gr)) == ERANGE)) {
-		char *newbuf;
+		struct grbuf *newbuf;
 		buflen += sysconf(_SC_GETGR_R_SIZE_MAX);
 		newbuf = realloc(buf, sizeof(*buf) + buflen);
 		if (newbuf == NULL) {
 			printf("unable to allocate memory\n");
 			goto out;
 		}
+		buf = newbuf;
 	}
 
 #endif
