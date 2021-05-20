@@ -1,0 +1,457 @@
+live system walkthrough using crash, focusing on filesystem-related kernel structures
+
+Frank Sorenson <sorenson@redhat.com>, 2017-03-02
+
+
+This is intended to be a follow-along-at-home that you do on a live system.  If you just try to read through it, you'll have some excellent bedtime reading material.  Try it yourself, and experiment!  (You may need to adjust some commands or paths to your particular system)
+
+Everything should be safe, but you may want to use a test box anyway.
+
+Examples here are with a live RHEL 7.3 test VM, but distribution is probably not important.  Other kernels will generally be similar, though there will be some changes you may run into.
+
+
+at least 3 terminals open
+ * one for crash
+ * one or more bash
+ * one with vim, where you can copy terminal or crash output (optional, but you'll probably get lost if you don't)
+   (alternately, open a pastebin or other scratch space)
+
+
+(as root)
+# export CRASHPAGER='/usr/bin/less -X -F'
+# echo "set null-stop on" > ~/.crashrc
+
+# crash
+
+crash> sys
+      KERNEL: /usr/lib/debug/lib/modules/3.10.0-327.10.1.el7.x86_64/vmlinux
+...
+
+crash> mod -S /usr/lib/debug/lib/modules/3.10.0-327.10.1.el7.x86_64/
+...
+
+crash> set scroll on
+
+
+(pick some process...  say, rsyslogd)
+
+# pidof rsyslogd
+655
+
+
+(pick some file it has open, such as /var/log/messages)
+
+# lsof -p 655 | head -1
+COMMAND  PID USER   FD      TYPE DEVICE SIZE/OFF      NODE NAME
+
+# lsof -p 655 | grep messages
+rsyslogd 655 root    7w      REG  253,2   321922 103965478 /var/log/messages
+
+? what is the open fd
+? what is the inode number
+? what is the file open mode?
+? what is the file size?
+
+
+# ls -l /proc/655/fd/7
+l-wx------ 1 root root 64 Mar  1 13:01 /proc/655/fd/7 -> /var/log/messages
+
+# ls -lin /var/log/messages
+103965478 -rw------- 1 0 0 321922 Mar  1 13:10 /var/log/messages
+
+# stat /var/log/messages
+  File: ‘/var/log/messages’
+  Size: 321922    	Blocks: 632        IO Block: 4096   regular file
+Device: fd02h/64770d	Inode: 103965478   Links: 1
+Access: (0600/-rw-------)  Uid: (    0/    root)   Gid: (    0/    root)
+Access: 2017-03-01 03:22:10.316573526 -0600
+Modify: 2017-03-01 13:10:02.278391146 -0600
+Change: 2017-03-01 13:10:02.278391146 -0600
+ Birth: -
+
+
+? any other users of the file?
+
+# fuser /var/log/messages
+/var/log/messages:     655
+
+really?
+
+crash> fuser /var/log/messages
+ PID         TASK        COMM             USAGE
+  655  ffff880046d43980  "rsyslogd"       fd
+  672  ffff880036019700  "in:imjournal"   fd
+  673  ffff88004445b980  "rs:main Q:Reg"  fd
+
+# ls -l /proc/655/task
+total 0
+dr-xr-xr-x 6 root root 0 Mar  2 08:40 655
+dr-xr-xr-x 6 root root 0 Mar  2 08:40 672
+dr-xr-xr-x 6 root root 0 Mar  2 08:40 673
+
+
+
+
+crash> set 655
+    PID: 655
+COMMAND: "rsyslogd"
+   TASK: ffff880046d43980  [THREAD_INFO: ffff880046ebc000]
+    CPU: 0
+  STATE: TASK_INTERRUPTIBLE
+
+crash> files | head -3
+PID: 655    TASK: ffff880046d43980  CPU: 0   COMMAND: "rsyslogd"
+ROOT: /    CWD: /
+ FD       FILE            DENTRY           INODE       TYPE PATH
+
+crash> files | grep messages
+  7 ffff880024365d00 ffff8800476703c0 ffff880003641b38 REG  /var/log/messages
+
+
+? with the inode, dentry, and file addresses, where can we get the information we saw in userspace?
+
+
+
+crash> struct file.f_path,f_inode,f_mapping,f_pos ffff880024365d00
+  f_path = {
+    mnt = 0xffff880036186220,
+    dentry = 0xffff8800476703c0
+  }
+  f_inode = 0xffff880003641b38
+  f_mapping = 0xffff880003641c88
+  f_pos = 321922
+
+
+crash> inode.i_sb,i_ino,i_size ffff880003641b38
+  i_sb = 0xffff8800355b9800
+  i_ino = 103965478
+  i_size = 321922
+
+
+some file attributes:
+
+crash> inode.i_mode,i_uid,i_gid,i_nlink,i_count,i_atime,i_mtime,i_ctime ffff880003641b38
+  i_mode = 33152
+  i_uid = {
+    val = 0
+  }
+  i_gid = {
+    val = 0
+  }
+    i_nlink = 1
+  i_count = {
+    counter = 1
+  }
+  i_atime = {
+    tv_sec = 1488395952,
+    tv_nsec = 465247926
+  }
+  i_mtime = {
+    tv_sec = 1488396914,
+    tv_nsec = 269684239
+  }
+  i_ctime = {
+    tv_sec = 1488396914,
+    tv_nsec = 269684239
+  }
+
+crash> eval 33152 | grep octal
+      octal: 100600
+
+(i_mode contains both the file type and the mode - see the manpage for stat(2), where S_IFMT is described... this value means regular file with mode=0600)
+
+
+i_uid/i_gid are user/group owners
+
+
+i_nlink refers to the link count... the number of dentries pointing to this inode
+
+
+atime, mtime, ctime are 'struct timespec', which has seconds.nanoseconds since 'Thu Jan  1 00:00:00 UTC 1970'
+
+$ date -d @1488395952.465247926
+Wed Mar  1 13:19:12 CST 2017
+
+
+from the file.f_path, we get the dentry:
+    dentry = 0xffff8800476703c0
+
+crash> files -d 0xffff8800476703c0
+     DENTRY           INODE           SUPERBLK     TYPE PATH
+ffff8800476703c0 ffff880003641b38 ffff8800355b9800 REG  /var/log/messages
+
+d_inode points back to the inode
+crash> dentry.d_inode ffff8800476703c0
+  d_inode = 0xffff880003641b38
+
+
+crash> dentry.d_name.name,d_iname,d_parent ffff8800476703c0
+  d_name.name = 0xffff8800476703f8 "messages"
+  d_iname = "messages"
+  d_parent = 0xffff88004882d6c0
+
+crash> dentry.d_name.name,d_iname,d_parent 0xffff88004882d6c0
+  d_name.name = 0xffff88004882d6f8 "log"
+  d_iname = "log"
+  d_parent = 0xffff8800476b4180
+
+crash> dentry.d_name.name,d_iname,d_parent 0xffff8800476b4180
+  d_name.name = 0xffff8800476b41b8 "var"
+  d_iname = "var"
+  d_parent = 0xffff880034cf0d80
+
+crash> dentry.d_name.name,d_iname,d_parent 0xffff880034cf0d80
+  d_name.name = 0xffff880034cf0db8 "/"
+  d_iname = "/"
+  d_parent = 0xffff880034cf0d80
+
+(d_parent is itself)
+
+
+? going the other way, what are the contents of /var/log (such as when we do 'ls') ?
+
+/var/log's dentry is 0xffff88004882d6c0
+
+first, list /var/log so that all the dentries are in the cache (not worrying about how we populate this right now)
+crash> !ls -al /var/log >/dev/null
+
+
+crash> files -d 0xffff88004882d6c0
+     DENTRY           INODE           SUPERBLK     TYPE PATH
+ffff88004882d6c0 ffff8800474cf078 ffff8800355b9800 DIR  /var/log
+
+crash> dentry.d_subdirs -o ffff88004882d6c0
+struct dentry {
+  [ffff88004882d760] struct list_head d_subdirs;
+
+(it's a list_head, and we need the address of the head, not the contents of that scruct, hence the '-o')
+
+lists are a difficult concept...  a list_head has forward and backward pointers, where the pointers form a circular list in each direction:
+
+crash> list_head ffff88004882d760
+struct list_head {
+  next = 0xffff88003b317450,
+  prev = 0xffff880034dab750
+
+the list_head of the ->next address has ->prev pointing back:
+crash> list_head 0xffff88003b317450
+struct list_head {
+  next = 0xffff88003b317990,
+  prev = 0xffff88004882d760
+
+and ->prev->next also points back
+crash> list_head 0xffff880034dab750
+struct list_head {
+  next = 0xffff88004882d760,
+  prev = 0xffff880034e24210
+
+traverse the list with 'list' and use the list_head address (and since this is a 'list_head *', use '-H'):
+
+crash> list -H ffff88004882d760 | head -5
+ffff880010847690
+ffff88003b317450
+ffff88003b317990
+ffff88003b317210
+ffff88003b317510
+
+this list is a list of the contents of /var/log, and d_subdirs is a pointer to that list.
+
+
+there are 71 files or directories in /var/log
+
+crash> list -H ffff88004882d760 | wc -l
+71
+
+crash> !ls -l /var/log | wc -l
+72
+(one extra line was added by ls)
+
+
+However, the dentries inside /var/log are linked using the d_child list (a list of the siblings of this particular dentry).  Since the list_head is not the first member of the struct, we'll need to subtract the offset to get the actual address of the struct.  To complicate things even more, d_child is part of a union, so we can't address it directly.  so...
+
+crash> dentry -ox
+struct dentry {
+...
+  [0x80] struct list_head d_lru;
+         union {
+             struct list_head d_child;
+             struct callback_head d_rcu;
+  [0x90] } d_u;
+  [0xa0] struct list_head d_subdirs;
+...
+
+the offset is 0x90 or dentry.d_u
+
+crash> list -H ffff88004882d760 -o 0x90
+or
+crash> list -H ffff88004882d760 -o dentry.d_u
+
+crash> list -H ffff88004882d760 -o dentry.d_u | head -5
+ffff880010847600
+ffff88003b3173c0
+ffff88003b317900
+ffff88003b317180
+ffff88003b317480
+
+we can also tell 'list' which fields we want it to output:
+
+crash> list -H ffff88004882d760 -o dentry.d_u -s dentry.d_name.name,d_iname | head -10
+ffff880010847600
+  d_name.name = 0xffff880010847638 "pcp"
+  d_iname = "pcp"
+ffff88003b3173c0
+  d_name.name = 0xffff88003b3173f8 "secure-20170212"
+  d_iname = "secure-20170212"
+ffff88003b317900
+  d_name.name = 0xffff88003b317938 "messages-20170212"
+  d_iname = "messages-20170212"
+ffff88003b317180
+
+(just to check a couple...)
+crash> files -d ffff880010847600
+     DENTRY           INODE           SUPERBLK     TYPE PATH
+ffff880010847600 ffff880034ecb8f8 ffff8800355b9800 DIR  /var/log/pcp
+
+crash> files -d ffff88003b3173c0
+     DENTRY           INODE           SUPERBLK     TYPE PATH
+ffff88003b3173c0 ffff8800105dfd38 ffff8800355b9800 REG  /var/log/secure-20170212
+
+
+the super_block...
+
+these all have the super_block of ffff8800355b9800
+
+crash> mount | head -1
+     MOUNT           SUPERBLK     TYPE   DEVNAME   DIRNAME
+
+crash> mount | grep ffff8800355b9800
+ffff880036186200 ffff8800355b9800 xfs    /dev/vda2 /
+
+crash> super_block.s_magic,s_dev,s_id,s_type ffff8800355b9800 -x
+  s_magic = 0x58465342
+  s_dev = 0xfd00002
+  s_id = "vda2"
+  s_type = 0xffffffffa02504a0 <xfs_fs_type>
+
+crash> !dd if=/dev/vda2 bs=4 count=1 2>/dev/null | hexdump -C
+00000000  58 46 53 42                                       |XFSB|
+
+note the s_dev matches the stat output from earlier:
+	Device: fd02h/64770d
+and
+# ls -l /dev/vda2
+brw-rw---- 1 root disk 253, 2 Mar  1 01:30 /dev/vda2
+
+and
+# lsof -p 655 | grep messages
+rsyslogd 655 root    7w      REG  253,2   321922 103965478 /var/log/messages
+
+
+
+*** address_space ***
+a file may not fit entirely in memory, and pages may have been discarded.  the 'address_space' keeps track of this information
+
+we found the address_space earlier:
+
+crash> struct file.f_path,f_inode,f_mapping,f_pos ffff880024365d00
+...
+  f_mapping = 0xffff880003641c88
+
+or we could get it from the inode:
+
+crash> p &((struct inode *)0xffff880003641b38).i_data
+$5 = (struct address_space *) 0xffff880003641c88
+
+crash> address_space.host,nrpages 0xffff880003641c88
+  host = 0xffff880003641b38
+  nrpages = 5
+
+although the inode's size was 321922 (the size of the file), only 5 pages are currently in memory:
+crash> pd 5*4096
+$6 = 20480
+
+crash> address_space.page_tree 0xffff880003641c88 -o
+struct address_space {
+  [ffff880003641c90] struct radix_tree_root page_tree;
+
+without getting too far into it, this is a tree of pages... dump it like:
+crash> tree -t ra ffff880003641c90
+
+or for example,
+crash> tree -t ra ffff880003641c90 -s page.index,flags
+
+
+now, drop_caches and see how many pages there are
+
+crash> address_space.nrpages,nrshadows 0xffff880003641c88 -d
+  nrpages = 5
+  nrshadows = 76
+
+crash> !echo 3 > /proc/sys/vm/drop_caches
+
+crash> address_space.nrpages,nrshadows 0xffff880003641c88 -d
+  nrpages = 1
+  nrshadows = 80
+
+
+read the file to cache its contents:
+crash> !cat /var/log/messages >/dev/null
+
+crash> address_space.nrpages,nrshadows 0xffff880003641c88 -d
+  nrpages = 81
+  nrshadows = 0
+
+(the file has grown since I started this, so:
+crash> !ls -l /var/log/messages
+-rw------- 1 root root 330028 Mar  1 15:40 /var/log/messages
+
+crash> pd (81*4096)
+$2 = 331776
+
+(which is enough pages to hold the entire file)
+
+
+
+other things to fiddle with:
+
+bind-mount / onto /mnt/tmp
+	what changed?
+		stat / /mnt/tmp
+		crash> super_block.s_active ffff8800355b9800
+		crash> mount | grep ffff8800355b9800
+
+hardlink /var/log/messages
+	# ln /var/log/messages /var/log/messages-copy
+	what changed?
+		# stat /var/log/messages /var/log/messages-copy
+		crash> inode.i_nlink
+
+open /var/log/messages with 'less'
+	what is shared or different between rsyslogd and less?
+
+the 'super_block' structs are linked with super_block.s_list, and there's a list_head for all of them named super_blocks...  list the super_blocks, and some information about them, for example:
+	crash> list -H super_blocks -s super_block.s_id
+
+watch how the number objects in the slab caches change when you drop_caches or run 'find /var', etc.
+	crash> kmem -i
+	crash> kmem -s
+
+write a systemtap which probes something interesting in the path lookup or file open code, and output information about the dentry, inode, backtrace (or whatever).
+	for example: vfs_path_lookup() or do_path_lookup()
+
+
+
+use pykdump crash extension:
+	# mkdir ~/crash
+	# cp mpykdump64.so ~/crash
+	(internal to Red Hat, may be on the retrace server at /cores/crashext/mpykdump$(uname -m).so
+
+	# echo "extend /root/crash/mpykdump64.so" >> ~/.crashrc
+
+	create hello world program:
+		crash> epython hello_world.py
+		hello world
+
+	python script that accepts a dentry (or inode, file, or...) and outputs some information about it and the structs reachable through it
+
+...
