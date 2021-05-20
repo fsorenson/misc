@@ -1,0 +1,1664 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN"
+    "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="application/xhtml+xml; charset=UTF-8" />
+<meta name="generator" content="AsciiDoc 9.1.0" />
+<title>Writing a fuse filesystem</title>
+<style type="text/css">
+/* Shared CSS for AsciiDoc xhtml11 and html5 backends */
+
+/* Default font. */
+body {
+  font-family: Georgia,serif;
+}
+
+/* Title font. */
+h1, h2, h3, h4, h5, h6,
+div.title, caption.title,
+thead, p.table.header,
+#toctitle,
+#author, #revnumber, #revdate, #revremark,
+#footer {
+  font-family: Arial,Helvetica,sans-serif;
+}
+
+body {
+  margin: 1em 5% 1em 5%;
+}
+
+a {
+  color: blue;
+  text-decoration: underline;
+}
+a:visited {
+  color: fuchsia;
+}
+
+em {
+  font-style: italic;
+  color: navy;
+}
+
+strong {
+  font-weight: bold;
+  color: #083194;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  color: #527bbd;
+  margin-top: 1.2em;
+  margin-bottom: 0.5em;
+  line-height: 1.3;
+}
+
+h1, h2, h3 {
+  border-bottom: 2px solid silver;
+}
+h2 {
+  padding-top: 0.5em;
+}
+h3 {
+  float: left;
+}
+h3 + * {
+  clear: left;
+}
+h5 {
+  font-size: 1.0em;
+}
+
+div.sectionbody {
+  margin-left: 0;
+}
+
+hr {
+  border: 1px solid silver;
+}
+
+p {
+  margin-top: 0.5em;
+  margin-bottom: 0.5em;
+}
+
+ul, ol, li > p {
+  margin-top: 0;
+}
+ul > li     { color: #aaa; }
+ul > li > * { color: black; }
+
+.monospaced, code, pre {
+  font-family: "Courier New", Courier, monospace;
+  font-size: inherit;
+  color: navy;
+  padding: 0;
+  margin: 0;
+}
+pre {
+  white-space: pre-wrap;
+}
+
+#author {
+  color: #527bbd;
+  font-weight: bold;
+  font-size: 1.1em;
+}
+#email {
+}
+#revnumber, #revdate, #revremark {
+}
+
+#footer {
+  font-size: small;
+  border-top: 2px solid silver;
+  padding-top: 0.5em;
+  margin-top: 4.0em;
+}
+#footer-text {
+  float: left;
+  padding-bottom: 0.5em;
+}
+#footer-badges {
+  float: right;
+  padding-bottom: 0.5em;
+}
+
+#preamble {
+  margin-top: 1.5em;
+  margin-bottom: 1.5em;
+}
+div.imageblock, div.exampleblock, div.verseblock,
+div.quoteblock, div.literalblock, div.listingblock, div.sidebarblock,
+div.admonitionblock {
+  margin-top: 1.0em;
+  margin-bottom: 1.5em;
+}
+div.admonitionblock {
+  margin-top: 2.0em;
+  margin-bottom: 2.0em;
+  margin-right: 10%;
+  color: #606060;
+}
+
+div.content { /* Block element content. */
+  padding: 0;
+}
+
+/* Block element titles. */
+div.title, caption.title {
+  color: #527bbd;
+  font-weight: bold;
+  text-align: left;
+  margin-top: 1.0em;
+  margin-bottom: 0.5em;
+}
+div.title + * {
+  margin-top: 0;
+}
+
+td div.title:first-child {
+  margin-top: 0.0em;
+}
+div.content div.title:first-child {
+  margin-top: 0.0em;
+}
+div.content + div.title {
+  margin-top: 0.0em;
+}
+
+div.sidebarblock > div.content {
+  background: #ffffee;
+  border: 1px solid #dddddd;
+  border-left: 4px solid #f0f0f0;
+  padding: 0.5em;
+}
+
+div.listingblock > div.content {
+  border: 1px solid #dddddd;
+  border-left: 5px solid #f0f0f0;
+  background: #f8f8f8;
+  padding: 0.5em;
+}
+
+div.quoteblock, div.verseblock {
+  padding-left: 1.0em;
+  margin-left: 1.0em;
+  margin-right: 10%;
+  border-left: 5px solid #f0f0f0;
+  color: #888;
+}
+
+div.quoteblock > div.attribution {
+  padding-top: 0.5em;
+  text-align: right;
+}
+
+div.verseblock > pre.content {
+  font-family: inherit;
+  font-size: inherit;
+}
+div.verseblock > div.attribution {
+  padding-top: 0.75em;
+  text-align: left;
+}
+/* DEPRECATED: Pre version 8.2.7 verse style literal block. */
+div.verseblock + div.attribution {
+  text-align: left;
+}
+
+div.admonitionblock .icon {
+  vertical-align: top;
+  font-size: 1.1em;
+  font-weight: bold;
+  text-decoration: underline;
+  color: #527bbd;
+  padding-right: 0.5em;
+}
+div.admonitionblock td.content {
+  padding-left: 0.5em;
+  border-left: 3px solid #dddddd;
+}
+
+div.exampleblock > div.content {
+  border-left: 3px solid #dddddd;
+  padding-left: 0.5em;
+}
+
+div.imageblock div.content { padding-left: 0; }
+span.image img { border-style: none; vertical-align: text-bottom; }
+a.image:visited { color: white; }
+
+dl {
+  margin-top: 0.8em;
+  margin-bottom: 0.8em;
+}
+dt {
+  margin-top: 0.5em;
+  margin-bottom: 0;
+  font-style: normal;
+  color: navy;
+}
+dd > *:first-child {
+  margin-top: 0.1em;
+}
+
+ul, ol {
+    list-style-position: outside;
+}
+ol.arabic {
+  list-style-type: decimal;
+}
+ol.loweralpha {
+  list-style-type: lower-alpha;
+}
+ol.upperalpha {
+  list-style-type: upper-alpha;
+}
+ol.lowerroman {
+  list-style-type: lower-roman;
+}
+ol.upperroman {
+  list-style-type: upper-roman;
+}
+
+div.compact ul, div.compact ol,
+div.compact p, div.compact p,
+div.compact div, div.compact div {
+  margin-top: 0.1em;
+  margin-bottom: 0.1em;
+}
+
+tfoot {
+  font-weight: bold;
+}
+td > div.verse {
+  white-space: pre;
+}
+
+div.hdlist {
+  margin-top: 0.8em;
+  margin-bottom: 0.8em;
+}
+div.hdlist tr {
+  padding-bottom: 15px;
+}
+dt.hdlist1.strong, td.hdlist1.strong {
+  font-weight: bold;
+}
+td.hdlist1 {
+  vertical-align: top;
+  font-style: normal;
+  padding-right: 0.8em;
+  color: navy;
+}
+td.hdlist2 {
+  vertical-align: top;
+}
+div.hdlist.compact tr {
+  margin: 0;
+  padding-bottom: 0;
+}
+
+.comment {
+  background: yellow;
+}
+
+.footnote, .footnoteref {
+  font-size: 0.8em;
+}
+
+span.footnote, span.footnoteref {
+  vertical-align: super;
+}
+
+#footnotes {
+  margin: 20px 0 20px 0;
+  padding: 7px 0 0 0;
+}
+
+#footnotes div.footnote {
+  margin: 0 0 5px 0;
+}
+
+#footnotes hr {
+  border: none;
+  border-top: 1px solid silver;
+  height: 1px;
+  text-align: left;
+  margin-left: 0;
+  width: 20%;
+  min-width: 100px;
+}
+
+div.colist td {
+  padding-right: 0.5em;
+  padding-bottom: 0.3em;
+  vertical-align: top;
+}
+div.colist td img {
+  margin-top: 0.3em;
+}
+
+@media print {
+  #footer-badges { display: none; }
+}
+
+#toc {
+  margin-bottom: 2.5em;
+}
+
+#toctitle {
+  color: #527bbd;
+  font-size: 1.1em;
+  font-weight: bold;
+  margin-top: 1.0em;
+  margin-bottom: 0.1em;
+}
+
+div.toclevel0, div.toclevel1, div.toclevel2, div.toclevel3, div.toclevel4 {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+div.toclevel2 {
+  margin-left: 2em;
+  font-size: 0.9em;
+}
+div.toclevel3 {
+  margin-left: 4em;
+  font-size: 0.9em;
+}
+div.toclevel4 {
+  margin-left: 6em;
+  font-size: 0.9em;
+}
+
+span.aqua { color: aqua; }
+span.black { color: black; }
+span.blue { color: blue; }
+span.fuchsia { color: fuchsia; }
+span.gray { color: gray; }
+span.green { color: green; }
+span.lime { color: lime; }
+span.maroon { color: maroon; }
+span.navy { color: navy; }
+span.olive { color: olive; }
+span.purple { color: purple; }
+span.red { color: red; }
+span.silver { color: silver; }
+span.teal { color: teal; }
+span.white { color: white; }
+span.yellow { color: yellow; }
+
+span.aqua-background { background: aqua; }
+span.black-background { background: black; }
+span.blue-background { background: blue; }
+span.fuchsia-background { background: fuchsia; }
+span.gray-background { background: gray; }
+span.green-background { background: green; }
+span.lime-background { background: lime; }
+span.maroon-background { background: maroon; }
+span.navy-background { background: navy; }
+span.olive-background { background: olive; }
+span.purple-background { background: purple; }
+span.red-background { background: red; }
+span.silver-background { background: silver; }
+span.teal-background { background: teal; }
+span.white-background { background: white; }
+span.yellow-background { background: yellow; }
+
+span.big { font-size: 2em; }
+span.small { font-size: 0.6em; }
+
+span.underline { text-decoration: underline; }
+span.overline { text-decoration: overline; }
+span.line-through { text-decoration: line-through; }
+
+div.unbreakable { page-break-inside: avoid; }
+
+
+/*
+ * xhtml11 specific
+ *
+ * */
+
+div.tableblock {
+  margin-top: 1.0em;
+  margin-bottom: 1.5em;
+}
+div.tableblock > table {
+  border: 3px solid #527bbd;
+}
+thead, p.table.header {
+  font-weight: bold;
+  color: #527bbd;
+}
+p.table {
+  margin-top: 0;
+}
+/* Because the table frame attribute is overridden by CSS in most browsers. */
+div.tableblock > table[frame="void"] {
+  border-style: none;
+}
+div.tableblock > table[frame="hsides"] {
+  border-left-style: none;
+  border-right-style: none;
+}
+div.tableblock > table[frame="vsides"] {
+  border-top-style: none;
+  border-bottom-style: none;
+}
+
+
+/*
+ * html5 specific
+ *
+ * */
+
+table.tableblock {
+  margin-top: 1.0em;
+  margin-bottom: 1.5em;
+}
+thead, p.tableblock.header {
+  font-weight: bold;
+  color: #527bbd;
+}
+p.tableblock {
+  margin-top: 0;
+}
+table.tableblock {
+  border-width: 3px;
+  border-spacing: 0px;
+  border-style: solid;
+  border-color: #527bbd;
+  border-collapse: collapse;
+}
+th.tableblock, td.tableblock {
+  border-width: 1px;
+  padding: 4px;
+  border-style: solid;
+  border-color: #527bbd;
+}
+
+table.tableblock.frame-topbot {
+  border-left-style: hidden;
+  border-right-style: hidden;
+}
+table.tableblock.frame-sides {
+  border-top-style: hidden;
+  border-bottom-style: hidden;
+}
+table.tableblock.frame-none {
+  border-style: hidden;
+}
+
+th.tableblock.halign-left, td.tableblock.halign-left {
+  text-align: left;
+}
+th.tableblock.halign-center, td.tableblock.halign-center {
+  text-align: center;
+}
+th.tableblock.halign-right, td.tableblock.halign-right {
+  text-align: right;
+}
+
+th.tableblock.valign-top, td.tableblock.valign-top {
+  vertical-align: top;
+}
+th.tableblock.valign-middle, td.tableblock.valign-middle {
+  vertical-align: middle;
+}
+th.tableblock.valign-bottom, td.tableblock.valign-bottom {
+  vertical-align: bottom;
+}
+
+
+/*
+ * manpage specific
+ *
+ * */
+
+body.manpage h1 {
+  padding-top: 0.5em;
+  padding-bottom: 0.5em;
+  border-top: 2px solid silver;
+  border-bottom: 2px solid silver;
+}
+body.manpage h2 {
+  border-style: none;
+}
+body.manpage div.sectionbody {
+  margin-left: 3em;
+}
+
+@media print {
+  body.manpage div#toc { display: none; }
+}
+.highlight .hll { background-color: #ffffcc }
+.highlight  { background: #f8f8f8; }
+.highlight .c { color: #408080; font-style: italic } /* Comment */
+.highlight .err { border: 1px solid #FF0000 } /* Error */
+.highlight .k { color: #008000; font-weight: bold } /* Keyword */
+.highlight .o { color: #666666 } /* Operator */
+.highlight .cm { color: #408080; font-style: italic } /* Comment.Multiline */
+.highlight .cp { color: #BC7A00 } /* Comment.Preproc */
+.highlight .c1 { color: #408080; font-style: italic } /* Comment.Single */
+.highlight .cs { color: #408080; font-style: italic } /* Comment.Special */
+.highlight .gd { color: #A00000 } /* Generic.Deleted */
+.highlight .ge { font-style: italic } /* Generic.Emph */
+.highlight .gr { color: #FF0000 } /* Generic.Error */
+.highlight .gh { color: #000080; font-weight: bold } /* Generic.Heading */
+.highlight .gi { color: #00A000 } /* Generic.Inserted */
+.highlight .go { color: #808080 } /* Generic.Output */
+.highlight .gp { color: #000080; font-weight: bold } /* Generic.Prompt */
+.highlight .gs { font-weight: bold } /* Generic.Strong */
+.highlight .gu { color: #800080; font-weight: bold } /* Generic.Subheading */
+.highlight .gt { color: #0040D0 } /* Generic.Traceback */
+.highlight .kc { color: #008000; font-weight: bold } /* Keyword.Constant */
+.highlight .kd { color: #008000; font-weight: bold } /* Keyword.Declaration */
+.highlight .kn { color: #008000; font-weight: bold } /* Keyword.Namespace */
+.highlight .kp { color: #008000 } /* Keyword.Pseudo */
+.highlight .kr { color: #008000; font-weight: bold } /* Keyword.Reserved */
+.highlight .kt { color: #B00040 } /* Keyword.Type */
+.highlight .m { color: #666666 } /* Literal.Number */
+.highlight .s { color: #BA2121 } /* Literal.String */
+.highlight .na { color: #7D9029 } /* Name.Attribute */
+.highlight .nb { color: #008000 } /* Name.Builtin */
+.highlight .nc { color: #0000FF; font-weight: bold } /* Name.Class */
+.highlight .no { color: #880000 } /* Name.Constant */
+.highlight .nd { color: #AA22FF } /* Name.Decorator */
+.highlight .ni { color: #999999; font-weight: bold } /* Name.Entity */
+.highlight .ne { color: #D2413A; font-weight: bold } /* Name.Exception */
+.highlight .nf { color: #0000FF } /* Name.Function */
+.highlight .nl { color: #A0A000 } /* Name.Label */
+.highlight .nn { color: #0000FF; font-weight: bold } /* Name.Namespace */
+.highlight .nt { color: #008000; font-weight: bold } /* Name.Tag */
+.highlight .nv { color: #19177C } /* Name.Variable */
+.highlight .ow { color: #AA22FF; font-weight: bold } /* Operator.Word */
+.highlight .w { color: #bbbbbb } /* Text.Whitespace */
+.highlight .mf { color: #666666 } /* Literal.Number.Float */
+.highlight .mh { color: #666666 } /* Literal.Number.Hex */
+.highlight .mi { color: #666666 } /* Literal.Number.Integer */
+.highlight .mo { color: #666666 } /* Literal.Number.Oct */
+.highlight .sb { color: #BA2121 } /* Literal.String.Backtick */
+.highlight .sc { color: #BA2121 } /* Literal.String.Char */
+.highlight .sd { color: #BA2121; font-style: italic } /* Literal.String.Doc */
+.highlight .s2 { color: #BA2121 } /* Literal.String.Double */
+.highlight .se { color: #BB6622; font-weight: bold } /* Literal.String.Escape */
+.highlight .sh { color: #BA2121 } /* Literal.String.Heredoc */
+.highlight .si { color: #BB6688; font-weight: bold } /* Literal.String.Interpol */
+.highlight .sx { color: #008000 } /* Literal.String.Other */
+.highlight .sr { color: #BB6688 } /* Literal.String.Regex */
+.highlight .s1 { color: #BA2121 } /* Literal.String.Single */
+.highlight .ss { color: #19177C } /* Literal.String.Symbol */
+.highlight .bp { color: #008000 } /* Name.Builtin.Pseudo */
+.highlight .vc { color: #19177C } /* Name.Variable.Class */
+.highlight .vg { color: #19177C } /* Name.Variable.Global */
+.highlight .vi { color: #19177C } /* Name.Variable.Instance */
+.highlight .il { color: #666666 } /* Literal.Number.Integer.Long */
+
+
+</style>
+<script type="text/javascript">
+/*<![CDATA[*/
+var asciidoc = {  // Namespace.
+
+/////////////////////////////////////////////////////////////////////
+// Table Of Contents generator
+/////////////////////////////////////////////////////////////////////
+
+/* Author: Mihai Bazon, September 2002
+ * http://students.infoiasi.ro/~mishoo
+ *
+ * Table Of Content generator
+ * Version: 0.4
+ *
+ * Feel free to use this script under the terms of the GNU General Public
+ * License, as long as you do not remove or alter this notice.
+ */
+
+ /* modified by Troy D. Hanson, September 2006. License: GPL */
+ /* modified by Stuart Rackham, 2006, 2009. License: GPL */
+
+// toclevels = 1..4.
+toc: function (toclevels) {
+
+  function getText(el) {
+    var text = "";
+    for (var i = el.firstChild; i != null; i = i.nextSibling) {
+      if (i.nodeType == 3 /* Node.TEXT_NODE */) // IE doesn't speak constants.
+        text += i.data;
+      else if (i.firstChild != null)
+        text += getText(i);
+    }
+    return text;
+  }
+
+  function TocEntry(el, text, toclevel) {
+    this.element = el;
+    this.text = text;
+    this.toclevel = toclevel;
+  }
+
+  function tocEntries(el, toclevels) {
+    var result = new Array;
+    var re = new RegExp('[hH]([1-'+(toclevels+1)+'])');
+    // Function that scans the DOM tree for header elements (the DOM2
+    // nodeIterator API would be a better technique but not supported by all
+    // browsers).
+    var iterate = function (el) {
+      for (var i = el.firstChild; i != null; i = i.nextSibling) {
+        if (i.nodeType == 1 /* Node.ELEMENT_NODE */) {
+          var mo = re.exec(i.tagName);
+          if (mo && (i.getAttribute("class") || i.getAttribute("className")) != "float") {
+            result[result.length] = new TocEntry(i, getText(i), mo[1]-1);
+          }
+          iterate(i);
+        }
+      }
+    }
+    iterate(el);
+    return result;
+  }
+
+  var toc = document.getElementById("toc");
+  if (!toc) {
+    return;
+  }
+
+  // Delete existing TOC entries in case we're reloading the TOC.
+  var tocEntriesToRemove = [];
+  var i;
+  for (i = 0; i < toc.childNodes.length; i++) {
+    var entry = toc.childNodes[i];
+    if (entry.nodeName.toLowerCase() == 'div'
+     && entry.getAttribute("class")
+     && entry.getAttribute("class").match(/^toclevel/))
+      tocEntriesToRemove.push(entry);
+  }
+  for (i = 0; i < tocEntriesToRemove.length; i++) {
+    toc.removeChild(tocEntriesToRemove[i]);
+  }
+
+  // Rebuild TOC entries.
+  var entries = tocEntries(document.getElementById("content"), toclevels);
+  for (var i = 0; i < entries.length; ++i) {
+    var entry = entries[i];
+    if (entry.element.id == "")
+      entry.element.id = "_toc_" + i;
+    var a = document.createElement("a");
+    a.href = "#" + entry.element.id;
+    a.appendChild(document.createTextNode(entry.text));
+    var div = document.createElement("div");
+    div.appendChild(a);
+    div.className = "toclevel" + entry.toclevel;
+    toc.appendChild(div);
+  }
+  if (entries.length == 0)
+    toc.parentNode.removeChild(toc);
+},
+
+
+/////////////////////////////////////////////////////////////////////
+// Footnotes generator
+/////////////////////////////////////////////////////////////////////
+
+/* Based on footnote generation code from:
+ * http://www.brandspankingnew.net/archive/2005/07/format_footnote.html
+ */
+
+footnotes: function () {
+  // Delete existing footnote entries in case we're reloading the footnodes.
+  var i;
+  var noteholder = document.getElementById("footnotes");
+  if (!noteholder) {
+    return;
+  }
+  var entriesToRemove = [];
+  for (i = 0; i < noteholder.childNodes.length; i++) {
+    var entry = noteholder.childNodes[i];
+    if (entry.nodeName.toLowerCase() == 'div' && entry.getAttribute("class") == "footnote")
+      entriesToRemove.push(entry);
+  }
+  for (i = 0; i < entriesToRemove.length; i++) {
+    noteholder.removeChild(entriesToRemove[i]);
+  }
+
+  // Rebuild footnote entries.
+  var cont = document.getElementById("content");
+  var spans = cont.getElementsByTagName("span");
+  var refs = {};
+  var n = 0;
+  for (i=0; i<spans.length; i++) {
+    if (spans[i].className == "footnote") {
+      n++;
+      var note = spans[i].getAttribute("data-note");
+      if (!note) {
+        // Use [\s\S] in place of . so multi-line matches work.
+        // Because JavaScript has no s (dotall) regex flag.
+        note = spans[i].innerHTML.match(/\s*\[([\s\S]*)]\s*/)[1];
+        spans[i].innerHTML =
+          "[<a id='_footnoteref_" + n + "' href='#_footnote_" + n +
+          "' title='View footnote' class='footnote'>" + n + "</a>]";
+        spans[i].setAttribute("data-note", note);
+      }
+      noteholder.innerHTML +=
+        "<div class='footnote' id='_footnote_" + n + "'>" +
+        "<a href='#_footnoteref_" + n + "' title='Return to text'>" +
+        n + "</a>. " + note + "</div>";
+      var id =spans[i].getAttribute("id");
+      if (id != null) refs["#"+id] = n;
+    }
+  }
+  if (n == 0)
+    noteholder.parentNode.removeChild(noteholder);
+  else {
+    // Process footnoterefs.
+    for (i=0; i<spans.length; i++) {
+      if (spans[i].className == "footnoteref") {
+        var href = spans[i].getElementsByTagName("a")[0].getAttribute("href");
+        href = href.match(/#.*/)[0];  // Because IE return full URL.
+        n = refs[href];
+        spans[i].innerHTML =
+          "[<a href='#_footnote_" + n +
+          "' title='View footnote' class='footnote'>" + n + "</a>]";
+      }
+    }
+  }
+},
+
+install: function(toclevels) {
+  var timerId;
+
+  function reinstall() {
+    asciidoc.footnotes();
+    if (toclevels) {
+      asciidoc.toc(toclevels);
+    }
+  }
+
+  function reinstallAndRemoveTimer() {
+    clearInterval(timerId);
+    reinstall();
+  }
+
+  timerId = setInterval(reinstall, 500);
+  if (document.addEventListener)
+    document.addEventListener("DOMContentLoaded", reinstallAndRemoveTimer, false);
+  else
+    window.onload = reinstallAndRemoveTimer;
+}
+
+}
+asciidoc.install(2);
+/*]]>*/
+</script>
+</head>
+<body class="article" style="max-width:55em">
+<div id="header">
+<h1>Writing a fuse filesystem</h1>
+<span id="author">Frank Sorenson</span><br />
+<span id="email"><code>&lt;<a href="mailto:sorenson@redhat.com">sorenson@redhat.com</a>&gt;</code></span><br />
+<div id="toc">
+  <div id="toctitle">Table of Contents</div>
+  <noscript><p><b>JavaScript must be enabled in your browser to display the table of contents.</b></p></noscript>
+</div>
+</div>
+<div id="content">
+<div id="preamble">
+<div class="sectionbody">
+<div class="paragraph"><p>This is intended to be a step-by-step guide to writing a filesystem using fuse.  This version uses the fusepy fuse module for python.  (In fedora, install python3-fuse or python3-fusepy, depending on version)</p></div>
+<div class="paragraph"><p>This filesystem is a silly use of fuse and filesystems in general, but should give an idea of what writing a filesystem entails.</p></div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_circlefs_our_example_filesystem">circlefs - our example filesystem</h2>
+<div class="sectionbody">
+<div class="paragraph"><p>Our example filesystem will be a simple in-memory filesystem named circlefs.  circlefs will store one piece of information: radius</p></div>
+<div class="paragraph"><p>radius can be changed as desired</p></div>
+<div class="paragraph"><p>In addition to radius, the filesystem will provide files containing the circumference and diameter of a circle with the stored radius, as well as a file containing the value of pi.  All files will be read-write, resulting in a corresponding change to radius (except for pi, which will obviously be read-only). Modifying any file will update the radius accordingly, with the other files computed from the radius.</p></div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_excuse_me_8230_is_that_a_skeleton_in_your_closet">Excuse me&#8230; is that a skeleton in your closet?</h2>
+<div class="sectionbody">
+<div class="paragraph"><p>We start out with nothing but the skeleton python code (several additional imports, just so we don&#8217;t have to cover them later):</p></div>
+<div class="listingblock">
+<div class="title">circlefs.py</div>
+<div class="content"><div class="highlight"><pre><span></span><span class="ch">#!/usr/bin/env python3.7</span>
+
+<span class="kn">import</span> <span class="nn">os</span>
+<span class="kn">import</span> <span class="nn">sys</span>
+<span class="kn">import</span> <span class="nn">time</span>
+<span class="kn">import</span> <span class="nn">math</span>
+<span class="kn">from</span> <span class="nn">errno</span> <span class="kn">import</span> <span class="o">*</span>
+<span class="kn">from</span> <span class="nn">stat</span> <span class="kn">import</span> <span class="n">S_IFDIR</span><span class="p">,</span> <span class="n">S_IFREG</span><span class="p">,</span> <span class="n">S_IFLNK</span>
+<span class="kn">from</span> <span class="nn">fuse</span> <span class="kn">import</span> <span class="n">FUSE</span><span class="p">,</span> <span class="n">Operations</span><span class="p">,</span> <span class="n">FuseOSError</span>
+
+<span class="n">DEBUG</span> <span class="o">=</span> <span class="mi">0</span>
+
+<span class="k">class</span> <span class="nc">circlefs</span><span class="p">(</span><span class="n">Operations</span><span class="p">):</span>
+
+        <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">**</span><span class="n">kw</span><span class="p">):</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">radius</span> <span class="o">=</span> <span class="mi">0</span>
+                <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;fuse initialized&quot;</span><span class="p">)</span>
+
+<span class="k">def</span> <span class="nf">main</span><span class="p">(</span><span class="n">mountpoint</span><span class="p">):</span>
+        <span class="n">FUSE</span><span class="p">(</span><span class="n">circlefs</span><span class="p">(),</span> <span class="n">mountpoint</span><span class="p">,</span> <span class="n">nothreads</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">foreground</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s1">&#39;__main__&#39;</span><span class="p">:</span>
+        <span class="n">main</span><span class="p">(</span><span class="n">sys</span><span class="o">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>
+
+<span class="c1"># vim: sw=4 ts=4 noexpandtab</span>
+</pre></div></div></div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_houston_we_have_a_filesystem">Houston, we have a filesystem</h2>
+<div class="sectionbody">
+<div class="paragraph"><p>Let&#8217;s test it out and see what it does (hint: nothing yet):</p></div>
+<div class="listingblock">
+<div class="content"><div class="highlight"><pre><span></span>$ chmod +x circlefs-devel.py
+$ mkdir mnt
+$ ./circlefs-devel.py mnt
+fuse initialized
+</pre></div></div></div>
+<div class="paragraph"><p>and if we check it out from another window, what does our filesystem look like?</p></div>
+<div class="listingblock">
+<div class="content"><div class="highlight"><pre><span></span>$ ls -lnd mnt
+drwxr-xr-x <span class="m">2</span> <span class="m">0</span> <span class="m">0</span> <span class="m">0</span> Dec <span class="m">31</span>  <span class="m">1969</span> mnt
+
+$ ls -aln mnt
+total <span class="m">0</span>
+drwxr-xr-x <span class="m">2</span>    <span class="m">0</span>    <span class="m">0</span>   <span class="m">0</span> Dec <span class="m">31</span>  <span class="m">1969</span> .
+drwxrwxr-x <span class="m">3</span> <span class="m">1000</span> <span class="m">1000</span> <span class="m">183</span> Sep <span class="m">13</span> <span class="m">10</span>:31 ..
+
+$ df mnt <span class="p">;</span> df -i mnt
+Filesystem     1K-blocks  Used Available Use% Mounted on
+circlefs               <span class="m">0</span>     <span class="m">0</span>         <span class="m">0</span>    - /var/tmp/circlefs/mnt
+Filesystem     Inodes IUsed IFree IUse% Mounted on
+circlefs            <span class="m">0</span>     <span class="m">0</span>     <span class="m">0</span>     - /var/tmp/circlefs/mnt
+</pre></div></div></div>
+<div class="paragraph"><p>So our filesystem really does nothing at this point.  But hey&#8230;  we did it.</p></div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_store_at_least_strong_something_strong">Store at least <strong>something</strong></h2>
+<div class="sectionbody">
+<div class="paragraph"><p>Our filesystem should at least contain the radius, since that&#8217;s the one piece of information we actually store:</p></div>
+<div class="paragraph"><p>Inside our <em>class circlefs</em> block, we&#8217;ll add a function which will return a directory listing which includes <em>radius</em> (we&#8217;ll also have to provide <em>.</em> and <em>..</em>); that&#8217;s a readdir&#8212;the syscall getdents():</p></div>
+<div class="listingblock">
+<div class="content"><div class="highlight"><pre><span></span>        <span class="k">def</span> <span class="nf">readdir</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">path</span><span class="p">,</span> <span class="n">fh</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+                <span class="k">if</span> <span class="n">DEBUG</span><span class="p">:</span> <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;  readdir(</span><span class="si">{}</span><span class="s2">)&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">path</span><span class="p">))</span>
+
+                <span class="c1"># we don&#39;t need to support any subdirectories...</span>
+                <span class="k">if</span> <span class="ow">not</span> <span class="n">path</span> <span class="o">==</span> <span class="s1">&#39;/&#39;</span><span class="p">:</span>
+                        <span class="k">raise</span> <span class="n">FuseOSError</span><span class="p">(</span><span class="n">ENOENT</span><span class="p">)</span>
+
+                <span class="n">dirents</span> <span class="o">=</span> <span class="p">[</span><span class="s1">&#39;.&#39;</span><span class="p">,</span> <span class="s1">&#39;..&#39;</span><span class="p">,</span> <span class="s1">&#39;radius&#39;</span><span class="p">]</span>
+                <span class="k">for</span> <span class="n">dirent</span> <span class="ow">in</span> <span class="n">dirents</span><span class="p">:</span>
+                        <span class="k">yield</span> <span class="n">dirent</span>
+</pre></div></div></div>
+<div class="paragraph"><p>(side note: the <em>fh</em> is for filehandle, which would give us persistence between calls, but we don&#8217;t really need anything that fancy at this stage)</p></div>
+<div class="listingblock">
+<div class="content"><div class="highlight"><pre><span></span>$ ./circlefs-devel.py mnt
+fuse initialized
+</pre></div></div></div>
+<div class="listingblock">
+<div class="content"><div class="highlight"><pre><span></span>$ ls -alnd mnt
+drwxr-xr-x <span class="m">2</span> <span class="m">0</span> <span class="m">0</span> <span class="m">0</span> Dec <span class="m">31</span>  <span class="m">1969</span> mnt
+
+$ ls -aln mnt
+ls: cannot access <span class="s1">&#39;mnt/radius&#39;</span>: No such file or directory
+total <span class="m">0</span>
+drwxr-xr-x <span class="m">2</span>    <span class="m">0</span>    <span class="m">0</span>   <span class="m">0</span> Dec <span class="m">31</span>  <span class="m">1969</span> .
+drwxrwxr-x <span class="m">3</span> <span class="m">1000</span> <span class="m">1000</span> <span class="m">183</span> Sep <span class="m">13</span> <span class="m">10</span>:43 ..
+?????????? ? ?    ?      ?            ? radius
+</pre></div></div></div>
+<div class="paragraph"><p>Okay, so now we have a <em>radius</em>, but we haven&#8217;t told it anything about what type of directory entry <em>radius</em>, permissions, file size, etc.</p></div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_don_8217_t_you_em_em_me_young_lt_whatever_gt">Don&#8217;t you <em>?</em> me, young &lt;whatever&gt;!</h2>
+<div class="sectionbody">
+<div class="paragraph"><p>For information about directory entries, we need <em>getattr()</em>.  We might as well add attributes for the root, while we&#8217;re at it.</p></div>
+<div class="paragraph"><p>We&#8217;ll add a getattr method to the class:</p></div>
+<div class="listingblock">
+<div class="content"><div class="highlight"><pre><span></span>        <span class="k">def</span> <span class="nf">getattr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">path</span><span class="p">,</span> <span class="n">fh</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+                <span class="k">if</span> <span class="n">DEBUG</span><span class="p">:</span> <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;  getattr(</span><span class="si">{}</span><span class="s2">)&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">path</span><span class="p">))</span>
+
+                <span class="k">if</span> <span class="n">path</span> <span class="ow">in</span> <span class="p">[</span> <span class="s1">&#39;/&#39;</span> <span class="p">]:</span>
+                        <span class="n">mode</span> <span class="o">=</span> <span class="mo">0o755</span> <span class="o">|</span> <span class="n">S_IFDIR</span>
+                <span class="k">elif</span> <span class="n">path</span> <span class="ow">in</span> <span class="p">[</span> <span class="s1">&#39;/radius&#39;</span> <span class="p">]:</span>
+                        <span class="n">mode</span> <span class="o">=</span> <span class="mo">0o644</span> <span class="o">|</span> <span class="n">S_IFREG</span>
+                <span class="k">else</span><span class="p">:</span>
+                        <span class="k">raise</span> <span class="n">FuseOSError</span><span class="p">(</span><span class="n">ENOENT</span><span class="p">)</span>
+
+                <span class="n">now</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+                <span class="k">return</span> <span class="p">{</span>
+                        <span class="s1">&#39;st_atime&#39;</span> <span class="p">:</span> <span class="n">now</span><span class="p">,</span>
+                        <span class="s1">&#39;st_ctime&#39;</span> <span class="p">:</span> <span class="n">now</span><span class="p">,</span>
+                        <span class="s1">&#39;st_mtime&#39;</span> <span class="p">:</span> <span class="n">now</span><span class="p">,</span>
+                        <span class="s1">&#39;st_uid&#39;</span> <span class="p">:</span> <span class="n">os</span><span class="o">.</span><span class="n">getuid</span><span class="p">(),</span>
+                        <span class="s1">&#39;st_gid&#39;</span> <span class="p">:</span> <span class="n">os</span><span class="o">.</span><span class="n">getgid</span><span class="p">(),</span>
+                        <span class="s1">&#39;st_size&#39;</span> <span class="p">:</span> <span class="mi">4096</span><span class="p">,</span>
+                        <span class="s1">&#39;st_mode&#39;</span> <span class="p">:</span> <span class="n">mode</span><span class="p">,</span>
+                        <span class="s1">&#39;st_blocks&#39;</span> <span class="p">:</span> <span class="mi">1</span>
+                <span class="p">}</span>
+</pre></div></div></div>
+<div class="listingblock">
+<div class="content"><div class="highlight"><pre><span></span>$ ./circlefs-devel.py mnt
+fuse initialized
+</pre></div></div></div>
+<div class="listingblock">
+<div class="content"><div class="highlight"><pre><span></span>$ ls -alnd mnt
+drwxr-xr-x <span class="m">0</span> <span class="m">1000</span> <span class="m">1000</span> <span class="m">4096</span> Sep <span class="m">13</span> <span class="m">11</span>:01 mnt
+
+$ ls -aln mnt
+total <span class="m">1</span>
+drwxr-xr-x <span class="m">0</span> <span class="m">1000</span> <span class="m">1000</span> <span class="m">4096</span> Sep <span class="m">13</span> <span class="m">11</span>:02 .
+drwxrwxr-x <span class="m">3</span> <span class="m">1000</span> <span class="m">1000</span>  <span class="m">208</span> Sep <span class="m">13</span> <span class="m">11</span>:00 ..
+-rw-r--r-- <span class="m">0</span> <span class="m">1000</span> <span class="m">1000</span> <span class="m">4096</span> Sep <span class="m">13</span> <span class="m">11</span>:02 radius
+</pre></div></div></div>
+<div class="paragraph"><p>Okay, that&#8217;s a bit more interesting.  Let&#8217;s see what radius contains:</p></div>
+<div class="listingblock">
+<div class="content"><div class="highlight"><pre><span></span>$ cat mnt/radius
+cat: mnt/radius: Input/output error
+</pre></div></div></div>
+<div class="paragraph"><p>Well, I suppose that makes sense; we haven&#8217;t implemented any functions which allow reading files.</p></div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_what_8217_s_in_the_box">What&#8217;s in the box?</h2>
+<div class="sectionbody">
+<div class="paragraph"><p>Let&#8217;s add a method to allow reading files, and a function which lets us get the value of a particular :</p></div>
+<div class="listingblock">
+<div class="content"><div class="highlight"><pre><span></span>        <span class="c1"># return the radius as a float</span>
+        <span class="k">def</span> <span class="nf">get_val</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">var</span><span class="p">):</span>
+                <span class="k">if</span> <span class="n">var</span> <span class="o">==</span> <span class="s1">&#39;/radius&#39;</span><span class="p">:</span>
+                        <span class="k">return</span> <span class="mf">1.0</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">radius</span>
+                        <span class="k">return</span> <span class="n">math</span><span class="o">.</span><span class="n">pi</span>
+
+        <span class="c1"># return the radius as a string</span>
+        <span class="k">def</span> <span class="nf">get_val_str</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">var</span><span class="p">):</span>
+                <span class="n">val</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_val</span><span class="p">(</span><span class="n">var</span><span class="p">)</span>
+                <span class="k">return</span> <span class="s2">&quot;</span><span class="si">{}</span><span class="se">\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">val</span><span class="p">)</span>
+
+        <span class="k">def</span> <span class="nf">read</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">path</span><span class="p">,</span> <span class="n">length</span><span class="p">,</span> <span class="n">offset</span><span class="p">,</span> <span class="n">fh</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+                <span class="n">val</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_val_str</span><span class="p">(</span><span class="n">path</span><span class="p">)</span>
+                <span class="k">if</span> <span class="n">DEBUG</span><span class="p">:</span> <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;  read(</span><span class="si">{}</span><span class="s2">, length: </span><span class="si">{}</span><span class="s2">, offset: </span><span class="si">{}</span><span class="s2">, fh: </span><span class="si">{}</span><span class="s2">): </span><span class="si">{}</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="n">length</span><span class="p">,</span> <span class="n">offset</span><span class="p">,</span> <span class="n">fh</span><span class="p">,</span> <span class="n">val</span><span class="p">))</span>
+
+                <span class="k">return</span> <span class="n">val</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="s1">&#39;utf-8&#39;</span><span class="p">)[</span><span class="n">offset</span><span class="p">:</span><span class="n">length</span><span class="p">]</span>
+</pre></div></div></div>
+<div class="listingblock">
+<div class="content"><div class="highlight"><pre><span></span>$ cat mnt/radius
+<span class="m">0</span>.0
+</pre></div></div></div>
+<div class="paragraph"><p>Oh, right.  We initialized <em>radius</em> to <em>0</em>.  And we can&#8217;t write to it yet:</p></div>
+<div class="listingblock">
+<div class="content"><div class="highlight"><pre><span></span>$ <span class="nb">echo</span> <span class="m">42</span> &gt; mnt/radius
+bash: mnt/radius: Read-only file system
+</pre></div></div></div>
+<div class="paragraph"><p>Well, not really, but <em>EROFS</em> is what <em>fusepy</em> returns whenever a function hasn&#8217;t been implemented yet.</p></div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_but_i_want_a_strong_purple_strong_pony">But I want a <strong>purple</strong> pony!</h2>
+<div class="sectionbody">
+<div class="paragraph"><p>Let&#8217;s allow writing to the <em>radius</em>:</p></div>
+<div class="listingblock">
+<div class="content"><div class="highlight"><pre><span></span>    <span class="k">def</span> <span class="nf">write</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">path</span><span class="p">,</span> <span class="n">buf</span><span class="p">,</span> <span class="n">offset</span><span class="p">,</span> <span class="n">fh</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">DEBUG</span><span class="p">:</span> <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;  write(</span><span class="si">{}</span><span class="s2">, &#39;</span><span class="si">{}</span><span class="s2">&#39;, offset: </span><span class="si">{}</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="n">buf</span><span class="p">,</span> <span class="n">offset</span><span class="p">))</span>
+
+        <span class="c1"># don&#39;t allow writing at anywhere except the beginning of the file</span>
+        <span class="c1"># that makes no sense</span>
+        <span class="k">if</span> <span class="n">offset</span> <span class="ow">is</span> <span class="ow">not</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="n">FuseOSError</span><span class="p">(</span><span class="n">EINVAL</span><span class="p">)</span>
+
+        <span class="n">val</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">buf</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">DEBUG</span><span class="p">:</span> <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;  =&gt; </span><span class="si">{}</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">val</span><span class="p">))</span>
+
+        <span class="k">if</span> <span class="n">path</span> <span class="o">==</span> <span class="s1">&#39;/radius&#39;</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">radius</span> <span class="o">=</span> <span class="n">val</span>
+        <span class="k">else</span><span class="p">:</span> <span class="c1"># huh?</span>
+            <span class="k">raise</span> <span class="n">FuseOSError</span><span class="p">(</span><span class="n">EBADF</span><span class="p">)</span>
+
+        <span class="k">return</span> <span class="nb">len</span><span class="p">(</span><span class="n">buf</span><span class="p">)</span>
+</pre></div></div></div>
+<div class="listingblock">
+<div class="content"><div class="highlight"><pre><span></span>$ <span class="nb">echo</span> <span class="m">99</span> &gt; mnt/radius
+bash: mnt/radius: Read-only file system
+</pre></div></div></div>
+<div class="paragraph"><p>Uh oh.  But we just implemented write.  What is actually failing?</p></div>
+<div class="listingblock">
+<div class="content"><div class="highlight"><pre><span></span>$ <span class="nb">echo</span> <span class="m">99</span> <span class="p">|</span> strace -fttTvyo /tmp/trace tee mnt/radius
+$ egrep EROFS /tmp/trace
+<span class="m">295083</span> <span class="m">11</span>:46:45.504218 openat<span class="o">(</span>AT_FDCWD, <span class="s2">&quot;mnt/radius&quot;</span>, O_WRONLY<span class="p">|</span>O_CREAT<span class="p">|</span>O_TRUNC, <span class="m">0666</span><span class="o">)</span> <span class="o">=</span> -1 EROFS <span class="o">(</span>Read-only file system<span class="o">)</span> &lt;<span class="m">0</span>.000166&gt;
+</pre></div></div></div>
+<div class="paragraph"><p>Okay.  That makes some sense.  Opening the file read-only didn&#8217;t really require us to check the open options (for <em>O_CREAT</em> for example).</p></div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_well_okay_the_things_i_do_for_you">Well, okay.  The things I do for you.</h2>
+<div class="sectionbody">
+<div class="paragraph"><p>Let&#8217;s implement an <em>open()</em>, and check some flags:</p></div>
+<div class="listingblock">
+<div class="content"><div class="highlight"><pre><span></span>    <span class="k">def</span> <span class="nf">open</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">path</span><span class="p">,</span> <span class="n">flags</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">DEBUG</span><span class="p">:</span> <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;  open(</span><span class="si">{}</span><span class="s2">)&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">path</span><span class="p">))</span>
+
+        <span class="k">if</span> <span class="p">(</span><span class="n">flags</span> <span class="o">&amp;</span> <span class="n">os</span><span class="o">.</span><span class="n">O_CREAT</span><span class="p">):</span>
+            <span class="k">raise</span> <span class="n">FuseOSError</span><span class="p">(</span><span class="n">EACCES</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="p">(</span><span class="n">flags</span> <span class="o">&amp;</span> <span class="n">os</span><span class="o">.</span><span class="n">O_APPEND</span><span class="p">)</span> <span class="ow">or</span> <span class="p">(</span><span class="n">flags</span> <span class="o">&amp;</span> <span class="n">os</span><span class="o">.</span><span class="n">O_EXCL</span><span class="p">)</span> <span class="ow">or</span> <span class="p">(</span><span class="n">flags</span> <span class="o">&amp;</span> <span class="n">os</span><span class="o">.</span><span class="n">O_DIRECT</span><span class="p">):</span>
+            <span class="k">raise</span> <span class="n">FuseOSError</span><span class="p">(</span><span class="n">EINVAL</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">path</span> <span class="ow">in</span> <span class="p">[</span> <span class="s1">&#39;/radius&#39;</span><span class="p">]:</span>
+            <span class="k">raise</span> <span class="n">FuseOSError</span><span class="p">(</span><span class="n">EPERM</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">DEBUG</span><span class="p">:</span> <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;successfully opened &#39;</span><span class="si">{}</span><span class="s2">&#39;&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">path</span><span class="p">))</span>
+        <span class="k">return</span> <span class="mi">0</span>
+</pre></div></div></div>
+<div class="listingblock">
+<div class="content"><div class="highlight"><pre><span></span>$ <span class="nb">echo</span> <span class="m">99</span> &gt; mnt/radius
+bash: mnt/radius: Read-only file system
+
+$ <span class="nb">echo</span> <span class="m">99</span> <span class="p">|</span> strace -fttTvyo /tmp/trace tee mnt/radius
+$ egrep EROFS /tmp/trace
+<span class="m">295083</span> <span class="m">11</span>:46:45.504218 openat<span class="o">(</span>AT_FDCWD, <span class="s2">&quot;mnt/radius&quot;</span>, O_WRONLY<span class="p">|</span>O_CREAT<span class="p">|</span>O_TRUNC, <span class="m">0666</span><span class="o">)</span> <span class="o">=</span> -1 EROFS <span class="o">(</span>Read-only file system<span class="o">)</span> &lt;<span class="m">0</span>.000166&gt;
+</pre></div></div></div>
+<div class="paragraph"><p>Let&#8217;s enable <em>DEBUG</em> on our filesystem (temporarily), so we can see what&#8217;s failing.</p></div>
+<div class="listingblock">
+<div class="content"><div class="highlight"><pre><span></span>  ...
+  getattr<span class="o">(</span>/radius<span class="o">)</span>
+  open<span class="o">(</span>/radius<span class="o">)</span>
+successfully opened <span class="s1">&#39;/radius&#39;</span>
+</pre></div></div></div>
+<div class="paragraph"><p>Hmm.  We opened the file, but never tried to write.  We must still be missing something.</p></div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_em_fusepy_em_is_not_cooperating"><em>fusepy</em> is not cooperating</h2>
+<div class="sectionbody">
+<div class="paragraph"><p>Let&#8217;s implement the dispatcher method, and print out the operations <em>fusepy</em> thinks are getting called:</p></div>
+<div class="listingblock">
+<div class="content"><div class="highlight"><pre><span></span>        <span class="k">def</span> <span class="fm">__call__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">op</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">):</span>
+                <span class="k">if</span> <span class="n">DEBUG</span><span class="p">:</span> <span class="nb">print</span><span class="p">(</span><span class="s2">&quot; call: </span><span class="si">{}</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">op</span><span class="p">))</span>
+                <span class="k">if</span> <span class="ow">not</span> <span class="nb">hasattr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">op</span><span class="p">):</span>
+                        <span class="k">if</span> <span class="n">DEBUG</span><span class="p">:</span> <span class="nb">print</span><span class="p">(</span><span class="s2">&quot; op &#39;</span><span class="si">{}</span><span class="s2">&#39; not found&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">op</span><span class="p">))</span>
+                        <span class="k">raise</span> <span class="n">FuseOSError</span><span class="p">(</span><span class="n">EFAULT</span><span class="p">)</span>
+                <span class="k">try</span><span class="p">:</span>
+                        <span class="n">ret</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">op</span><span class="p">)(</span><span class="o">*</span><span class="n">args</span><span class="p">)</span>
+                <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+                        <span class="k">if</span> <span class="n">DEBUG</span><span class="p">:</span> <span class="nb">print</span><span class="p">(</span><span class="s2">&quot; op &#39;</span><span class="si">{}</span><span class="s2">&#39; failed with </span><span class="si">{}</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">op</span><span class="p">,</span> <span class="n">e</span><span class="p">))</span>
+                        <span class="k">raise</span> <span class="n">e</span>
+                <span class="k">if</span> <span class="n">DEBUG</span><span class="p">:</span> <span class="nb">print</span><span class="p">(</span><span class="s2">&quot; </span><span class="si">{}</span><span class="s2"> returned </span><span class="si">{}</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">op</span><span class="p">,</span> <span class="n">ret</span><span class="p">))</span>
+                <span class="k">return</span> <span class="n">ret</span>
+</pre></div></div></div>
+<div class="listingblock">
+<div class="content"><div class="highlight"><pre><span></span>  ...
+ call: getattr
+  getattr<span class="o">(</span>/radius<span class="o">)</span>
+ getattr returned <span class="o">{</span><span class="s1">&#39;st_atime&#39;</span>: <span class="m">1568394991</span>.9264038, <span class="s1">&#39;st_ctime&#39;</span>: <span class="m">1568394991</span>.9264038, <span class="s1">&#39;st_mtime&#39;</span>: <span class="m">1568394991</span>.9264038, <span class="s1">&#39;st_uid&#39;</span>: <span class="m">1000</span>, <span class="s1">&#39;st_gid&#39;</span>: <span class="m">1000</span>, <span class="s1">&#39;st_size&#39;</span>: <span class="m">4096</span>, <span class="s1">&#39;st_mode&#39;</span>: <span class="m">33188</span>, <span class="s1">&#39;st_blocks&#39;</span>: <span class="m">1</span><span class="o">}</span>
+ call: open
+  open<span class="o">(</span>/radius<span class="o">)</span>
+successfully opened <span class="s1">&#39;/radius&#39;</span>
+ open returned <span class="m">0</span>
+ call: getxattr
+ op <span class="s1">&#39;getxattr&#39;</span> failed with <span class="o">[</span>Errno <span class="m">95</span><span class="o">]</span> Operation not supported
+ call: truncate
+ op <span class="s1">&#39;truncate&#39;</span> failed with <span class="o">[</span>Errno <span class="m">30</span><span class="o">]</span> Read-only file system
+ call: release
+ release returned <span class="m">0</span>
+</pre></div></div></div>
+<div class="paragraph"><p>Okay, there we go.  Remember that <em>EROFS</em> is what <em>fusepy</em> returns whenever a function isn&#8217;t implemented?  This is probably a bug in <em>fusepy</em>, since it would make more sense to return <em>ENOSYS</em>.</p></div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_that_wasn_8217_t_enough_you_want_more">That wasn&#8217;t enough?  You want more?</h2>
+<div class="sectionbody">
+<div class="paragraph"><p>At any rate, we&#8217;ll add <em>truncate()</em>.  When truncating, we&#8217;ll just set <em>radius</em> to 0.</p></div>
+<div class="paragraph"><p>Earlier we decided that writing to anywhere in the file except the beginning made no sense.  That&#8217;s also true for <em>truncate()</em>.</p></div>
+<div class="paragraph"><p>In the manpage for <em>truncate(2)</em>, the most reasonable response to such a condition would be <em>EINVAL</em> (specifically in reference to <em>ftruncate(2)</em>, but it fits best).  We don&#8217;t have a real file where <em>truncate</em> makes any sense.</p></div>
+<div class="listingblock">
+<div class="content"><div class="highlight"><pre><span></span>        <span class="k">def</span> <span class="nf">truncate</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">path</span><span class="p">,</span> <span class="n">length</span><span class="p">,</span> <span class="n">fh</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+                <span class="k">if</span> <span class="n">DEBUG</span><span class="p">:</span> <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;  truncate(</span><span class="si">{}</span><span class="s2">)&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">path</span><span class="p">))</span>
+                <span class="k">if</span> <span class="n">length</span><span class="p">:</span>
+                        <span class="k">raise</span> <span class="n">FuseOSError</span><span class="p">(</span><span class="n">EINVAL</span><span class="p">)</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">radius</span> <span class="o">=</span> <span class="mf">0.0</span>
+                <span class="k">return</span> <span class="n">length</span>
+</pre></div></div></div>
+<div class="paragraph"><p>While we&#8217;re at it, let&#8217;s make <em>open()</em> also set <em>radius</em> to <em>0</em> if <em>O_TRUNC</em> is in the flags.  Modifying <em>open</em>:</p></div>
+<div class="listingblock">
+<div class="content"><div class="highlight"><pre><span></span><span class="o">...</span>
+                <span class="k">if</span> <span class="ow">not</span> <span class="n">path</span> <span class="ow">in</span> <span class="p">[</span> <span class="s1">&#39;/radius&#39;</span><span class="p">]:</span>
+                        <span class="k">raise</span> <span class="n">FuseOSError</span><span class="p">(</span><span class="n">EPERM</span><span class="p">)</span>
+
+                <span class="k">if</span> <span class="p">(</span><span class="n">flags</span> <span class="o">&amp;</span> <span class="n">os</span><span class="o">.</span><span class="n">O_TRUNC</span><span class="p">):</span>
+                        <span class="bp">self</span><span class="o">.</span><span class="n">radius</span> <span class="o">=</span> <span class="mf">0.0</span>
+
+                <span class="k">if</span> <span class="n">DEBUG</span><span class="p">:</span> <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;successfully opened &#39;</span><span class="si">{}</span><span class="s2">&#39;&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">path</span><span class="p">))</span>
+                <span class="k">return</span> <span class="mi">0</span>
+</pre></div></div></div>
+<div class="listingblock">
+<div class="content"><div class="highlight"><pre><span></span>$ cat mnt/radius
+<span class="m">0</span>.0
+
+$ <span class="nb">echo</span> <span class="m">99</span> &gt; mnt/radius
+
+$ cat mnt/radius
+<span class="m">99</span>.0
+</pre></div></div></div>
+<div class="paragraph"><p>We also get <em>truncate</em> for "free":</p></div>
+<div class="listingblock">
+<div class="content"><div class="highlight"><pre><span></span>$ cat mnt/radius
+<span class="m">99</span>.0
+
+$ truncate -s <span class="m">5</span> mnt/radius
+truncate: failed to truncate <span class="s1">&#39;mnt/radius&#39;</span> at <span class="m">5</span> bytes: Invalid argument
+
+$ truncate -s <span class="m">0</span> mnt/radius
+
+$ cat mnt/radius
+<span class="m">0</span>.0
+</pre></div></div></div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_if_only_we_had_a_wheelbarrow">If only we had a wheelbarrow</h2>
+<div class="sectionbody">
+<div class="paragraph"><p>Now, let&#8217;s make <em>circlefs</em> more useful by adding <em>diameter</em> and <em>circumference</em>, which contain the appropriate (calculated) values, given the current value of <em>radius</em>.  We&#8217;ll also make them writeable, with the written value actually modifying <em>radius</em> as necessary.</p></div>
+<div class="paragraph"><p>We&#8217;ll also add <em>pi</em>, just for kicks.  It&#8217;ll have to be read-only, of course.</p></div>
+<div class="paragraph"><p>This will require changes to a number of our methods:</p></div>
+<div class="listingblock">
+<div class="content"><div class="highlight"><pre><span></span><span class="o">@@</span> <span class="o">-</span><span class="mi">35</span><span class="p">,</span><span class="mi">7</span> <span class="o">+</span><span class="mi">35</span><span class="p">,</span><span class="mi">7</span> <span class="o">@@</span>
+                <span class="k">if</span> <span class="ow">not</span> <span class="n">path</span> <span class="o">==</span> <span class="s1">&#39;/&#39;</span><span class="p">:</span>
+                        <span class="k">raise</span> <span class="n">FuseOSError</span><span class="p">(</span><span class="n">ENOENT</span><span class="p">)</span>
+
+<span class="o">-</span>               <span class="n">dirents</span> <span class="o">=</span> <span class="p">[</span><span class="s1">&#39;.&#39;</span><span class="p">,</span> <span class="s1">&#39;..&#39;</span><span class="p">,</span> <span class="s1">&#39;radius&#39;</span><span class="p">]</span>
+<span class="o">+</span>               <span class="n">dirents</span> <span class="o">=</span> <span class="p">[</span><span class="s1">&#39;.&#39;</span><span class="p">,</span> <span class="s1">&#39;..&#39;</span><span class="p">,</span> <span class="s1">&#39;radius&#39;</span><span class="p">,</span> <span class="s1">&#39;diameter&#39;</span><span class="p">,</span> <span class="s1">&#39;circumference&#39;</span><span class="p">,</span> <span class="s1">&#39;pi&#39;</span> <span class="p">]</span>
+                <span class="k">for</span> <span class="n">dirent</span> <span class="ow">in</span> <span class="n">dirents</span><span class="p">:</span>
+                        <span class="k">yield</span> <span class="n">dirent</span>
+
+<span class="o">@@</span> <span class="o">-</span><span class="mi">44</span><span class="p">,</span><span class="mi">8</span> <span class="o">+</span><span class="mi">44</span><span class="p">,</span><span class="mi">10</span> <span class="o">@@</span>
+
+                <span class="k">if</span> <span class="n">path</span> <span class="ow">in</span> <span class="p">[</span> <span class="s1">&#39;/&#39;</span> <span class="p">]:</span>
+                        <span class="n">mode</span> <span class="o">=</span> <span class="mo">0o755</span> <span class="o">|</span> <span class="n">S_IFDIR</span>
+<span class="o">-</span>               <span class="k">elif</span> <span class="n">path</span> <span class="ow">in</span> <span class="p">[</span> <span class="s1">&#39;/radius&#39;</span> <span class="p">]:</span>
+<span class="o">+</span>               <span class="k">elif</span> <span class="n">path</span> <span class="ow">in</span> <span class="p">[</span> <span class="s1">&#39;/radius&#39;</span> <span class="p">,</span> <span class="s1">&#39;/diameter&#39;</span><span class="p">,</span> <span class="s1">&#39;/circumference&#39;</span> <span class="p">]:</span>
+                        <span class="n">mode</span> <span class="o">=</span> <span class="mo">0o644</span> <span class="o">|</span> <span class="n">S_IFREG</span>
+<span class="o">+</span>               <span class="k">elif</span> <span class="n">path</span> <span class="ow">in</span> <span class="p">[</span> <span class="s1">&#39;/pi&#39;</span> <span class="p">]:</span>
+<span class="o">+</span>                       <span class="n">mode</span> <span class="o">=</span> <span class="mo">0o444</span> <span class="o">|</span> <span class="n">S_IFREG</span>
+                <span class="k">else</span><span class="p">:</span>
+                        <span class="k">raise</span> <span class="n">FuseOSError</span><span class="p">(</span><span class="n">ENOENT</span><span class="p">)</span>
+
+<span class="o">@@</span> <span class="o">-</span><span class="mi">61</span><span class="p">,</span><span class="mi">12</span> <span class="o">+</span><span class="mi">64</span><span class="p">,</span><span class="mi">18</span> <span class="o">@@</span>
+                        <span class="s1">&#39;st_blocks&#39;</span> <span class="p">:</span> <span class="mi">1</span>
+                <span class="p">}</span>
+
+<span class="o">-</span>       <span class="c1"># return the radius as a float</span>
+<span class="o">+</span>       <span class="c1"># return the values as floats</span>
+        <span class="k">def</span> <span class="nf">get_val</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">var</span><span class="p">):</span>
+                <span class="k">if</span> <span class="n">var</span> <span class="o">==</span> <span class="s1">&#39;/radius&#39;</span><span class="p">:</span>
+                        <span class="k">return</span> <span class="mf">1.0</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">radius</span>
+<span class="o">+</span>               <span class="k">if</span> <span class="n">var</span> <span class="o">==</span> <span class="s1">&#39;/diameter&#39;</span><span class="p">:</span>
+<span class="o">+</span>                       <span class="k">return</span> <span class="mf">2.0</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">radius</span>
+<span class="o">+</span>               <span class="k">if</span> <span class="n">var</span> <span class="o">==</span> <span class="s1">&#39;/circumference&#39;</span><span class="p">:</span>
+<span class="o">+</span>                       <span class="k">return</span> <span class="mf">2.0</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">pi</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">radius</span>
+<span class="o">+</span>               <span class="k">if</span> <span class="n">var</span> <span class="o">==</span> <span class="s1">&#39;/pi&#39;</span><span class="p">:</span>
+<span class="o">+</span>                       <span class="k">return</span> <span class="n">math</span><span class="o">.</span><span class="n">pi</span>
+
+<span class="o">-</span>       <span class="c1"># return the radius as a string</span>
+<span class="o">+</span>       <span class="c1"># return the values as strings</span>
+        <span class="k">def</span> <span class="nf">get_val_str</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">var</span><span class="p">):</span>
+                <span class="n">val</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_val</span><span class="p">(</span><span class="n">var</span><span class="p">)</span>
+                <span class="k">return</span> <span class="s2">&quot;</span><span class="si">{}</span><span class="se">\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">val</span><span class="p">)</span>
+
+
+        <span class="c1"># return the values as strings</span>
+        <span class="k">def</span> <span class="nf">get_val_str</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">var</span><span class="p">):</span>
+<span class="o">@@</span> <span class="o">-</span><span class="mi">90</span><span class="p">,</span><span class="mi">6</span> <span class="o">+</span><span class="mi">98</span><span class="p">,</span><span class="mi">12</span> <span class="o">@@</span>
+
+                <span class="k">if</span> <span class="n">path</span> <span class="o">==</span> <span class="s1">&#39;/radius&#39;</span><span class="p">:</span>
+                        <span class="bp">self</span><span class="o">.</span><span class="n">radius</span> <span class="o">=</span> <span class="n">val</span>
+<span class="o">+</span>               <span class="k">elif</span> <span class="n">path</span> <span class="o">==</span> <span class="s1">&#39;/diameter&#39;</span><span class="p">:</span>
+<span class="o">+</span>                       <span class="bp">self</span><span class="o">.</span><span class="n">radius</span> <span class="o">=</span> <span class="n">val</span> <span class="o">/</span> <span class="mf">2.0</span>
+<span class="o">+</span>               <span class="k">elif</span> <span class="n">path</span> <span class="o">==</span> <span class="s1">&#39;/circumference&#39;</span><span class="p">:</span>
+<span class="o">+</span>                       <span class="bp">self</span><span class="o">.</span><span class="n">radius</span> <span class="o">=</span> <span class="n">val</span> <span class="o">/</span> <span class="p">(</span><span class="mf">2.0</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">pi</span><span class="p">)</span>
+<span class="o">+</span>               <span class="k">elif</span> <span class="n">path</span> <span class="o">==</span> <span class="s1">&#39;/pi&#39;</span><span class="p">:</span>
+<span class="o">+</span>                       <span class="k">raise</span> <span class="n">FuseOSError</span><span class="p">(</span><span class="n">EBADF</span><span class="p">)</span> <span class="c1"># nope, can&#39;t change pi</span>
+                <span class="k">else</span><span class="p">:</span> <span class="c1"># huh?</span>
+                        <span class="k">raise</span> <span class="n">FuseOSError</span><span class="p">(</span><span class="n">EBADF</span><span class="p">)</span>
+
+<span class="o">@@</span> <span class="o">-</span><span class="mi">104</span><span class="p">,</span><span class="mi">9</span> <span class="o">+</span><span class="mi">118</span><span class="p">,</span><span class="mi">23</span> <span class="o">@@</span>
+                <span class="k">if</span> <span class="p">(</span><span class="n">flags</span> <span class="o">&amp;</span> <span class="n">os</span><span class="o">.</span><span class="n">O_APPEND</span><span class="p">)</span> <span class="ow">or</span> <span class="p">(</span><span class="n">flags</span> <span class="o">&amp;</span> <span class="n">os</span><span class="o">.</span><span class="n">O_EXCL</span><span class="p">)</span> <span class="ow">or</span> <span class="p">(</span><span class="n">flags</span> <span class="o">&amp;</span> <span class="n">os</span><span class="o">.</span><span class="n">O_DIRECT</span><span class="p">):</span>
+                        <span class="k">raise</span> <span class="n">FuseOSError</span><span class="p">(</span><span class="n">EINVAL</span><span class="p">)</span>
+
+<span class="o">-</span>               <span class="k">if</span> <span class="ow">not</span> <span class="n">path</span> <span class="ow">in</span> <span class="p">[</span> <span class="s1">&#39;/radius&#39;</span><span class="p">]:</span>
+<span class="o">+</span>               <span class="k">if</span> <span class="ow">not</span> <span class="n">path</span> <span class="ow">in</span> <span class="p">[</span> <span class="s1">&#39;/radius&#39;</span><span class="p">,</span> <span class="s1">&#39;/diameter&#39;</span><span class="p">,</span> <span class="s1">&#39;/circumference&#39;</span><span class="p">,</span> <span class="s1">&#39;/pi&#39;</span> <span class="p">]:</span>
+                        <span class="k">raise</span> <span class="n">FuseOSError</span><span class="p">(</span><span class="n">EPERM</span><span class="p">)</span>
+
+<span class="o">+</span>               <span class="c1"># from manpage for open(2):</span>
+<span class="o">+</span>               <span class="c1"># EACCES The requested access to the file is not allowed ...</span>
+<span class="o">+</span>               <span class="k">if</span> <span class="n">path</span> <span class="o">==</span> <span class="s1">&#39;/pi&#39;</span><span class="p">:</span>
+<span class="o">+</span>                       <span class="c1"># nope, can&#39;t truncate pi</span>
+<span class="o">+</span>                       <span class="c1"># also can&#39;t open with any mode which includes write</span>
+<span class="o">+</span>                       <span class="k">if</span> <span class="n">flags</span> <span class="o">&amp;</span> <span class="n">os</span><span class="o">.</span><span class="n">O_TRUNC</span><span class="p">:</span>
+<span class="o">+</span>                               <span class="k">raise</span> <span class="n">FuseOSError</span><span class="p">(</span><span class="n">EACCES</span><span class="p">)</span>
+<span class="o">+</span>
+<span class="o">+</span>                       <span class="c1"># see the manpage for open(2), under the &#39;File access mode&#39; section</span>
+<span class="o">+</span>                       <span class="c1"># for why this is obscure</span>
+<span class="o">+</span>                       <span class="n">open_mode</span> <span class="o">=</span> <span class="n">flags</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">O_RDONLY</span> <span class="o">|</span> <span class="n">os</span><span class="o">.</span><span class="n">O_WRONLY</span> <span class="o">|</span> <span class="n">os</span><span class="o">.</span><span class="n">O_RDWR</span><span class="p">)</span>
+<span class="o">+</span>                       <span class="k">if</span> <span class="n">open_mode</span> <span class="o">==</span> <span class="n">os</span><span class="o">.</span><span class="n">O_WRONLY</span> <span class="ow">or</span> <span class="n">open_mode</span> <span class="o">==</span> <span class="n">os</span><span class="o">.</span><span class="n">O_RDWR</span><span class="p">:</span>
+<span class="o">+</span>                               <span class="k">raise</span> <span class="n">FuseOSError</span><span class="p">(</span><span class="n">EACCES</span><span class="p">)</span>
+<span class="o">+</span>
+                <span class="k">if</span> <span class="p">(</span><span class="n">flags</span> <span class="o">&amp;</span> <span class="n">os</span><span class="o">.</span><span class="n">O_TRUNC</span><span class="p">):</span>
+                        <span class="bp">self</span><span class="o">.</span><span class="n">radius</span> <span class="o">=</span> <span class="mf">0.0</span>
+
+<span class="o">@@</span> <span class="o">-</span><span class="mi">117</span><span class="p">,</span><span class="mi">6</span> <span class="o">+</span><span class="mi">145</span><span class="p">,</span><span class="mi">8</span> <span class="o">@@</span>
+                <span class="k">if</span> <span class="n">DEBUG</span><span class="p">:</span> <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;  truncate(</span><span class="si">{}</span><span class="s2">, </span><span class="si">{}</span><span class="s2">)&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="n">length</span><span class="p">))</span>
+                <span class="k">if</span> <span class="n">length</span><span class="p">:</span>
+                        <span class="k">raise</span> <span class="n">FuseOSError</span><span class="p">(</span><span class="n">EINVAL</span><span class="p">)</span>
+<span class="o">+</span>               <span class="k">if</span> <span class="n">path</span> <span class="o">==</span> <span class="s1">&#39;/pi&#39;</span><span class="p">:</span>
+<span class="o">+</span>                       <span class="k">return</span> <span class="n">EBADF</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">radius</span> <span class="o">=</span> <span class="mf">0.0</span>
+                <span class="k">return</span> <span class="n">length</span>
+</pre></div></div></div>
+<div class="listingblock">
+<div class="content"><div class="highlight"><pre><span></span>$ ls -aln mnt
+total <span class="m">3</span>
+drwxr-xr-x <span class="m">0</span> <span class="m">1000</span> <span class="m">1000</span> <span class="m">4096</span> Sep <span class="m">13</span> <span class="m">13</span>:28 .
+drwxrwxr-x <span class="m">3</span> <span class="m">1000</span> <span class="m">1000</span>  <span class="m">237</span> Sep <span class="m">13</span> <span class="m">13</span>:28 ..
+-rw-r--r-- <span class="m">0</span> <span class="m">1000</span> <span class="m">1000</span> <span class="m">4096</span> Sep <span class="m">13</span> <span class="m">13</span>:28 circumference
+-rw-r--r-- <span class="m">0</span> <span class="m">1000</span> <span class="m">1000</span> <span class="m">4096</span> Sep <span class="m">13</span> <span class="m">13</span>:28 diameter
+-r--r--r-- <span class="m">0</span> <span class="m">1000</span> <span class="m">1000</span> <span class="m">4096</span> Sep <span class="m">13</span> <span class="m">13</span>:28 pi
+-rw-r--r-- <span class="m">0</span> <span class="m">1000</span> <span class="m">1000</span> <span class="m">4096</span> Sep <span class="m">13</span> <span class="m">13</span>:28 radius
+
+$ cat mnt/radius
+<span class="m">0</span>.0
+
+$ <span class="nb">echo</span> <span class="m">99</span> &gt; mnt/radius
+
+$ cat mnt/radius
+<span class="m">99</span>.0
+
+$ cat mnt/circumference
+<span class="m">622</span>.0353454107791
+
+$ cat mnt/diameter
+<span class="m">198</span>.0
+
+$ cat mnt/pi
+<span class="m">3</span>.141592653589793
+
+$ <span class="k">for</span> f in mnt/* <span class="p">;</span> <span class="k">do</span> <span class="nb">echo</span> <span class="s2">&quot;</span><span class="nv">$f</span><span class="s2">: </span><span class="k">$(</span>cat <span class="nv">$f</span><span class="k">)</span><span class="s2">&quot;</span> <span class="p">;</span> <span class="k">done</span>
+mnt/circumference: <span class="m">622</span>.0353454107791
+mnt/diameter: <span class="m">198</span>.0
+mnt/pi: <span class="m">3</span>.141592653589793
+mnt/radius: <span class="m">99</span>.0
+
+
+$ <span class="nb">echo</span> <span class="m">6</span>.283185307179586 &gt; mnt/circumference
+
+$ <span class="k">for</span> f in mnt/* <span class="p">;</span> <span class="k">do</span> <span class="nb">echo</span> <span class="s2">&quot;</span><span class="nv">$f</span><span class="s2">: </span><span class="k">$(</span>cat <span class="nv">$f</span><span class="k">)</span><span class="s2">&quot;</span> <span class="p">;</span> <span class="k">done</span>
+mnt/circumference: <span class="m">6</span>.283185307179586
+mnt/diameter: <span class="m">2</span>.0
+mnt/pi: <span class="m">3</span>.141592653589793
+mnt/radius: <span class="m">1</span>.0
+
+$ <span class="nb">echo</span> <span class="m">14</span> &gt; mnt/pi
+bash: mnt/pi: Permission denied
+</pre></div></div></div>
+<div class="paragraph"><p>Just for kicks, let&#8217;s also add a directory entry for <em>π</em>, as a symlink to <em>pi</em>:</p></div>
+<div class="listingblock">
+<div class="content"><div class="highlight"><pre><span></span>@@ -36,7 +36,7 @@
+                <span class="k">if</span> not <span class="nv">path</span> <span class="o">==</span> <span class="s1">&#39;/&#39;</span>:
+                        raise FuseOSError<span class="o">(</span>ENOENT<span class="o">)</span>
+
+-               <span class="nv">dirents</span> <span class="o">=</span> <span class="o">[</span><span class="s1">&#39;.&#39;</span>, <span class="s1">&#39;..&#39;</span>, <span class="s1">&#39;radius&#39;</span>, <span class="s1">&#39;diameter&#39;</span>, <span class="s1">&#39;circumference&#39;</span>, <span class="s1">&#39;pi&#39;</span> <span class="o">]</span>
++               <span class="nv">dirents</span> <span class="o">=</span> <span class="o">[</span><span class="s1">&#39;.&#39;</span>, <span class="s1">&#39;..&#39;</span>, <span class="s1">&#39;radius&#39;</span>, <span class="s1">&#39;diameter&#39;</span>, <span class="s1">&#39;circumference&#39;</span>, <span class="s1">&#39;pi&#39;</span>, <span class="s1">&#39;π&#39;</span> <span class="o">]</span>
+                <span class="k">for</span> dirent in dirents:
+                        yield dirent
+
+@@ -49,6 +49,8 @@
+                        <span class="nv">mode</span> <span class="o">=</span> 0o644 <span class="p">|</span> S_IFREG
+                <span class="k">elif</span> path in <span class="o">[</span> <span class="s1">&#39;/pi&#39;</span> <span class="o">]</span>:
+                        <span class="nv">mode</span> <span class="o">=</span> 0o444 <span class="p">|</span> S_IFREG
++               <span class="k">elif</span> path in <span class="o">[</span> <span class="s1">&#39;/π&#39;</span> <span class="o">]</span>:
++                       <span class="nv">mode</span> <span class="o">=</span> 0o777 <span class="p">|</span> S_IFLNK
+                <span class="k">else</span>:
+                        raise FuseOSError<span class="o">(</span>ENOENT<span class="o">)</span>
+
+@@ -165,6 +167,12 @@
+                        <span class="s1">&#39;f_frsize&#39;</span> : <span class="m">0</span>,
+                        <span class="s1">&#39;f_namemax&#39;</span> : <span class="m">255</span>
+                <span class="o">}</span>
++       def readlink<span class="o">(</span>self, path<span class="o">)</span>:
++               <span class="k">if</span> <span class="nv">path</span> <span class="o">==</span> <span class="s1">&#39;/π&#39;</span>:
++                       <span class="k">return</span> <span class="s1">&#39;pi&#39;</span>
++
++               <span class="k">return</span> <span class="s1">&#39;&#39;</span>
++
+
+ def main<span class="o">(</span>mountpoint<span class="o">)</span>:
+        FUSE<span class="o">(</span>circlefs<span class="o">()</span>, mountpoint, <span class="nv">nothreads</span><span class="o">=</span>True, <span class="nv">foreground</span><span class="o">=</span>True<span class="o">)</span>
+</pre></div></div></div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_what_i_wouldn_8217_t_give_for_a_holocaust_cloak">What I wouldn&#8217;t give for a holocaust cloak!</h2>
+<div class="sectionbody">
+<div class="paragraph"><p>Of course, no filesystem would be complete without <em>df</em> causing panic over the filesystem being full, so let&#8217;s make it happen:</p></div>
+<div class="listingblock">
+<div class="content"><div class="highlight"><pre><span></span>        <span class="k">def</span> <span class="nf">statfs</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">path</span><span class="p">):</span>
+                <span class="k">if</span> <span class="n">DEBUG</span><span class="p">:</span> <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;  statfs(</span><span class="si">{}</span><span class="s2">)&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">path</span><span class="p">))</span>
+                <span class="k">return</span> <span class="p">{</span>
+                        <span class="s1">&#39;f_bsize&#39;</span> <span class="p">:</span> <span class="mi">42</span><span class="p">,</span>
+                        <span class="s1">&#39;f_bfree&#39;</span> <span class="p">:</span> <span class="mi">0</span><span class="p">,</span>
+                        <span class="s1">&#39;f_bavail&#39;</span> <span class="p">:</span> <span class="mi">0</span><span class="p">,</span>
+                        <span class="s1">&#39;f_blocks&#39;</span> <span class="p">:</span> <span class="mi">1</span><span class="p">,</span>
+                        <span class="s1">&#39;f_files&#39;</span> <span class="p">:</span> <span class="mi">1</span><span class="p">,</span>
+                        <span class="s1">&#39;f_ffree&#39;</span> <span class="p">:</span> <span class="mi">0</span><span class="p">,</span>
+                        <span class="s1">&#39;f_favail&#39;</span> <span class="p">:</span> <span class="mi">0</span><span class="p">,</span>
+                        <span class="s1">&#39;f_flag&#39;</span> <span class="p">:</span> <span class="mi">0</span><span class="p">,</span>
+                        <span class="s1">&#39;f_frsize&#39;</span> <span class="p">:</span> <span class="mi">0</span><span class="p">,</span>
+                        <span class="s1">&#39;f_namemax&#39;</span> <span class="p">:</span> <span class="mi">255</span>
+                <span class="p">}</span>
+</pre></div></div></div>
+<div class="listingblock">
+<div class="content"><div class="highlight"><pre><span></span>$ df mnt
+Filesystem     1K-blocks  Used Available Use% Mounted on
+circlefs               <span class="m">1</span>     <span class="m">1</span>         <span class="m">0</span> <span class="m">100</span>% /var/tmp/circlefs/mnt
+
+$ df -i mnt
+Filesystem     Inodes IUsed IFree IUse% Mounted on
+circlefs            <span class="m">1</span>     <span class="m">1</span>     <span class="m">0</span>  <span class="m">100</span>% /var/tmp/circlefs/mnt
+
+$ stat -f mnt
+  File: <span class="s2">&quot;mnt&quot;</span>
+    ID: <span class="m">0</span>        Namelen: <span class="m">255</span>     Type: fuseblk
+Block size: <span class="m">42</span>         Fundamental block size: <span class="m">42</span>
+Blocks: Total: <span class="m">1</span>          Free: <span class="m">0</span>          Available: <span class="m">0</span>
+Inodes: Total: <span class="m">1</span>          Free: <span class="m">0</span>
+</pre></div></div></div>
+<div class="paragraph"><p>Much better :)</p></div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_i_did_all_my_chores_can_i_go_out_and_play_now">I did all my chores!  Can I go out and play now?</h2>
+<div class="sectionbody">
+<div class="paragraph"><p>Here&#8217;s our <em>completed</em> filesystem:</p></div>
+<div class="listingblock">
+<div class="title">circlefs.py</div>
+<div class="content"><div class="highlight"><pre><span></span><span class="ch">#!/usr/bin/env python3.7</span>
+
+<span class="kn">import</span> <span class="nn">os</span>
+<span class="kn">import</span> <span class="nn">sys</span>
+<span class="kn">import</span> <span class="nn">time</span>
+<span class="kn">import</span> <span class="nn">math</span>
+<span class="kn">from</span> <span class="nn">errno</span> <span class="kn">import</span> <span class="o">*</span>
+<span class="kn">from</span> <span class="nn">stat</span> <span class="kn">import</span> <span class="n">S_IFDIR</span><span class="p">,</span> <span class="n">S_IFREG</span><span class="p">,</span> <span class="n">S_IFLNK</span>
+<span class="kn">from</span> <span class="nn">fuse</span> <span class="kn">import</span> <span class="n">FUSE</span><span class="p">,</span> <span class="n">Operations</span><span class="p">,</span> <span class="n">FuseOSError</span>
+
+<span class="n">DEBUG</span> <span class="o">=</span> <span class="mi">0</span>
+
+<span class="k">class</span> <span class="nc">circlefs</span><span class="p">(</span><span class="n">Operations</span><span class="p">):</span>
+
+        <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">**</span><span class="n">kw</span><span class="p">):</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">radius</span> <span class="o">=</span> <span class="mi">0</span>
+                <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;fuse initialized&quot;</span><span class="p">)</span>
+
+        <span class="k">def</span> <span class="fm">__call__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">op</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">):</span>
+                <span class="k">if</span> <span class="n">DEBUG</span><span class="p">:</span> <span class="nb">print</span><span class="p">(</span><span class="s2">&quot; call: </span><span class="si">{}</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">op</span><span class="p">))</span>
+                <span class="k">if</span> <span class="ow">not</span> <span class="nb">hasattr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">op</span><span class="p">):</span>
+                        <span class="k">if</span> <span class="n">DEBUG</span><span class="p">:</span> <span class="nb">print</span><span class="p">(</span><span class="s2">&quot; op &#39;</span><span class="si">{}</span><span class="s2">&#39; not found&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">op</span><span class="p">))</span>
+                        <span class="k">raise</span> <span class="n">FuseOSError</span><span class="p">(</span><span class="n">EFAULT</span><span class="p">)</span>
+                <span class="k">try</span><span class="p">:</span>
+                        <span class="n">ret</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">op</span><span class="p">)(</span><span class="o">*</span><span class="n">args</span><span class="p">)</span>
+                <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+                        <span class="k">if</span> <span class="n">DEBUG</span><span class="p">:</span> <span class="nb">print</span><span class="p">(</span><span class="s2">&quot; op &#39;</span><span class="si">{}</span><span class="s2">&#39; failed with </span><span class="si">{}</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">op</span><span class="p">,</span> <span class="n">e</span><span class="p">))</span>
+                        <span class="k">raise</span> <span class="n">e</span>
+                <span class="k">if</span> <span class="n">DEBUG</span><span class="p">:</span> <span class="nb">print</span><span class="p">(</span><span class="s2">&quot; </span><span class="si">{}</span><span class="s2"> returned </span><span class="si">{}</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">op</span><span class="p">,</span> <span class="n">ret</span><span class="p">))</span>
+                <span class="k">return</span> <span class="n">ret</span>
+
+        <span class="k">def</span> <span class="nf">readdir</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">path</span><span class="p">,</span> <span class="n">fh</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+                <span class="k">if</span> <span class="p">(</span><span class="n">DEBUG</span><span class="p">):</span> <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;  readdir(</span><span class="si">{}</span><span class="s2">)&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">path</span><span class="p">))</span>
+
+                <span class="c1"># we don&#39;t need to support any subdirectories...</span>
+                <span class="k">if</span> <span class="ow">not</span> <span class="n">path</span> <span class="o">==</span> <span class="s1">&#39;/&#39;</span><span class="p">:</span>
+                        <span class="k">raise</span> <span class="n">FuseOSError</span><span class="p">(</span><span class="n">ENOENT</span><span class="p">)</span>
+
+                <span class="n">dirents</span> <span class="o">=</span> <span class="p">[</span><span class="s1">&#39;.&#39;</span><span class="p">,</span> <span class="s1">&#39;..&#39;</span><span class="p">,</span> <span class="s1">&#39;radius&#39;</span><span class="p">,</span> <span class="s1">&#39;diameter&#39;</span><span class="p">,</span> <span class="s1">&#39;circumference&#39;</span><span class="p">,</span> <span class="s1">&#39;pi&#39;</span><span class="p">,</span> <span class="s1">&#39;π&#39;</span> <span class="p">]</span>
+                <span class="k">for</span> <span class="n">dirent</span> <span class="ow">in</span> <span class="n">dirents</span><span class="p">:</span>
+                        <span class="k">yield</span> <span class="n">dirent</span>
+
+        <span class="k">def</span> <span class="nf">getattr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">path</span><span class="p">,</span> <span class="n">fh</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+                <span class="k">if</span> <span class="n">DEBUG</span><span class="p">:</span> <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;  getattr(</span><span class="si">{}</span><span class="s2">)&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">path</span><span class="p">))</span>
+
+                <span class="k">if</span> <span class="n">path</span> <span class="ow">in</span> <span class="p">[</span> <span class="s1">&#39;/&#39;</span> <span class="p">]:</span>
+                        <span class="n">mode</span> <span class="o">=</span> <span class="mo">0o755</span> <span class="o">|</span> <span class="n">S_IFDIR</span>
+                <span class="k">elif</span> <span class="n">path</span> <span class="ow">in</span> <span class="p">[</span> <span class="s1">&#39;/radius&#39;</span> <span class="p">,</span> <span class="s1">&#39;/diameter&#39;</span><span class="p">,</span> <span class="s1">&#39;/circumference&#39;</span> <span class="p">]:</span>
+                        <span class="n">mode</span> <span class="o">=</span> <span class="mo">0o644</span> <span class="o">|</span> <span class="n">S_IFREG</span>
+                <span class="k">elif</span> <span class="n">path</span> <span class="ow">in</span> <span class="p">[</span> <span class="s1">&#39;/pi&#39;</span> <span class="p">]:</span>
+                        <span class="n">mode</span> <span class="o">=</span> <span class="mo">0o444</span> <span class="o">|</span> <span class="n">S_IFREG</span>
+                <span class="k">elif</span> <span class="n">path</span> <span class="ow">in</span> <span class="p">[</span> <span class="s1">&#39;/π&#39;</span> <span class="p">]:</span>
+                        <span class="n">mode</span> <span class="o">=</span> <span class="mo">0o777</span> <span class="o">|</span> <span class="n">S_IFLNK</span>
+                <span class="k">else</span><span class="p">:</span>
+                        <span class="k">raise</span> <span class="n">FuseOSError</span><span class="p">(</span><span class="n">ENOENT</span><span class="p">)</span>
+
+                <span class="n">now</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+                <span class="k">return</span> <span class="p">{</span>
+                        <span class="s1">&#39;st_atime&#39;</span> <span class="p">:</span> <span class="n">now</span><span class="p">,</span>
+                        <span class="s1">&#39;st_ctime&#39;</span> <span class="p">:</span> <span class="n">now</span><span class="p">,</span>
+                        <span class="s1">&#39;st_mtime&#39;</span> <span class="p">:</span> <span class="n">now</span><span class="p">,</span>
+                        <span class="s1">&#39;st_uid&#39;</span> <span class="p">:</span> <span class="n">os</span><span class="o">.</span><span class="n">getuid</span><span class="p">(),</span>
+                        <span class="s1">&#39;st_gid&#39;</span> <span class="p">:</span> <span class="n">os</span><span class="o">.</span><span class="n">getgid</span><span class="p">(),</span>
+                        <span class="s1">&#39;st_size&#39;</span> <span class="p">:</span> <span class="mi">4096</span><span class="p">,</span>
+                        <span class="s1">&#39;st_mode&#39;</span> <span class="p">:</span> <span class="n">mode</span><span class="p">,</span>
+                        <span class="s1">&#39;st_blocks&#39;</span> <span class="p">:</span> <span class="mi">1</span>
+                <span class="p">}</span>
+
+        <span class="c1"># return the values as floats</span>
+        <span class="k">def</span> <span class="nf">get_val</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">var</span><span class="p">):</span>
+                <span class="k">if</span> <span class="n">var</span> <span class="o">==</span> <span class="s1">&#39;/radius&#39;</span><span class="p">:</span>
+                        <span class="k">return</span> <span class="mf">1.0</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">radius</span>
+                <span class="k">if</span> <span class="n">var</span> <span class="o">==</span> <span class="s1">&#39;/diameter&#39;</span><span class="p">:</span>
+                        <span class="k">return</span> <span class="mf">2.0</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">radius</span>
+                <span class="k">if</span> <span class="n">var</span> <span class="o">==</span> <span class="s1">&#39;/circumference&#39;</span><span class="p">:</span>
+                        <span class="k">return</span> <span class="mf">2.0</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">pi</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">radius</span>
+                <span class="k">if</span> <span class="n">var</span> <span class="o">==</span> <span class="s1">&#39;/pi&#39;</span><span class="p">:</span>
+                        <span class="k">return</span> <span class="n">math</span><span class="o">.</span><span class="n">pi</span>
+
+        <span class="c1"># return the values as strings</span>
+        <span class="k">def</span> <span class="nf">get_val_str</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">var</span><span class="p">):</span>
+                <span class="n">val</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_val</span><span class="p">(</span><span class="n">var</span><span class="p">)</span>
+                <span class="k">return</span> <span class="s2">&quot;</span><span class="si">{}</span><span class="se">\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">val</span><span class="p">)</span>
+
+        <span class="k">def</span> <span class="nf">read</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">path</span><span class="p">,</span> <span class="n">length</span><span class="p">,</span> <span class="n">offset</span><span class="p">,</span> <span class="n">fh</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+                <span class="n">val</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_val_str</span><span class="p">(</span><span class="n">path</span><span class="p">)</span>
+                <span class="k">if</span> <span class="n">DEBUG</span><span class="p">:</span> <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;  read(</span><span class="si">{}</span><span class="s2">, length: </span><span class="si">{}</span><span class="s2">, offset: </span><span class="si">{}</span><span class="s2">, fh: </span><span class="si">{}</span><span class="s2">): </span><span class="si">{}</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="n">length</span><span class="p">,</span> <span class="n">offset</span><span class="p">,</span> <span class="n">fh</span><span class="p">,</span> <span class="n">val</span><span class="p">))</span>
+
+                <span class="k">return</span> <span class="n">val</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="s1">&#39;utf-8&#39;</span><span class="p">)[</span><span class="n">offset</span><span class="p">:</span><span class="n">length</span><span class="p">]</span>
+
+        <span class="k">def</span> <span class="nf">write</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">path</span><span class="p">,</span> <span class="n">buf</span><span class="p">,</span> <span class="n">offset</span><span class="p">,</span> <span class="n">fh</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+                <span class="k">if</span> <span class="n">DEBUG</span><span class="p">:</span> <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;  write(</span><span class="si">{}</span><span class="s2">, &#39;</span><span class="si">{}</span><span class="s2">&#39;, offset: </span><span class="si">{}</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="n">buf</span><span class="p">,</span> <span class="n">offset</span><span class="p">))</span>
+
+                <span class="c1"># don&#39;t allow writing at anywhere except the beginning of the file</span>
+                <span class="c1"># that makes no sense</span>
+                <span class="k">if</span> <span class="n">offset</span> <span class="ow">is</span> <span class="ow">not</span> <span class="mi">0</span><span class="p">:</span>
+                        <span class="k">raise</span> <span class="n">FuseOSError</span><span class="p">(</span><span class="n">EINVAL</span><span class="p">)</span>
+
+                <span class="n">val</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">buf</span><span class="p">)</span>
+                <span class="k">if</span> <span class="n">DEBUG</span><span class="p">:</span> <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;  =&gt; </span><span class="si">{}</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">val</span><span class="p">))</span>
+
+                <span class="k">if</span> <span class="n">path</span> <span class="o">==</span> <span class="s1">&#39;/radius&#39;</span><span class="p">:</span>
+                        <span class="bp">self</span><span class="o">.</span><span class="n">radius</span> <span class="o">=</span> <span class="n">val</span>
+                <span class="k">elif</span> <span class="n">path</span> <span class="o">==</span> <span class="s1">&#39;/diameter&#39;</span><span class="p">:</span>
+                        <span class="bp">self</span><span class="o">.</span><span class="n">radius</span> <span class="o">=</span> <span class="n">val</span> <span class="o">/</span> <span class="mf">2.0</span>
+                <span class="k">elif</span> <span class="n">path</span> <span class="o">==</span> <span class="s1">&#39;/circumference&#39;</span><span class="p">:</span>
+                        <span class="bp">self</span><span class="o">.</span><span class="n">radius</span> <span class="o">=</span> <span class="n">val</span> <span class="o">/</span> <span class="p">(</span><span class="mf">2.0</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">pi</span><span class="p">)</span>
+                <span class="k">elif</span> <span class="n">path</span> <span class="o">==</span> <span class="s1">&#39;/pi&#39;</span><span class="p">:</span>
+                        <span class="k">raise</span> <span class="n">FuseOSError</span><span class="p">(</span><span class="n">EBADF</span><span class="p">)</span> <span class="c1"># nope, can&#39;t change pi</span>
+                <span class="k">else</span><span class="p">:</span> <span class="c1"># huh?</span>
+                        <span class="k">raise</span> <span class="n">FuseOSError</span><span class="p">(</span><span class="n">EBADF</span><span class="p">)</span>
+
+                <span class="k">return</span> <span class="nb">len</span><span class="p">(</span><span class="n">buf</span><span class="p">)</span>
+
+        <span class="k">def</span> <span class="nf">open</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">path</span><span class="p">,</span> <span class="n">flags</span><span class="p">):</span>
+                <span class="k">if</span> <span class="n">DEBUG</span><span class="p">:</span> <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;  open(</span><span class="si">{}</span><span class="s2">)&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">path</span><span class="p">))</span>
+
+                <span class="k">if</span> <span class="p">(</span><span class="n">flags</span> <span class="o">&amp;</span> <span class="n">os</span><span class="o">.</span><span class="n">O_CREAT</span><span class="p">):</span>
+                        <span class="k">raise</span> <span class="n">FuseOSError</span><span class="p">(</span><span class="n">EACCES</span><span class="p">)</span>
+
+                <span class="k">if</span> <span class="p">(</span><span class="n">flags</span> <span class="o">&amp;</span> <span class="n">os</span><span class="o">.</span><span class="n">O_APPEND</span><span class="p">)</span> <span class="ow">or</span> <span class="p">(</span><span class="n">flags</span> <span class="o">&amp;</span> <span class="n">os</span><span class="o">.</span><span class="n">O_EXCL</span><span class="p">)</span> <span class="ow">or</span> <span class="p">(</span><span class="n">flags</span> <span class="o">&amp;</span> <span class="n">os</span><span class="o">.</span><span class="n">O_DIRECT</span><span class="p">):</span>
+                        <span class="k">raise</span> <span class="n">FuseOSError</span><span class="p">(</span><span class="n">EINVAL</span><span class="p">)</span>
+
+                <span class="k">if</span> <span class="ow">not</span> <span class="n">path</span> <span class="ow">in</span> <span class="p">[</span> <span class="s1">&#39;/radius&#39;</span><span class="p">,</span> <span class="s1">&#39;/diameter&#39;</span><span class="p">,</span> <span class="s1">&#39;/circumference&#39;</span><span class="p">,</span> <span class="s1">&#39;/pi&#39;</span> <span class="p">]:</span>
+                        <span class="k">raise</span> <span class="n">FuseOSError</span><span class="p">(</span><span class="n">EPERM</span><span class="p">)</span>
+
+                <span class="c1"># from manpage for open(2):</span>
+                <span class="c1"># EACCES The requested access to the file is not allowed ...</span>
+                <span class="k">if</span> <span class="n">path</span> <span class="o">==</span> <span class="s1">&#39;/pi&#39;</span><span class="p">:</span>
+                        <span class="c1"># nope, can&#39;t truncate pi</span>
+                        <span class="c1"># also can&#39;t open with any mode which includes write</span>
+                        <span class="k">if</span> <span class="n">flags</span> <span class="o">&amp;</span> <span class="n">os</span><span class="o">.</span><span class="n">O_TRUNC</span><span class="p">:</span>
+                                <span class="k">raise</span> <span class="n">FuseOSError</span><span class="p">(</span><span class="n">EACCES</span><span class="p">)</span>
+
+                        <span class="c1"># see the manpage for open(2), under the &#39;File access mode&#39; section</span>
+                        <span class="c1"># for why this is obscure</span>
+                        <span class="n">open_mode</span> <span class="o">=</span> <span class="n">flags</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">O_RDONLY</span> <span class="o">|</span> <span class="n">os</span><span class="o">.</span><span class="n">O_WRONLY</span> <span class="o">|</span> <span class="n">os</span><span class="o">.</span><span class="n">O_RDWR</span><span class="p">)</span>
+                        <span class="k">if</span> <span class="n">open_mode</span> <span class="o">==</span> <span class="n">os</span><span class="o">.</span><span class="n">O_WRONLY</span> <span class="ow">or</span> <span class="n">open_mode</span> <span class="o">==</span> <span class="n">os</span><span class="o">.</span><span class="n">O_RDWR</span><span class="p">:</span>
+                                <span class="k">raise</span> <span class="n">FuseOSError</span><span class="p">(</span><span class="n">EACCES</span><span class="p">)</span>
+
+                <span class="k">if</span> <span class="p">(</span><span class="n">flags</span> <span class="o">&amp;</span> <span class="n">os</span><span class="o">.</span><span class="n">O_TRUNC</span><span class="p">):</span>
+                        <span class="bp">self</span><span class="o">.</span><span class="n">radius</span> <span class="o">=</span> <span class="mf">0.0</span>
+
+                <span class="k">if</span> <span class="n">DEBUG</span><span class="p">:</span> <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;successfully opened &#39;</span><span class="si">{}</span><span class="s2">&#39;&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">path</span><span class="p">))</span>
+                <span class="k">return</span> <span class="mi">0</span>
+
+        <span class="k">def</span> <span class="nf">truncate</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">path</span><span class="p">,</span> <span class="n">length</span><span class="p">,</span> <span class="n">fh</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+                <span class="k">if</span> <span class="n">DEBUG</span><span class="p">:</span> <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;  truncate(</span><span class="si">{}</span><span class="s2">, </span><span class="si">{}</span><span class="s2">)&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="n">length</span><span class="p">))</span>
+                <span class="k">if</span> <span class="n">length</span><span class="p">:</span>
+                        <span class="k">raise</span> <span class="n">FuseOSError</span><span class="p">(</span><span class="n">EINVAL</span><span class="p">)</span>
+                <span class="k">if</span> <span class="n">path</span> <span class="o">==</span> <span class="s1">&#39;/pi&#39;</span><span class="p">:</span>
+                        <span class="k">return</span> <span class="n">EBADF</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">radius</span> <span class="o">=</span> <span class="mf">0.0</span>
+                <span class="k">return</span> <span class="n">length</span>
+
+        <span class="k">def</span> <span class="nf">statfs</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">path</span><span class="p">):</span>
+                <span class="k">if</span> <span class="n">DEBUG</span><span class="p">:</span> <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;  statfs(</span><span class="si">{}</span><span class="s2">)&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">path</span><span class="p">))</span>
+                <span class="k">return</span> <span class="p">{</span>
+                        <span class="s1">&#39;f_bsize&#39;</span> <span class="p">:</span> <span class="mi">42</span><span class="p">,</span>
+                        <span class="s1">&#39;f_bfree&#39;</span> <span class="p">:</span> <span class="mi">0</span><span class="p">,</span>
+                        <span class="s1">&#39;f_bavail&#39;</span> <span class="p">:</span> <span class="mi">0</span><span class="p">,</span>
+                        <span class="s1">&#39;f_blocks&#39;</span> <span class="p">:</span> <span class="mi">1</span><span class="p">,</span>
+                        <span class="s1">&#39;f_files&#39;</span> <span class="p">:</span> <span class="mi">1</span><span class="p">,</span>
+                        <span class="s1">&#39;f_ffree&#39;</span> <span class="p">:</span> <span class="mi">0</span><span class="p">,</span>
+                        <span class="s1">&#39;f_favail&#39;</span> <span class="p">:</span> <span class="mi">0</span><span class="p">,</span>
+                        <span class="s1">&#39;f_flag&#39;</span> <span class="p">:</span> <span class="mi">0</span><span class="p">,</span>
+                        <span class="s1">&#39;f_frsize&#39;</span> <span class="p">:</span> <span class="mi">0</span><span class="p">,</span>
+                        <span class="s1">&#39;f_namemax&#39;</span> <span class="p">:</span> <span class="mi">255</span>
+                <span class="p">}</span>
+        <span class="k">def</span> <span class="nf">readlink</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">path</span><span class="p">):</span>
+                <span class="k">if</span> <span class="n">path</span> <span class="o">==</span> <span class="s1">&#39;/π&#39;</span><span class="p">:</span>
+                        <span class="k">return</span> <span class="s1">&#39;pi&#39;</span>
+
+                <span class="k">return</span> <span class="s1">&#39;&#39;</span>
+
+
+<span class="k">def</span> <span class="nf">main</span><span class="p">(</span><span class="n">mountpoint</span><span class="p">):</span>
+        <span class="n">FUSE</span><span class="p">(</span><span class="n">circlefs</span><span class="p">(),</span> <span class="n">mountpoint</span><span class="p">,</span> <span class="n">nothreads</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">foreground</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s1">&#39;__main__&#39;</span><span class="p">:</span>
+        <span class="n">main</span><span class="p">(</span><span class="n">sys</span><span class="o">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>
+
+<span class="c1"># vim: sw=4 ts=4 noexpandtab</span>
+</pre></div></div></div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_think_you_8217_re_a_wise_guy_eh_let_8217_s_see_you_do_this_then">Think you&#8217;re a wise-guy, eh?  Let&#8217;s see you do this, then!</h2>
+<div class="sectionbody">
+<div class="paragraph"><p>some exercises for the reader:</p></div>
+<div class="ulist"><ul>
+<li>
+<p>
+update mtime/ctime when the values get updated; retain latest time update
+</p>
+</li>
+<li>
+<p>
+update atime
+</p>
+</li>
+<li>
+<p>
+make filesystem size dependent on the radius (or area?)
+</p>
+</li>
+<li>
+<p>
+add:
+</p>
+<div class="ulist"><ul>
+<li>
+<p>
+area: pi * radius<sup>2</sup>
+</p>
+</li>
+<li>
+<p>
+volume (of a sphere):  4/3 * pi * radius<sup>3</sup>
+</p>
+</li>
+<li>
+<p>
+pieces and serving (number of pieces to slice the pie/pizza, and area of a serving)
+</p>
+</li>
+<li>
+<p>
+use this to provide number of inodes for statfs
+</p>
+<div class="ulist"><ul>
+<li>
+<p>
+(hint: don&#8217;t modify the radius, just one of these two, and calculate the other)
+</p>
+</li>
+<li>
+<p>
+bonus: how much of the pie/pizza has already been eaten/is remaining?  maybe add <em>eat_slice</em>, which subtracts from the number of remaining slices, or size of the remaining area?
+</p>
+</li>
+</ul></div>
+</li>
+</ul></div>
+</li>
+<li>
+<p>
+implement some other silly filesystem (squarefs, rectanglefs, ?)
+</p>
+</li>
+<li>
+<p>
+implement a slightly-less-silly filesystem that actually stores data
+</p>
+</li>
+<li>
+<p>
+re-implement circlefs inside a real kernel module
+</p>
+</li>
+</ul></div>
+</div>
+</div>
+</div>
+<div id="footnotes"><hr /></div>
+<div id="footer">
+<div id="footer-text">
+Last updated
+ 2021-05-20 10:49:12 CDT
+</div>
+</div>
+</body>
+</html>
