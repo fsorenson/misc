@@ -18,7 +18,7 @@ nfs_delegations.html: nfs_delegations.adoc
 	asciidoc -a data-uri -a icons -a toc -a max-width=55em nfs_delegations.adoc
 
 nfs_delegations.pdf: nfs_delegations.adoc
-	asciidoctor nfs_delegations.adoc
+	asciidoctor-pdf nfs_delegations.adoc
 
 clean:
 	rm -f nfs_delegations.html nfs_delegations.pdf
