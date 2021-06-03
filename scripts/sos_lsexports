@@ -1,0 +1,55 @@
+#!/usr/bin/perl -w
+
+use strict;
+use warnings;
+
+use Data::Dumper;
+
+my $nfsd_fh_file_name = "proc/net/rpc/nfsd.fh/content";
+my $nfsd_fh_file_pat = qr/^([^ ]+) ([0-9]+) ([^ ]+) (.+)$/;
+
+
+my %lookups = (
+	'fsidtypes' => {
+		0 => "FSID_DEV", ## from fs/nfsd/nfsfh.h
+		1 => "FSID_NUM",
+		2 => "FSID_MAJOR_MINOR",
+		3 => "FSID_ENCODE_DEV",
+		4 => "FSID_UUID4_INUM",
+		5 => "FSID_UUID8",
+		6 => "FSID_UUID16",
+		7 => "FSID_UUID16_INUM"},
+);
+
+sub lookup_kv {
+	my $ref = shift;
+	my %table = %$ref;
+	my $key = shift;
+	my $value = shift;
+	my $tmp_val;
+
+	if (defined($table{$key})) {
+		return $table{$key}{$value} if (defined($table{$key}{$value}));
+
+		my $tmp_val = eval($value);
+		return $table{$key}{$tmp_val} if (defined($table{$key}{$tmp_val}));
+	}
+	return $value;
+}
+
+open(my $fh, $nfsd_fh_file_name) or die("Could not open $nfsd_fh_file_name");
+while (<$fh>) {
+	chomp;
+	my $line = $_;
+
+	if (my @matches = ($line =~ $nfsd_fh_file_pat)) {
+		my $fsidtype_str = lookup_kv(\%lookups, 'fsidtypes', $matches[1]);
+
+		printf("domain: %s, type: %d (%s), fsid: %s, path: %s\n",
+			$matches[0], $matches[1], $fsidtype_str, $matches[2], $matches[3]);
+
+	} else {
+		printf("no match with %s\n", $line);
+	}
+}
+close($fh);
