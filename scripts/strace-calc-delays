@@ -1,0 +1,37 @@
+#!/bin/bash
+
+infile=${1:--}
+
+#head -n20 strace-testbic1wn2l.out | awk '
+awk '
+function fmt_time(s){ m=int(s/60.0) ; s -= (m*60.0); h=int(m/60); m-=(h*60.0); return sprintf("%d:%02d:%02.6f", h, m, s) }
+
+{
+	st=((substr($2,1,2)*60)+substr($2,4,2))*60+substr($2,7) ;
+
+	if (last_time) {
+		delay=st-last_time
+	}else{
+		delay=0
+	}
+	if (delay > longest_delay) {longest_delay=delay}
+
+	duration=substr($NF,2) ;
+	et=st+duration;
+
+	$1 = sprintf("delay: %.06f  %s + %01.6f =", delay, fmt_time(st), duration)
+	$2 = fmt_time(et)
+
+	print
+#	printf "+%.06f  %s + %01.6f = %s:  %s\n", delay, fmt_time(st), duration, et, $0
+#	printf "delay %f - %f + %f%.6f = %f\n", delay, st, duration, et ;
+	last_time=et ;
+#	printf "%s - ", $2 ;
+#	fmt_time(st)
+
+}
+END{
+	printf "longest delay: %f\n", longest_delay
+}
+' $infile
+#' strace-testbic1wn2l.out strace-testbic1wn2l.out
