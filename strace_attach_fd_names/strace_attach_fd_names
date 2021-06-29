@@ -1,0 +1,750 @@
+#!/usr/bin/perl -w
+
+use strict;
+use warnings;
+
+use Data::Dumper;
+use Devel::StackTrace;
+use constant { true => 1, false => 0 };
+
+
+my $DEBUG = 0;
+
+STDOUT->autoflush(1);
+
+my @fd_mappings = []; # map fds per pid
+my @unfinished = []; # unfinished syscall strings per pid
+my @cwds = [];
+
+my @nopid_fd_mapping = [];
+my $nopid_unfinished = [];
+my $nopid_cwd = "";
+
+
+my %patterns;
+my %regexes;
+my @generic_fd_functions;
+my @generic_dfd_pathname_functions;
+my @no_parsing_functions;
+
+sub dump_backtrace {
+	my $trace = Devel::StackTrace->new;
+	printf("\n");
+	print $trace->as_string;
+	printf("\n");
+}
+
+sub trim {
+	my $s = shift;
+	$s =~ s/^\s+|\s+$//g;
+	return $s
+}
+sub get_match_val {
+	my $str = shift;
+	return (defined($str) ? trim($str) : "undefined");
+}
+sub store_fd_name {
+	my $pid = shift;
+	my $fd = shift;
+	my $path = shift;
+
+	$path =~ s/^<|>$//g;
+
+	if (!defined($pid) || $pid == -1) {
+		$nopid_fd_mapping[$fd] = $path;
+		printf("stored nopid fd: %d -> %s\n", $fd, $path) if ($DEBUG >= 1);
+	} else {
+		$fd_mappings[$pid][$fd] = $path;
+		printf("storing pid: %d fd: %d -> %s\n", $pid, $fd, $path) if ($DEBUG >= 1);
+	}
+}
+sub drop_fd_name {
+	my $pid = shift;
+	my $fd = shift;
+
+	if (!defined($pid) || $pid == -1) {
+		undef($nopid_fd_mapping[$fd]) if (defined($nopid_fd_mapping[$fd]));
+	} else {
+		undef($fd_mappings[$pid][$fd]) if (defined($fd_mappings[$pid][$fd]));
+	}
+}
+sub get_cwd {
+	my $pid = shift;
+
+	local *_get_cwd = sub {
+		return $nopid_cwd if (!defined($pid) || $pid == -1);
+		return $cwds[$pid] if (defined($cwds[$pid]));
+		return "";
+	};
+	my $result = _get_cwd($pid);
+	printf("get_cwd(pid: %s): '%s'\n",
+		((defined($pid) and $pid != 0) ? $pid : "nopid"), $result) if ($DEBUG >= 1);
+	return $result;
+}
+sub set_cwd {
+	my $pid = shift;
+	my $cwd = shift;
+
+	if (!defined($pid) || $pid == -1) {
+		$nopid_cwd = $cwd;
+	} else {
+		$cwds[$pid] = $cwd;
+	}
+}
+sub get_dfd_path {
+	my $pid = shift;
+	my $dfd = shift;
+
+	local *_get_dfd_path = sub {
+		my $pid = shift;
+		my $dfd = shift;
+
+		return get_cwd($pid) if ($dfd eq "AT_FDCWD");
+		return get_fd_path($pid, $dfd);
+	};
+	my $result = _get_dfd_path($pid, $dfd);
+	printf("get_dfd_path(pid: %s, dfd: %s) -> '%s'\n",
+		get_match_val($pid), $dfd, $result) if ($DEBUG >= 1);
+	return $result;
+}
+sub get_fd_path {
+	my $pid = shift;
+	my $fd = shift;
+
+	local *_get_fd_path = sub {
+		my $pid = shift;
+		my $fd = shift;
+
+		return get_cwd($pid) if ($fd eq "AT_FDCWD");
+#		if ($fd eq "AT_FDCWD") {
+#			return get_cwd($pid);
+#		}
+
+		if (!defined($pid) or $pid == -1) {
+			return $nopid_fd_mapping[$fd] if (defined $nopid_fd_mapping[$fd]);
+			return "";
+		}
+		return $fd_mappings[$pid][$fd] if (defined($fd_mappings[$pid][$fd]));
+		return "";
+	};
+	my $result = _get_fd_path($pid, $fd);
+	printf("get_fd_path(pid: %s, fd: %s) -> '%s'\n",
+		get_match_val($pid), $fd, $result) if ($DEBUG >= 1);
+	return $result;
+}
+sub get_atpath {
+	my $pid = shift;
+	my $dfd = shift;
+	my $path = shift;
+
+	local *_get_atpath = sub {
+		my $pid = shift;
+		my $dfd = shift;
+		my $path = shift;
+
+		# if pathname is absolute, dirfd is ignored
+		return $path if (substr($path, 0, 1) eq "/");
+
+ 	       # If pathname is relative and dirfd is the special value AT_FDCWD, then pathname is interpreted relative to the current working directory of the calling process (like open()).
+#		return get_cwd($pid) . "/" . $path if ($dfd eq "AT_FDCWD");
+		if ($dfd eq "AT_FDCWD") {
+			my $cwd = get_cwd($pid);
+
+			return $cwd if ($cwd ne "" and $path eq ".");
+			return $cwd . "/" . $path if ($cwd ne "");
+			return $path;
+		}
+
+		# dirfd is not AT_FDCWD and the pathname given in pathname is relative, then it is interpreted relative to the directory referred to by the file descriptor dirfd (rather than relative to the current working directory of the calling process, as is done by open() for a relative pathname).
+
+		my $fd_path = get_fd_path($pid, $dfd);
+		return $fd_path if ($fd_path ne "" and $path eq ".");
+		return $fd_path . "/" . $path if ($fd_path ne "");
+
+		# return one of these, depending on which we decide we like best
+		return "<" . $dfd . ">/" . $path;
+		return $path;
+	};
+
+	my $result = _get_atpath($pid, $dfd, $path);
+	printf("get_atpath for pid: %s, dfd: '%s', path: '%s' -> '%s'\n",
+		get_match_val($pid), $dfd, $path, $result) if ($DEBUG >= 1);
+	return $result;
+}
+
+sub store_unfinished {
+	my $pid = shift;
+	my $store_line = shift;
+
+	$unfinished[$pid] = $store_line;
+}
+sub retrieve_unfinished {
+	my $pid = shift;
+	my $ret = "";
+
+	if (defined($unfinished[$pid])) {
+		$ret = $unfinished[$pid];
+		undef($unfinished[$pid]);
+	}
+	return $ret;
+}
+sub is_generic_fd_function {
+	my $op = shift;
+
+	if ($DEBUG >= 2) {
+		foreach my $o (@generic_fd_functions) {
+			printf("testing whether '%s' matches '%s'\n", $op, $o);
+		}
+	}
+	return (grep { $_ eq $op } @generic_fd_functions);
+}
+sub is_generic_dfd_path_function {
+	my $op = shift;
+
+	if ($DEBUG >= 2) {
+		foreach my $o (@generic_dfd_pathname_functions) {
+			printf("testing whether '%s' matches '%s'\n", $op, $o);
+		}
+	}
+	return (grep { $_ eq $op } @generic_dfd_pathname_functions);
+}
+
+sub do_not_parse_function {
+	my $op = shift;
+	return (grep { $_ eq $op } @no_parsing_functions);
+}
+sub ret_is_error {
+	my $ret = shift;
+
+	return ($ret =~ $regexes{'return_error'});
+}
+
+
+%patterns = (
+#	'possible_pid_string' => '(?:([0-9]+)\s+)?',
+	#[pid 15218]
+	#	'possible_pid_string' => '(?:([0-9]+|(?:\[pid ([0-9]+)\]))\s+)?',
+	#	'possible_pid_string' => '(?:([0-9]+)|(?:\[pid ([0-9]+)\])\s+)?',
+	'possible_pid_string' => '(?:([0-9]+|(?:\[pid )[0-9]+(?:\]))\s+)?',
+
+
+	'possible_timestamp_string' => '(?:([0-9:\.]+)\s+)?',
+	'op_string' => '([^\( ]+)',
+	'op_args_string' => '(.*?)',
+	'ret_string' => '(?:\s+= (.+?))',
+	'possible_elapsed_string' => '(?: <([0-9]+\.[0-9]+)>)?',
+
+	'quoted_string' => "(?:\"(.+)\")",
+	'squiggle_braces_arg' => "(?:\{(.+)\})",
+
+	'digits_string' => '[0-9]+',
+	'fd_string' => "[0-9]+",
+	'fd_string_or_negative_one' => '(?:[0-9]+|-1)',
+	'atfdcwd_string' => "AT_FDCWD",
+
+	'possible_path_string' => "(?:<(.+)>)?",
+	'file_mode_string' => "0[0-7]+",
+	'possible_file_mode_string' => "(?:, (0[0-7]+))?",
+
+	'newfstatat_flags' => "(0|(?:\||AT_EMPTY_PATH|AT_NO_AUTOMOUNT|AT_SYMLINK_NOFOLLOW)+)",
+	'open_flags' => "(0|(?:\\||O_[A-Z0-9_]+)+)",
+
+	'fcntl_cmd' => '(F_[^, ]+)',
+#	'fcntl_args' => '(.+)?',
+	'possible_other_args' => "(?:, (.+))?",
+
+#	'generic_arg' => '(?:, (.+?))',
+	'generic_arg' => '(.+?)',
+
+	'everything_else' => "(.+)?",
+
+	'return_error_string' => "-1 (E[^ ]+)\((.+)\)",
+);
+
+# build on previous definitions
+$patterns{'fd_with_possible_path'} = "($patterns{'fd_string'})$patterns{'possible_path_string'}";
+$patterns{'fd_or_negative_one_with_possible_path'} = "($patterns{'fd_string_or_negative_one'})$patterns{'possible_path_string'}";
+
+$patterns{'fd_or_atfdcwd_string'} = "($patterns{'fd_string'}|$patterns{'atfdcwd_string'})";
+$patterns{'fd_or_atfdcwd_with_possible_path'} = "$patterns{'fd_or_atfdcwd_string'}$patterns{'possible_path_string'}";
+$patterns{'fcntl_args'} = "$patterns{'possible_other_args'}";
+
+#printf("fd_with_possible_path string: '%s'\n", $patterns{'fd_with_possible_path'});
+
+%regexes = (
+	'unfinished' => qr/^$patterns{'possible_pid_string'}$patterns{'possible_timestamp_string'}$patterns{'op_string'}\($patterns{'op_args_string'} <unfinished ...>$/,
+	'resumed' => qr/^$patterns{'possible_pid_string'}$patterns{'possible_timestamp_string'}<... $patterns{'op_string'} resumed>$patterns{'everything_else'}$/,
+
+
+	'op' => qr/^$patterns{'possible_pid_string'}$patterns{'possible_timestamp_string'}$patterns{'op_string'}\($patterns{'op_args_string'}\)$patterns{'ret_string'}$patterns{'possible_elapsed_string'}$/,
+
+	'getcwd' => qr/^$patterns{'quoted_string'}, $patterns{'digits_string'}/, # don't capture digits unless we come up with a reason later
+
+#	'fstat' => qr/^$patterns{'fd_with_possible_path'}, $patterns{'squiggle_braces_arg'}$/,
+	'newfstatat' => qr/^$patterns{'fd_or_atfdcwd_with_possible_path'}, $patterns{'quoted_string'}, $patterns{'squiggle_braces_arg'}, $patterns{'newfstatat_flags'}$/,
+
+	'creat' => qr/^$patterns{'quoted_string'}, $patterns{'open_flags'}$/,
+
+	'open' => qr/^$patterns{'quoted_string'}, $patterns{'open_flags'}$patterns{'possible_file_mode_string'}$/,
+	'openat' => qr/^$patterns{'fd_or_atfdcwd_with_possible_path'}, $patterns{'quoted_string'}, $patterns{'open_flags'}$patterns{'possible_file_mode_string'}$/,
+
+	'close' => qr/^$patterns{'fd_with_possible_path'}$/,
+
+	'chdir' => qr/^$patterns{'quoted_string'}/,
+	'fchdir' => qr/^$patterns{'fd_with_possible_path'}$/,
+
+#	'fcntl' => qr/^$patterns{'fd_with_possible_path'}, $patterns{'fcntl_cmd'}$patterns{'fcntl_args'}/,
+	'fcntl' => qr/^$patterns{'fd_with_possible_path'}, $patterns{'fcntl_cmd'}$patterns{'possible_other_args'}/,
+
+
+#	'mmap' => qr/^$patterns{'generic_arg'}, $patterns{'generic_arg'}, $patterns{'generic_arg'}, $patterns{'generic_arg'}, $patterns{'fd_with_possible_path'}, $patterns{'generic_arg'}/,
+	'mmap' => qr/^$patterns{'generic_arg'}, $patterns{'generic_arg'}, $patterns{'generic_arg'}, $patterns{'generic_arg'}, $patterns{'fd_or_negative_one_with_possible_path'}, $patterns{'generic_arg'}/,
+
+
+
+	'generic_function_fd' => qr/^$patterns{'fd_with_possible_path'}, $patterns{'everything_else'}$/,
+	'generic_function_dfd_path' => qr/^$patterns{'fd_or_atfdcwd_with_possible_path'}, $patterns{'quoted_string'}, $patterns{'everything_else'}$/,
+
+
+	'return_fd_path' => qr/^$patterns{'fd_with_possible_path'}$/,
+	'return_error' => qr/$patterns{'return_error_string'}$/,
+
+);
+#1119840 16:59:55.153682 openat(AT_FDCWD, "/usr/share/locale/locale.alias", O_RDONLY|O_CLOEXEC) = 3</usr/share/locale/locale.alias> <0.000037>
+#1120026 17:00:32.779494 openat(5</home/sos/2948400>, "sosreport-testbic1wn2l-2021-05-26-crzdojg", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY) = 6</home/sos/2948400/sosreport-testbic1wn2l-2021-05-26-crzdojg> <0.000058>
+# int openat(int dirfd, const char *pathname, int flags, mode_t mode);
+
+@generic_fd_functions = (
+	"futimens", "flock",
+	"fchmod", "fchown", "flock", "fstat", "fstatfs",
+	"read", "write", "pread", "pwrite", "readv", "writev", "preadv", "pwritev", "preadv2", "pwritev2", "lseek",
+	"pread64",
+	"fsync", "fdatasync",
+	"ioctl"
+);
+
+@generic_dfd_pathname_functions = ( "faccessat", "fchownat", "unlinkat", "fchmodat",
+	"utimensat", "futimensat", "mkdirat", "fstatat", "fstatat64",
+	"newfstatat",
+);
+
+# newfstatat fstatat fsstat64 creat open openat openat2 close fchdir dup dup2 dup3 fcntl unlinkat symlinkat renameat
+# fsync ioctl select
+#       int symlinkat(const char *target, int newdirfd, const char *linkpath);
+@no_parsing_functions = (
+	"getpid", "getuid", "geteuid", "getgid", "getegid",
+	"setpgid", "getpgid", "chown", "lchown",
+	"futex", "access", "stat",
+	"brk", "mmap", "munmap", "mprotect",
+	"arch_prctl", "uname", "prlimit", "prlimit64", "set_robust_list", "set_tid_address",
+	"wait4", "kill", "exit_group", "statfs",
+	"rt_sigaction", "rt_sigprocmask", "rt_sigreturn",
+);
+# TODO: clone execve(cloexec) exit_group getdents64 select pselect6 pipe access
+
+
+#printf("generic_function_fd pattern is '^$patterns{'fd_with_possible_path'}, $patterns{'everything_else'}\$'\n");
+#printf("generic_function_dfd_path pattern is '^$patterns{'fd_or_atfdcwd_with_possible_path'}, $patterns{'quoted_string'}, $patterns{'everything_else'}\$'\n");
+
+while (<>) {
+	chomp;
+	my $line = $_;
+	my @matches;
+
+	if ($line eq "" or substr($line, 0, 1) eq "#") { next; }
+
+
+#	qr/^$patterns{'possible_pid_string'}$patterns{'possible_timestamp_string'}$patterns{'op_string'}\($patterns{'op_args_string'} <unfinished ...>$/,
+	if (@matches = $line =~ $regexes{'unfinished'}) {
+		if ($DEBUG >= 2) {
+			printf("syscall unfinished: %s\n", $line);
+
+			printf("pid: %d\n", $matches[0]);
+			printf("timestamp: %s\n", get_match_val($matches[1]));
+			printf("op: %s\n", $matches[2]);
+			printf("op args: %s\n", get_match_val($matches[3]));
+		}
+
+		my $save_line = sprintf("%s %s%s(%s",
+			$matches[0], (defined($matches[1])) ? $matches[1] . " " : "",
+			$matches[2], (defined($matches[3])) ? $matches[3] : "");
+
+		store_unfinished($matches[0], $save_line);
+		next;
+	} elsif (@matches = $line =~ $regexes{'resumed'}) {
+		if ($DEBUG >= 2) {
+			printf("resumed syscall line: %s\n", $line);
+
+			printf("pid: %d\n", $matches[0]);
+			printf("timestamp: %s\n", get_match_val($matches[1]));
+			printf("op: %s\n", $matches[2]);
+			printf("remainder of line: %s\n", get_match_val($matches[3]));
+		}
+		my $stored_line = retrieve_unfinished($matches[0]);
+		if ($stored_line eq "") {
+			printf("couldn't find an unfinished line for pid %d to match: %s\n", $matches[0], $line) if ($DEBUG >= 2);
+		} else {
+			$line = $stored_line . $matches[3];
+			printf("attached stored line '%s', resulting in completed line '%s'\n",
+				$stored_line, $line) if ($DEBUG >= 2);
+		}
+	}
+
+printf("\n") if ($DEBUG >= 1);
+printf("parsing %s\n", $line) if ($DEBUG >= 1);
+my $orig_line = $line;
+
+# qr/^$patterns{'possible_pid_string'}$patterns{'possible_timestamp_string'}$patterns{'op_string'}\($patterns{'op_args_string'}\)$patterns{'ret_string'}$patterns{'possible_elapsed_string'}$/
+
+	my ($pid, $timestamp, $op, $args, $ret, $elapsed);
+	my ($dfd, $dfd_path, $other_args);
+
+
+	if ( ($pid, $timestamp, $op, $args, $ret, $elapsed) = $line =~ $regexes{'op'}) {
+		my $rebuild_line = false;
+
+		if ($DEBUG >= 1) {
+			printf("%12s - %s\n", "pid", get_match_val($pid));
+			printf("%12s - %s\n", "timestamp", get_match_val($timestamp));
+			printf("%12s - %s\n", "op", get_match_val($op));
+			printf("%12s - %s\n", "args", get_match_val($args));
+			printf("%12s - %s\n", "ret", get_match_val($ret));
+			printf("%12s - %s\n", "elapsed", get_match_val($elapsed));
+		}
+#		printf("match: op is %s, args: %s, ret: %s, error or path: '%s', elapsed: %s\n", $op, $args, $ret, $error_or_path, $elapsed);
+
+		if ($op eq "getcwd") {
+			printf("matched the getcwd pattern\n");
+			if (my ($path) = $args =~ $regexes{'getcwd'}) {
+				set_cwd($pid, $path);
+			} else {
+				printf("getcwd op, but didn't match the re\n");
+			}
+		} elsif ($op eq "fstatZZZZ") {
+			if (my @m2 = $args =~ $regexes{'fstat'}) {
+if ($DEBUG >= 1) {
+printf("matched the fstat pattern\n");
+
+	printf("%16s - %s\n", "fd", get_match_val($m2[0]));
+	printf("%16s - %s\n", "fd_path", get_match_val($m2[1]));
+	printf("%16s - %s\n", "statbuf", get_match_val($m2[2]));
+	# TODO - parse the return code
+}
+			} else {
+				printf("fstat, but didn't match the re\n");
+			}
+		} elsif ($op eq "newfstatatZZZ" or $op eq "fstatat" or $op eq "fstatat64ZZZ") {
+			if (my @m2 = $args =~ $regexes{'newfstatat'}) {
+printf("matched the fstatat pattern\n");
+
+			if ($DEBUG >= 1) {
+				printf("%16s - %s\n", "dfd", get_match_val($m2[0]));
+				printf("%16s - %s\n", "dfd_path", get_match_val($m2[1]));
+				printf("%16s - %s\n", "pathname", get_match_val($m2[2]));
+				printf("%16s - %s\n", "statbuf", get_match_val($m2[3]));
+				printf("%16s - %s\n", "fstatat_flags", get_match_val($m2[4]));
+			}
+	# TODO - parse the return code
+			} else { printf("newfstatat, but didn't match the re\n"); }
+
+		} elsif ($op eq "creat") {
+			if (my @m2 = $args =~ $regexes{'creat'}) {
+if ($DEBUG >= 2) {
+	printf("matched 'creat' regex - TODO\n");
+	printf("%16s - %s\n", "pathname", get_match_val($m2[0]));
+	printf("%16s - %s\n", "open flags", get_match_val($m2[1]));
+}
+			} else {
+				printf("creat, but didn't match the re\n");
+			}
+
+
+		} elsif ($op eq "open") {
+			if (my ($pathname, $open_flags, $open_mode) = $args =~ $regexes{'open'}) {
+					printf("matched 'open' regex\n") if ($DEBUG >= 1);
+				if ($DEBUG >= 2) {
+					printf("%16s - %s\n", "pathname", get_match_val($pathname));
+					printf("%16s - %s\n", "open flags", get_match_val($open_flags));
+					printf("%16s - %s\n", "open mode", get_match_val($open_mode));
+				}
+				if (!ret_is_error($ret) and my ($fd, $fd_path) = $ret =~ $regexes{'return_fd_path'}) {
+					if ($DEBUG >= 2) {
+						printf("  return fd: %d\n", get_match_val($fd));
+						printf("  return fd path: %s\n", get_match_val($fd_path));
+					}
+					if (defined($fd_path)) {
+						store_fd_name($pid, $fd, $fd_path);
+					} else {
+						store_fd_name($pid, $fd, $pathname);
+						$ret = sprintf("%d<%s>", $fd, $pathname);
+						$line = sprintf("%s%s%s(%s) = %s%s",
+							(defined($pid) ? $pid . " " : ""),
+							(defined($timestamp) ? $timestamp . " " : ""),
+							$op, $args, $ret,
+							(defined($elapsed) ? " " . $elapsed : "")
+						);
+					}
+				} # otherwise, error or couldn't parse return string
+			} else {
+				printf("open, but didn't match the re for args '%s'\n", $args);
+			}
+		} elsif ($op eq "openat") {
+			if (my ($dfd, $dfd_path, $pathname, $open_flags, $open_mode) = $args =~ $regexes{'openat'}) {
+				my $rebuild_args = false;
+
+				printf("matched 'openat' regex\n") if ($DEBUG >= 1);
+				if ($DEBUG >= 2) {
+					printf("%16s - %s\n", "dfd", get_match_val($dfd));
+					printf("%16s - %s\n", "dfd_path", get_match_val($dfd_path));
+					printf("%16s - %s\n", "pathname", get_match_val($pathname));
+					printf("%16s - %s\n", "open flags", get_match_val($open_flags));
+					printf("%16s - %s\n", "open mode", get_match_val($open_mode));
+				}
+				if (!defined($dfd_path)) {
+					$dfd_path = get_fd_path($pid, $dfd);
+					$rebuild_args = true if ($dfd_path ne "");
+				}
+				if (!ret_is_error($ret) and my ($fd, $fd_path) = $ret =~ $regexes{'return_fd_path'}) {
+					if ($DEBUG >= 2) {
+						printf("  return fd: %d\n", get_match_val($fd));
+						printf("  return fd path: %s\n", get_match_val($fd_path));
+					}
+
+#					$fd_path = get_atpath($pid, $dfd, $pathname) if (!defined($fd_path));
+					if (!defined($fd_path)) {
+						$fd_path = get_atpath($pid, $dfd, $pathname);
+						$ret = sprintf("%d<%s>", $fd, $fd_path);
+						$rebuild_line = true;
+					}
+					store_fd_name($pid, $fd, $fd_path);
+				}
+				if ($rebuild_args) {
+					$args = sprintf("%s%s, \"%s\", %s%s",
+						$dfd,
+						(($dfd_path ne "") ? "<" . $dfd_path . ">" : ""),
+						$pathname, $open_flags,
+						(defined($open_mode) ? ", " . $open_mode : ""));
+					$rebuild_line = true;
+				}
+			} else {
+				printf("openat, but didn't match the re\n");
+			}
+		} elsif ($op eq "openat2") {
+			if (my ($dfd, $dfd_path, $pathname, $open_flags, $open_mode) = $args =~ $regexes{'openat2'}) {
+#       int openat2(int dirfd, const char *pathname,
+#                   struct open_how *how, size_t size);
+
+if (0) {
+printf("matched 'openat2' regex\n");
+	printf("%16s - %s\n", "dfd", get_match_val($dfd));
+	printf("%16s - %s\n", "dfd_path", get_match_val($dfd_path));
+	printf("%16s - %s\n", "pathname", get_match_val($pathname));
+	printf("%16s - %s\n", "open flags", get_match_val($open_flags));
+	printf("%16s - %s\n", "open mode", get_match_val($open_mode));
+}
+	# TODO - parse the return code
+
+
+			} else {
+				printf("openat2, but didn't match the re\n");
+			}
+		} elsif ($op eq "close") {
+			if (my ($fd, $fd_path) = $args =~ $regexes{'close'}) {
+				printf("matched 'close' regex\n") if ($DEBUG >= 1);
+				if ($DEBUG >= 2) {
+					printf("%16s - %s\n", "fd", get_match_val($fd));
+					printf("%16s - %s\n", "fd_path", get_match_val($fd_path));
+				}
+				if (!defined($fd_path)) {
+					$fd_path = get_fd_path($pid, $fd);
+					$args = sprintf("%d<%s>", $fd, $fd_path) if ($fd_path ne "");
+					$rebuild_line = true;
+				}
+			} else { printf("close but didn't match the re\n"); }
+		} elsif ($op eq "chdir") {
+			if (my ($path) = $args =~ $regexes{'chdir'}) {
+				set_cwd($pid, $path);
+			} else { printf("chdir, but didn't match the re\n"); }
+		} elsif ($op eq "fchdir") {
+			if (my ($fd, $fd_path) = $args =~ $regexes{'fchdir'}) {
+				$fd_path = get_fd_path($pid, $fd) if (!defined($fd_path));
+				set_cwd($pid, $fd_path) if ($fd_path ne "");
+			} else {printf("fchdir but didn't match the re\n"); }
+		} elsif ($op eq "getdents" or $op eq "getdents64") {
+			if (($dfd, $dfd_path, $other_args) = $args =~ $regexes{'generic_function_fd'}) {
+
+				printf("matched 'getdents' regex\n") if ($DEBUG >= 1);
+
+				if ($DEBUG >= 2) {
+					printf("%16s - %s\n", "dfd", get_match_val($dfd));
+					printf("%16s - %s\n", "dfd_path", get_match_val($dfd_path));
+					printf("%16s - %s\n", "other args", get_match_val($other_args));
+				}
+
+				my $current_mapping = get_fd_path($pid, $dfd);
+				if (defined($dfd_path)) {
+					store_fd_name($pid, $dfd, $dfd_path) if ($current_mapping eq "");
+				} else {
+					if ($current_mapping ne "") {
+						$args = sprintf("%s<%s>%s",
+							$dfd, $current_mapping,
+							(defined($other_args) ? ", " . $other_args : ""));
+						$line = sprintf("%s%s%s(%s) = %s%s",
+							(defined($pid) ? $pid . " " : ""),
+							(defined($timestamp) ? $timestamp . " " : ""),
+							$op, $args, $ret,
+							(defined($elapsed) ? " " . $elapsed : "")
+						);
+					}
+				}
+			}
+		} elsif ($op eq "fcntl") {
+			my $rebuild_args = false;
+
+			printf("fcntl regex\n") if ($DEBUG >= 1);
+			if (my ($fd, $fd_path, $fcntl_cmd, $other_args) = $args =~ $regexes{'fcntl'}) {
+
+				if ($DEBUG >= 2) {
+					printf("fd: %d\n", $fd);
+					printf("fd_path: %s\n", get_match_val($fd_path));
+					printf("fcntl_cmd: %s\n", $fcntl_cmd);
+					printf("other args: %s\n", get_match_val($other_args));
+				}
+
+				if (!defined($fd_path)) {
+					$fd_path = get_fd_path($pid, $fd);
+					$rebuild_args = true if ($fd_path ne "");
+				}
+
+				if ($fcntl_cmd eq "F_DUPFD" or $fcntl_cmd eq "F_DUPFD_CLOEXEC") {
+					if (!ret_is_error($ret) and my ($ret_fd, $ret_path) = $ret =~ $regexes{'return_fd_path'}) {
+						if (!defined($ret_path) and $fd_path ne "") {
+#							$ret_path = $fd_path;
+							store_fd_name($pid, $ret_fd, $fd_path);
+							$ret = sprintf("%d<%s>", $ret_fd, $fd_path);
+							$rebuild_line = true;
+						} else {
+						}
+					} else {
+					}
+				} elsif (grep { $_ eq $fcntl_cmd } ( "F_GETLK", "F_SETLK", "F_SETLKW", "F_OFD_GETLK", "F_OFD_SETLK", "F_OFD_SETLKW" )) {
+				} elsif (grep { $_ eq $fcntl_cmd } ( "F_GETFL", "F_SETFL", "F_GETFD", "F_SETFD")) {
+				} else {
+					printf("fcntl cmd didn't match anything: '%s'\n", $fcntl_cmd);
+				}
+				if ($rebuild_args) {
+					$args = sprintf("%d<%s>, %s%s",
+						$fd, $fd_path, $fcntl_cmd,
+						(defined($other_args) ? ", " . $other_args : ""));
+					$rebuild_line = true;
+				}
+			}
+		} elsif ($op eq "mmap") {
+			if (my ($addr, $length, $prot, $flags, $fd, $fd_path, $offset) = $args =~ $regexes{'mmap'}) {
+
+
+#92997 18:12:17.090315 mmap(NULL, 4096, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) = 0x7f3fd8f4f000 <0.000019>
+#92997 18:12:17.091793 mmap(NULL, 46782, PROT_READ, MAP_PRIVATE, 3, 0) = 0x7f3fd8f43000 <0.000019>
+
+
+				if (!defined($fd_path) and $fd >= 0) {
+					$fd_path = get_fd_path($pid, $fd);
+
+					if ($fd_path ne "") {
+						$args = sprintf("%s, %s, %s, %s, %s%s, %s",
+							$addr, $length, $prot, $flags, $fd,
+							"<" . $fd_path . ">", $offset);
+						$rebuild_line = true;
+					}
+				}
+#	92997 18:12:17.092289 mmap(NULL, 3985920, PROT_READ|PROT_EXEC, MAP_PRIVATE|MAP_DENYWRITE, 3, 0) = 0x7f3fd8961000 <0.000018>
+#       void *mmap(void *addr, size_t length, int prot, int flags,
+#                  int fd, off_t offset);
+#       int munmap(void *addr, size_t length);
+#			(), (), (), (), #####, ()
+
+#			qr/^([^,]+), ([^,]+), ([^,]+), ([^,]+), 
+#			([^,]+), ([^,]+),
+
+			} else { printf("mmap, but didn't match the re: '%s'\n", $regexes{'mmap'}); }
+		} elsif ($op eq "clone") {
+			# if CLONE_FILES is set, the two processes SHARE fd table -- not sure how to implement that
+			# if execve is later called, the fd table is duplicated, and no longer shared
+
+		} elsif ($op eq "execve") {
+			# CLOEXEC fds are closed - TODO: track CLOEXEC fds for a pid and close them when we 'execve'
+
+
+
+		} elsif (is_generic_fd_function($op)) {
+			printf("generic fd function: %s\n", $op) if ($DEBUG >= 1);
+
+			if (my ($fd, $fd_path, $other_args) = $args =~ $regexes{'generic_function_fd'}) {
+				my $rebuild_args = false;
+
+				if (!defined($fd_path)) {
+					$fd_path = get_fd_path($pid, $fd);
+					$rebuild_args = true if ($fd_path ne "");
+				}
+				if ($rebuild_args) {
+					$args = sprintf("%d<%s>%s",
+						$fd,
+						(($fd_path ne "") ? "<" . $fd_path . ">" : ""),
+						(defined($other_args) ? ", " . $other_args : ""));
+					$rebuild_line = true;
+				}
+			} else { printf("generic %s(fd...), but '%s' didn't match the regex: %s\n", $op, $args, $regexes{'generic_function_fd'}); }
+		} elsif (is_generic_dfd_path_function($op)) {
+			printf("generic dfd+path function: %s\n", $op) if ($DEBUG >= 1);
+
+			if (my ($dfd, $dfd_path, $path, $other_args) = $args =~ $regexes{'generic_function_dfd_path'}) {
+				my $rebuild_args = false;
+
+				if (!defined($dfd_path)) {
+					$dfd_path = get_fd_path($pid, $dfd);
+					$rebuild_args = true if ($dfd_path ne "");
+				}
+				if ($rebuild_args) {
+					$args = sprintf("%s%s, \"%s\"%s",
+						$dfd,
+						(($dfd_path ne "") ? "<" . $dfd_path . ">" : ""),
+						$path,
+						(defined($other_args) ? ", " . $other_args : ""));
+					$rebuild_line = true;
+				}
+# renameat renameat2
+# symlinkat
+
+# faccessat dup dup2 dup3
+#
+# newfstatat fstatat fsstat64 creat open openat openat2 close fchdir faccessat dup dup2 dup3 fcntl utimensat futimens unlinkat symlinkat renameat
+# read write pread pwrite lseek readv writev preadv pwritev preadv2 pwritev2 fsync ioctl select
+			} else { printf("generic %s(dfd, path...), but '%s' didn't match the regex '%s'\n", $op, $args, $regexes{'generic_function_dfd_path'}); }
+		} elsif (do_not_parse_function($op)) {
+#			printf("%s\n", $line);
+
+		} elsif ($op eq "execve") {
+			# should unset all the CLOEXEC fds, but would need to start tracking them first
+		} else {
+printf("matched the main pattern, but didn't find a matching op for '$op'\n");
+printf(" full string: %s\n", $line);
+		}
+
+		$line = sprintf("%s%s%s(%s) = %s%s",
+			(defined($pid) ? $pid . " " : ""),
+			(defined($timestamp) ? $timestamp . " " : ""),
+			$op, $args, $ret,
+			(defined($elapsed) ? " " . $elapsed : "")
+		) if ($rebuild_line);
+	} else {
+		printf("didn't match op pattern: %s\n", $line) if ($DEBUG >= 1);
+	}
+
+	if ($DEBUG >= 1) {
+		printf("<<<=== %s\n", $orig_line);
+		printf("===>>> %s\n", $line);
+	} else {
+		printf("%s\n", $line);
+	}
+
+}
