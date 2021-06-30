@@ -1,0 +1,189 @@
+%{
+#ifndef FSCTL_VALIDATE_NEGOTIATE_INFO
+#define FSCTL_VALIDATE_NEGOTIATE_INFO 0x00140204
+#endif
+%}
+probe module("cifs").function("SMB2_ioctl").return {
+        opcode = @entry($opcode)
+        is_fsctl = @entry($is_fsctl)
+
+	if (opcode ==  %{ FSCTL_VALIDATE_NEGOTIATE_INFO %} && is_fsctl && !$return) {
+		pout_data = @entry($out_data)
+		if (pout_data) { # avoid dereferencing a null
+			outbuf = &@cast(kernel_pointer(pout_data), "struct validate_negotiate_info_rsp", "cifs")
+
+			orig_caps = outbuf->Capabilities
+			outbuf->Capabilities = outbuf->Capabilities & ~0x4
+			printf("%s(FSCTL_VALIDATE_NEGOTIATE_INFO).return  capabilities: 0x%x -> 0x%x\n",
+				ppfunc(), orig_caps, outbuf->Capabilities)
+		}
+	}
+}
+
+probe module("cifs").function("cifs_setup_session") {
+	orig_caps = $ses->server->capabilities
+	$ses->server->capabilities = $ses->server->capabilities & ~0x4
+	printf("%s() - server->capabilities: 0x%x -> 0x%x\n",
+		ppfunc(), orig_caps, $ses->server->capabilities)
+}
+
+%{
+#ifndef STATUS_SUCCESS
+
+#define STATUS_SUCCESS __constant_cpu_to_le32(0x00000000)
+#define STATUS_MORE_PROCESSING_REQUIRED __constant_cpu_to_le32(0xC0000016)
+#define STATUS_ACCESS_DENIED __constant_cpu_to_le32(0xC0000022)
+#define STATUS_OBJECT_NAME_NOT_FOUND __constant_cpu_to_le32(0xC0000034)
+#define STATUS_DELETE_PENDING __constant_cpu_to_le32(0xC0000056)
+#define STATUS_PENDING __constant_cpu_to_le32(0x00000103)
+#define STATUS_NOT_FOUND __constant_cpu_to_le32(0xC0000225)
+#endif
+
+#ifndef SMB2_NEGOTIATE_HE
+#define SMB2_NEGOTIATE_HE       0x0000
+#define SMB2_SESSION_SETUP_HE   0x0001
+#define SMB2_LOGOFF_HE          0x0002 /* trivial request/resp */
+#define SMB2_TREE_CONNECT_HE    0x0003
+#define SMB2_TREE_DISCONNECT_HE 0x0004 /* trivial req/resp */
+#define SMB2_CREATE_HE          0x0005
+#define SMB2_CLOSE_HE           0x0006
+#define SMB2_FLUSH_HE           0x0007 /* trivial resp */
+#define SMB2_READ_HE            0x0008
+#define SMB2_WRITE_HE           0x0009
+#define SMB2_LOCK_HE            0x000A
+#define SMB2_IOCTL_HE           0x000B
+#define SMB2_CANCEL_HE          0x000C
+#define SMB2_ECHO_HE            0x000D
+#define SMB2_QUERY_DIRECTORY_HE 0x000E
+#define SMB2_CHANGE_NOTIFY_HE   0x000F
+#define SMB2_QUERY_INFO_HE      0x0010
+#define SMB2_SET_INFO_HE        0x0011
+#define SMB2_OPLOCK_BREAK_HE    0x0012
+#endif
+
+#ifndef SMB2_NEGOTIATE
+#define SMB2_NEGOTIATE          cpu_to_le16(SMB2_NEGOTIATE_HE)
+#define SMB2_SESSION_SETUP      cpu_to_le16(SMB2_SESSION_SETUP_HE)
+#define SMB2_LOGOFF             cpu_to_le16(SMB2_LOGOFF_HE)
+#define SMB2_TREE_CONNECT       cpu_to_le16(SMB2_TREE_CONNECT_HE)
+#define SMB2_TREE_DISCONNECT    cpu_to_le16(SMB2_TREE_DISCONNECT_HE)
+#define SMB2_CREATE             cpu_to_le16(SMB2_CREATE_HE)
+#define SMB2_CLOSE              cpu_to_le16(SMB2_CLOSE_HE)
+#define SMB2_FLUSH              cpu_to_le16(SMB2_FLUSH_HE)
+#define SMB2_READ               cpu_to_le16(SMB2_READ_HE)
+#define SMB2_WRITE              cpu_to_le16(SMB2_WRITE_HE)
+#define SMB2_LOCK               cpu_to_le16(SMB2_LOCK_HE)
+#define SMB2_IOCTL              cpu_to_le16(SMB2_IOCTL_HE)
+#define SMB2_CANCEL             cpu_to_le16(SMB2_CANCEL_HE)
+#define SMB2_ECHO               cpu_to_le16(SMB2_ECHO_HE)
+#define SMB2_QUERY_DIRECTORY    cpu_to_le16(SMB2_QUERY_DIRECTORY_HE)
+#define SMB2_CHANGE_NOTIFY      cpu_to_le16(SMB2_CHANGE_NOTIFY_HE)
+#define SMB2_QUERY_INFO         cpu_to_le16(SMB2_QUERY_INFO_HE)
+#define SMB2_SET_INFO           cpu_to_le16(SMB2_SET_INFO_HE)
+#define SMB2_OPLOCK_BREAK       cpu_to_le16(SMB2_OPLOCK_BREAK_HE)
+#endif
+%}
+
+%{
+struct val_str_pair {
+	        long val;
+		        const char *string;
+};
+#define KV(a) { .val = a, .string = #a }
+
+static const struct val_str_pair smb2_status_str[] = {
+	KV(STATUS_SUCCESS),
+	KV(STATUS_OBJECT_NAME_NOT_FOUND),
+	KV(STATUS_ACCESS_DENIED),
+	KV(STATUS_DELETE_PENDING),
+	KV(STATUS_PENDING),
+	KV(STATUS_NOT_FOUND),
+	KV(STATUS_MORE_PROCESSING_REQUIRED),
+};
+static const int max_smb2_status_str = sizeof(smb2_status_str)/sizeof(smb2_status_str[0]);
+
+static const struct val_str_pair smb2_command_str[] = {
+	KV(SMB2_NEGOTIATE),
+	KV(SMB2_SESSION_SETUP),
+	KV(SMB2_LOGOFF),
+	KV(SMB2_TREE_CONNECT),
+	KV(SMB2_TREE_DISCONNECT),
+	KV(SMB2_CREATE),
+	KV(SMB2_CLOSE),
+	KV(SMB2_FLUSH),
+	KV(SMB2_READ),
+	KV(SMB2_WRITE),
+	KV(SMB2_LOCK),
+	KV(SMB2_IOCTL),
+	KV(SMB2_CANCEL),
+	KV(SMB2_ECHO),
+	KV(SMB2_QUERY_DIRECTORY),
+	KV(SMB2_CHANGE_NOTIFY),
+	KV(SMB2_QUERY_INFO),
+	KV(SMB2_SET_INFO),
+	KV(SMB2_OPLOCK_BREAK),
+};
+static const int max_smb2_command_str = sizeof(smb2_command_str)/sizeof(smb2_command_str[0]);
+
+#undef KV
+%}
+
+function smb2_status_str_get_val:long(i:long) %{
+	STAP_RETVALUE = smb2_status_str[STAP_ARG_i].val;
+%}
+function smb2_status_str_get_str:string(i:long) %{
+	snprintf(STAP_RETVALUE, MAXSTRINGLEN, "%s", smb2_status_str[STAP_ARG_i].string);
+%}
+function get_smb2_status_str:string(val:long) {
+
+	for (i = 0 ; i < %{ max_smb2_status_str %} ; i++) {
+		if (smb2_status_str_get_val(i) == val)
+			return smb2_status_str_get_str(i);
+	}
+	return "Unknown"
+}
+function smb2_command_str_get_val:long(i:long) %{
+	STAP_RETVALUE = smb2_command_str[STAP_ARG_i].val;
+%}
+function smb2_command_str_get_str:string(i:long) %{
+	snprintf(STAP_RETVALUE, MAXSTRINGLEN, "%s", smb2_command_str[STAP_ARG_i].string);
+%}
+function get_smb2_command_str:string(val:long) {
+
+	for (i = 0 ; i < %{ max_smb2_command_str %} ; i++) {
+		if (smb2_command_str_get_val(i) == val)
+			return smb2_command_str_get_str(i);
+	}
+	return "Unknown"
+}
+
+probe module("cifs").function("smb2_is_status_pending") {
+	smb2_hdr = &@cast($buf, "struct smb2_hdr", "cifs")
+	shdr = &smb2_hdr->sync_hdr
+
+	caller_addr = caller_addr()
+	if (caller_addr != 0)
+		try {
+			caller_name = symname(caller_addr)
+		} catch {
+			caller_name = sprintf("%p", caller_addr)
+		}
+	else
+		caller_name = "(unknown: 0x0)"
+
+	status = shdr->Status
+	command = shdr->Command
+
+	if (command == %{ SMB2_CREATE %} && status == %{ STATUS_PENDING %}) {
+		printf("%s (%d) - %s() -  command %s response status %s   (called from %s)\n\tserver->credits: %d, credit req/grant: %d, charged: %d\n",
+			execname(), tid(), ppfunc(), get_smb2_command_str(command), get_smb2_status_str(status),
+			caller_name,
+			$server->credits, shdr->CreditRequest, shdr->CreditCharge)
+
+
+
+		printf("\tmodding credits\n")
+		shdr->CreditRequest = 0
+		shdr->CreditCharge = 1
+	}
+}
