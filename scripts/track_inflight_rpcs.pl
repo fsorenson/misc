@@ -3,7 +3,7 @@
 use warnings;
 use strict;
 
-my $DEBUG = 0;
+my $DEBUG = 1;
 
 if (scalar(@ARGV) != 1) {
 	printf("usage: %s <pcap_filename>\n", $0);
@@ -35,13 +35,13 @@ while (<PCAP>) {
 		my @xids = split(",", $xids_str);
 
 		if ($msgtyps[0] == 0) {
-			printf("frame %d: call\n") if ($DEBUG >= 1);
+			printf("frame %d: call\n", $frame) if ($DEBUG >= 1);
 			foreach my $xid (@xids) {
 				printf("  call xid: %s\n", $xid) if ($DEBUG >= 2);
 				$inflight_xids{$xid} = 1;
 			}
 		} else {
-			printf("frame %d: reply\n") if ($DEBUG >= 1);
+			printf("frame %d: reply\n", $frame) if ($DEBUG >= 1);
 			foreach my $xid (@xids) {
 				printf("  reply xid: %s\n", $xid) if ($DEBUG >= 2);
 				delete $inflight_xids{$xid} if (defined($inflight_xids{$xid}));
