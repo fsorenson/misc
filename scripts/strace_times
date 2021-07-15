@@ -1,0 +1,2 @@
+#!/bin/bash
+awk '(NR==1){st=$2} {et=$2} END{printf "%s - %s\n", st, et}' ${1:--}
