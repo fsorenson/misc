@@ -1,2 +1,13 @@
 #!/bin/bash
-awk '(NR==1){st=$2} {et=$2} END{printf "%s - %s\n", st, et}' ${1:--}
+awk 'function to_sec(t) {
+	cmd = sprintf("date +%%s.%%N -d \"%s\" 2>&1", t)
+	cmd | getline secs
+	close(cmd)
+	return secs
+}
+(NR==1){st=$2} {et=$2}
+END{
+	sts = to_sec(st)
+	ets = to_sec(et)
+	printf "%s - %s  %f seconds\n", st, et, ets - sts
+}' ${1:--}
