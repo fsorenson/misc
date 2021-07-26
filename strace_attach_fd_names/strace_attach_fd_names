@@ -5,15 +5,34 @@ use warnings;
 
 use List::MoreUtils qw/indexes/;
 use File::Basename qw/basename/;
+use Getopt::Long;
 
 use Data::Dumper;
 use Devel::StackTrace;
 use constant { true => 1, false => 0 };
 
+my %config = (
+	'debug' => 0,
+	'show_execnames' => false,
+);
 
-my $DEBUG = 0;
+
+GetOptions(
+	'debug|verbose|v+' => \$config{'debug'},
+	'execnames|e' => sub { $config{'show_execnames'} = true },
+);
+
+
+if ($config{'debug'} >= 1) {
+	printf("resulting DEBUG: %d\n", $config{'debug'});
+	printf("resulting config{'debug'}: %d\n", $config{'debug'});
+	printf("resulting show_execname: $config{'show_execnames'}\n");
+}
+
 
 STDOUT->autoflush(1);
+
+
 
 my %fd_mappings; # map fds per pid
 my %fd_cloexecs; # fds to close on exec, per pid
@@ -39,6 +58,9 @@ my %regexes;
 my @generic_fd_functions;
 my @generic_dfd_pathname_functions;
 my @no_parsing_functions;
+
+
+
 
 sub dump_backtrace {
 	my $trace = Devel::StackTrace->new;
@@ -66,7 +88,7 @@ sub get_cwd {
 	};
 	my $result = _get_cwd($pid);
 	printf("get_cwd(pid: %s): '%s'\n",
-		((defined($pid) and $pid != 0) ? $pid : "nopid"), $result) if ($DEBUG >= 1);
+		((defined($pid) and $pid != 0) ? $pid : "nopid"), $result) if ($config{'debug'} >= 1);
 	return $result;
 }
 sub set_cwd {
@@ -106,7 +128,7 @@ sub get_shared_fd_table_mapping {
 		# this pid actually shares a table with another pid
 		# map to that pid before trying to do anything here
 		printf("mapping pid %d to shared fd table of pid %d\n",
-			$pid, $shared_fd_tables{$pid}) if ($DEBUG >= 1);
+			$pid, $shared_fd_tables{$pid}) if ($config{'debug'} >= 1);
 		return $shared_fd_tables{$pid};
 	}
 	return $pid;
@@ -136,7 +158,7 @@ sub inherit_fd_table {
 	foreach my $fd (@fds) {
 		store_fd_name($new_pid, $fd, get_fd_path($orig_pid, $fd));
 	}
-	printf("copied fd table of pid %d to pid %d\n", $orig_pid, $new_pid) if ($DEBUG >= 1);
+	printf("copied fd table of pid %d to pid %d\n", $orig_pid, $new_pid) if ($config{'debug'} >= 1);
 	# TODO - duplicate cloexec table?
 }
 sub clear_fd_table { # call when process is exiting
@@ -152,7 +174,7 @@ sub clear_fd_table { # call when process is exiting
 #	}
 	undef($fd_mappings{$pid}) if (defined($fd_mappings{$pid}));
 
-	printf("cleared fd table for pid %d\n", $pid) if ($DEBUG >= 1);
+	printf("cleared fd table for pid %d\n", $pid) if ($config{'debug'} >= 1);
 }
 
 sub store_cloexec_fd {
@@ -161,10 +183,10 @@ sub store_cloexec_fd {
 
 	if (!defined($pid) || $pid == -1) {
 		$nopid_fd_cloexecs{$fd} = 1;
-		printf("stored nopid fd %d CLOEXEC\n", $fd) if ($DEBUG >= 1);
+		printf("stored nopid fd %d CLOEXEC\n", $fd) if ($config{'debug'} >= 1);
 	} else {
 		$fd_cloexecs{$pid}{$fd} = 1;
-		printf("stored pid %d fd %d CLOEXEC\n", $pid, $fd) if ($DEBUG >= 1);
+		printf("stored pid %d fd %d CLOEXEC\n", $pid, $fd) if ($config{'debug'} >= 1);
 	}
 }
 sub drop_cloexec_fd {
@@ -173,12 +195,12 @@ sub drop_cloexec_fd {
 
 	if (!defined($pid) || $pid == -1) {
 		undef $nopid_fd_cloexecs{$fd} if (defined($nopid_fd_cloexecs{$fd}));
-		printf("removed fd %d CLOEXEC\n", $fd) if ($DEBUG >= 1);
+		printf("removed fd %d CLOEXEC\n", $fd) if ($config{'debug'} >= 1);
 	} else {
 		$pid = get_shared_fd_table_mapping($pid);
 #		if (defined($shared_fd_tables{$pid})) {
 		undef $fd_cloexecs{$pid}{$fd} if (defined($fd_cloexecs{$pid}{$fd}));
-		printf("removed pid %d fd %d CLOEXEC\n", $pid, $fd) if ($DEBUG >= 1);
+		printf("removed pid %d fd %d CLOEXEC\n", $pid, $fd) if ($config{'debug'} >= 1);
 	}
 }
 sub store_fd_name {
@@ -194,10 +216,10 @@ sub store_fd_name {
 
 	if (!defined($pid) || $pid == -1) {
 		$nopid_fd_mapping{$fd} = $path;
-		printf("stored nopid fd: %d -> %s\n", $fd, $path) if ($DEBUG >= 1);
+		printf("stored nopid fd: %d -> %s\n", $fd, $path) if ($config{'debug'} >= 1);
 	} else {
 		$fd_mappings{$pid}{$fd} = $path;
-		printf("storing pid: %d fd: %d -> %s\n", $pid, $fd, $path) if ($DEBUG >= 1);
+		printf("storing pid: %d fd: %d -> %s\n", $pid, $fd, $path) if ($config{'debug'} >= 1);
 	}
 }
 sub drop_fd_name {
@@ -225,7 +247,7 @@ sub get_dfd_path {
 	};
 	my $result = _get_dfd_path($pid, $dfd);
 	printf("get_dfd_path(pid: %s, dfd: %s) -> '%s'\n",
-		get_match_val($pid), $dfd, $result) if ($DEBUG >= 1);
+		get_match_val($pid), $dfd, $result) if ($config{'debug'} >= 1);
 	return $result;
 }
 sub get_fd_path {
@@ -249,7 +271,7 @@ sub get_fd_path {
 	};
 	my $result = _get_fd_path($pid, $fd);
 	printf("get_fd_path(pid: %s, fd: %s) -> '%s'\n",
-		get_match_val($pid), $fd, $result) if ($DEBUG >= 1);
+		get_match_val($pid), $fd, $result) if ($config{'debug'} >= 1);
 	return $result;
 }
 sub get_atpath {
@@ -288,7 +310,7 @@ sub get_atpath {
 
 	my $result = _get_atpath($pid, $dfd, $path);
 	printf("get_atpath for pid: %s, dfd: '%s', path: '%s' -> '%s'\n",
-		get_match_val($pid), $dfd, $path, $result) if ($DEBUG >= 1);
+		get_match_val($pid), $dfd, $path, $result) if ($config{'debug'} >= 1);
 	return $result;
 }
 
@@ -311,7 +333,7 @@ sub retrieve_unfinished {
 sub is_generic_fd_function {
 	my $op = shift;
 
-	if ($DEBUG >= 2) {
+	if ($config{'debug'} >= 2) {
 		foreach my $o (@generic_fd_functions) {
 			printf("testing whether '%s' matches '%s'\n", $op, $o);
 		}
@@ -321,7 +343,7 @@ sub is_generic_fd_function {
 sub is_generic_dfd_path_function {
 	my $op = shift;
 
-	if ($DEBUG >= 2) {
+	if ($config{'debug'} >= 2) {
 		foreach my $o (@generic_dfd_pathname_functions) {
 			printf("testing whether '%s' matches '%s'\n", $op, $o);
 		}
@@ -604,7 +626,7 @@ while (<>) {
 #	if (@matches = $line =~ $regexes{'unfinished'}) {
 #	if (($pid, $timestamp, $op, my $op_args) = $line =~ $regexes{'unfinished'}) {
 	if (($pid, $timestamp, $op, my $op_args) = $line =~ $regexes{'unfinished'}) {
-		if ($DEBUG >= 2) {
+		if ($config{'debug'} >= 2) {
 			printf("syscall unfinished: %s\n", $line);
 
 			printf("pid: %d\n", get_match_val($pid));
@@ -620,7 +642,7 @@ while (<>) {
 		next;
 #	} elsif (@matches = $line =~ $regexes{'resumed'}) {
 	} elsif (($pid, $timestamp, $op, my $remainder) = $line =~ $regexes{'resumed'}) {
-		if ($DEBUG >= 2) {
+		if ($config{'debug'} >= 2) {
 			printf("resumed syscall line: %s\n", $line);
 
 			printf("pid: %d\n", $pid);
@@ -630,16 +652,16 @@ while (<>) {
 		}
 		my $stored_line = retrieve_unfinished($pid);
 		if ($stored_line eq "") {
-			printf("couldn't find an unfinished line for pid %d to match: %s\n", $pid, $line) if ($DEBUG >= 2);
+			printf("couldn't find an unfinished line for pid %d to match: %s\n", $pid, $line) if ($config{'debug'} >= 2);
 		} else {
 			$line = $stored_line . trim($remainder);
 			printf("attached stored line '%s', resulting in completed line '%s'\n",
-				$stored_line, $line) if ($DEBUG >= 2);
+				$stored_line, $line) if ($config{'debug'} >= 2);
 		}
 	}
 
-printf("\n") if ($DEBUG >= 1);
-printf("parsing %s\n", $line) if ($DEBUG >= 1);
+printf("\n") if ($config{'debug'} >= 1);
+printf("parsing %s\n", $line) if ($config{'debug'} >= 1);
 my $orig_line = $line;
 
 # qr/^$patterns{'possible_pid_string'}$patterns{'possible_timestamp_string'}$patterns{'op_string'}\($patterns{'op_args_string'}\)$patterns{'ret_string'}$patterns{'possible_elapsed_string'}$/
@@ -651,7 +673,7 @@ my $orig_line = $line;
 
 		$args = trim($args);
 
-		if ($DEBUG >= 1) {
+		if ($config{'debug'} >= 1) {
 			printf("%12s - %s\n", "pid", get_match_val($pid));
 			printf("%12s - %s\n", "timestamp", get_match_val($timestamp));
 			printf("%12s - %s\n", "op", get_match_val($op));
@@ -662,7 +684,7 @@ my $orig_line = $line;
 #		printf("match: op is %s, args: %s, ret: %s, error or path: '%s', elapsed: %s\n", $op, $args, $ret, $error_or_path, $elapsed);
 
 		if ($op eq "getcwd") {
-			printf("matched the getcwd pattern\n") if ($DEBUG >= 1);
+			printf("matched the getcwd pattern\n") if ($config{'debug'} >= 1);
 			if (my ($path) = $args =~ $regexes{'getcwd'}) {
 				set_cwd($pid, $path);
 			} else {
@@ -670,8 +692,8 @@ my $orig_line = $line;
 			}
 		} elsif ($op eq "fstatZZZZ") {
 			if (my @m2 = $args =~ $regexes{'fstat'}) {
-				printf("matched the fstat pattern\n") if ($DEBUG >= 1);
-				if ($DEBUG >= 2) {
+				printf("matched the fstat pattern\n") if ($config{'debug'} >= 1);
+				if ($config{'debug'} >= 2) {
 					printf("%16s - %s\n", "fd", get_match_val($m2[0]));
 					printf("%16s - %s\n", "fd_path", get_match_val($m2[1]));
 					printf("%16s - %s\n", "statbuf", get_match_val($m2[2]));
@@ -684,7 +706,7 @@ my $orig_line = $line;
 			if (my @m2 = $args =~ $regexes{'newfstatat'}) {
 printf("matched the fstatat pattern\n");
 
-			if ($DEBUG >= 1) {
+			if ($config{'debug'} >= 1) {
 				printf("%16s - %s\n", "dfd", get_match_val($m2[0]));
 				printf("%16s - %s\n", "dfd_path", get_match_val($m2[1]));
 				printf("%16s - %s\n", "pathname", get_match_val($m2[2]));
@@ -697,8 +719,8 @@ printf("matched the fstatat pattern\n");
 		} elsif ($op eq "creat") {
 			# essentially calls open with O_CREAT|O_WRONLY|O_TRUNC
 			if (my ($pathname, $open_mode) = $args =~ $regexes{'creat'}) {
-				printf("matched 'creat' regex\n") if ($DEBUG >= 1);
-				if ($DEBUG >= 2) {
+				printf("matched 'creat' regex\n") if ($config{'debug'} >= 1);
+				if ($config{'debug'} >= 2) {
 					printf("%16s - %s\n", "pathname", get_match_val($pathname));
 					printf("%16s - %s\n", "open mode", get_match_val($open_mode));
 				}
@@ -717,14 +739,14 @@ printf("matched the fstatat pattern\n");
 
 		} elsif ($op eq "open") {
 			if (my ($pathname, $open_flags, $open_mode) = $args =~ $regexes{'open'}) {
-					printf("matched 'open' regex\n") if ($DEBUG >= 1);
-				if ($DEBUG >= 2) {
+					printf("matched 'open' regex\n") if ($config{'debug'} >= 1);
+				if ($config{'debug'} >= 2) {
 					printf("%16s - %s\n", "pathname", get_match_val($pathname));
 					printf("%16s - %s\n", "open flags", get_match_val($open_flags));
 					printf("%16s - %s\n", "open mode", get_match_val($open_mode));
 				}
 				if (!ret_is_error($ret) and my ($fd, $fd_path) = $ret =~ $regexes{'return_fd_path'}) {
-					if ($DEBUG >= 2) {
+					if ($config{'debug'} >= 2) {
 						printf("  return fd: %d\n", get_match_val($fd));
 						printf("  return fd path: %s\n", get_match_val($fd_path));
 					}
@@ -751,8 +773,8 @@ if (0) {
 			if (my ($dfd, $dfd_path, $pathname, $open_flags, $open_mode) = $args =~ $regexes{'openat'}) {
 				my $rebuild_args = false;
 
-				printf("matched 'openat' regex\n") if ($DEBUG >= 1);
-				if ($DEBUG >= 2) {
+				printf("matched 'openat' regex\n") if ($config{'debug'} >= 1);
+				if ($config{'debug'} >= 2) {
 					printf("%16s - %s\n", "dfd", get_match_val($dfd));
 					printf("%16s - %s\n", "dfd_path", get_match_val($dfd_path));
 					printf("%16s - %s\n", "pathname", get_match_val($pathname));
@@ -764,7 +786,7 @@ if (0) {
 					$rebuild_args = true if ($dfd_path ne "");
 				}
 				if (!ret_is_error($ret) and my ($fd, $fd_path) = $ret =~ $regexes{'return_fd_path'}) {
-					if ($DEBUG >= 2) {
+					if ($config{'debug'} >= 2) {
 						printf("  return fd: %d\n", get_match_val($fd));
 						printf("  return fd path: %s\n", get_match_val($fd_path));
 					}
@@ -776,7 +798,7 @@ if (0) {
 					}
 					store_fd_name($pid, $fd, $fd_path);
 					if ($dfd eq "AT_FDCWD" and $pathname eq "." and $fd_path ne "") {
-						printf("derived CWD from openat(AT_FDCWD, \".\"...): '%s'\n", $fd_path) if ($DEBUG >= 1);
+						printf("derived CWD from openat(AT_FDCWD, \".\"...): '%s'\n", $fd_path) if ($config{'debug'} >= 1);
 	  					set_cwd($pid, $fd_path);
 					}
 				}
@@ -812,8 +834,8 @@ printf("matched 'openat2' regex\n");
 			}
 		} elsif ($op eq "close") {
 			if (my ($fd, $fd_path) = $args =~ $regexes{'close'}) {
-				printf("matched 'close' regex\n") if ($DEBUG >= 1);
-				if ($DEBUG >= 2) {
+				printf("matched 'close' regex\n") if ($config{'debug'} >= 1);
+				if ($config{'debug'} >= 2) {
 					printf("%16s - %s\n", "fd", get_match_val($fd));
 					printf("%16s - %s\n", "fd_path", get_match_val($fd_path));
 				}
@@ -835,9 +857,9 @@ printf("matched 'openat2' regex\n");
 		} elsif ($op eq "getdents" or $op eq "getdents64") {
 			if (($dfd, $dfd_path, $other_args) = $args =~ $regexes{'generic_function_fd'}) {
 
-				printf("matched 'getdents' regex\n") if ($DEBUG >= 1);
+				printf("matched 'getdents' regex\n") if ($config{'debug'} >= 1);
 
-				if ($DEBUG >= 2) {
+				if ($config{'debug'} >= 2) {
 					printf("%16s - %s\n", "dfd", get_match_val($dfd));
 					printf("%16s - %s\n", "dfd_path", get_match_val($dfd_path));
 					printf("%16s - %s\n", "other args", get_match_val($other_args));
@@ -864,10 +886,10 @@ printf("matched 'openat2' regex\n");
 		} elsif ($op eq "fcntl") {
 			my $rebuild_args = false;
 
-			printf("fcntl regex\n") if ($DEBUG >= 1);
+			printf("fcntl regex\n") if ($config{'debug'} >= 1);
 			if (my ($fd, $fd_path, $fcntl_cmd, $other_args) = $args =~ $regexes{'fcntl'}) {
 
-				if ($DEBUG >= 2) {
+				if ($config{'debug'} >= 2) {
 					printf("fd: %d\n", $fd);
 					printf("fd_path: %s\n", get_match_val($fd_path));
 					printf("fcntl_cmd: %s\n", $fcntl_cmd);
@@ -999,7 +1021,7 @@ printf("matched 'openat2' regex\n");
 				}
 			}
 		} elsif ($op eq "pipe") {
-			printf("matched pipe\n") if ($DEBUG >= 1);
+			printf("matched pipe\n") if ($config{'debug'} >= 1);
 			if (my ($fd0, $fd0_name, $fd1, $fd1_name) = $args =~ $regexes{'pipe'}) {
 				my $rebuild_args = false;
 
@@ -1023,7 +1045,7 @@ printf("matched 'openat2' regex\n");
 				}
 			} else { printf("didn't match pipe regex: %s\n", $regexes{'pipe'}); };
 		} elsif ($op eq "socketpair") {
-			printf("matched socketpair\n") if ($DEBUG >= 1);
+			printf("matched socketpair\n") if ($config{'debug'} >= 1);
 			if (my ($af_name, $sock_type, $sock_proto, $fd0, $fd0_name, $fd1, $fd1_name) = $args =~ $regexes{'socketpair'}) {
 				my $rebuild_args = false;
 
@@ -1052,7 +1074,7 @@ if (0) { # TODO - fix parsing the socket strings
 			# if execve is later called, the fd table is duplicated, and no longer shared
 #printf("clone args *%s*\n", $args);
 			if (my ($flags) = $args =~ $regexes{'clone'}) {
-				printf("clone flags: %s\n", $flags) if ($DEBUG >= 1);
+				printf("clone flags: %s\n", $flags) if ($config{'debug'} >= 1);
 
 				if (!ret_is_error($ret)) {
 					if ($flags =~ /CLONE_FILES/) {
@@ -1088,7 +1110,7 @@ if (0) { # TODO - fix parsing the socket strings
 		} elsif ($op eq "exit") { # TODO - what about exit_group?
 			clear_fd_table($pid);
 		} elsif (is_generic_fd_function($op)) {
-			printf("generic fd function: %s\n", $op) if ($DEBUG >= 1);
+			printf("generic fd function: %s\n", $op) if ($config{'debug'} >= 1);
 
 			if (my ($fd, $fd_path, $other_args) = $args =~ $regexes{'generic_function_fd'}) {
 				my $rebuild_args = false;
@@ -1106,7 +1128,7 @@ if (0) { # TODO - fix parsing the socket strings
 				}
 			} else { printf("generic %s(fd...), but '%s' didn't match the regex: %s\n", $op, $args, $regexes{'generic_function_fd'}); }
 		} elsif (is_generic_dfd_path_function($op)) {
-			printf("generic dfd+path function: %s\n", $op) if ($DEBUG >= 1);
+			printf("generic dfd+path function: %s\n", $op) if ($config{'debug'} >= 1);
 
 			if (my ($dfd, $dfd_path, $path, $other_args) = $args =~ $regexes{'generic_function_dfd_path'}) {
 				my $rebuild_args = false;
@@ -1139,7 +1161,7 @@ printf("matched the main pattern, but didn't find a matching op for '$op'\n");
 printf(" full string: %s\n", $line);
 		}
 
-		my $execname = get_execname($pid);
+		my $execname = $config{'show_execnames'} ? get_execname($pid) : "";
 		$rebuild_line = true if (defined($execname) && $execname ne "");
 
 		$line = sprintf("%s%s%s%s(%s) = %s%s",
@@ -1150,10 +1172,10 @@ printf(" full string: %s\n", $line);
 			(defined($elapsed) ? " <" . $elapsed . ">" : "")
 		) if ($rebuild_line);
 	} else {
-		printf("didn't match op pattern: %s\n", $line) if ($DEBUG >= 1);
+		printf("didn't match op pattern: %s\n", $line) if ($config{'debug'} >= 1);
 	}
 
-	if ($DEBUG >= 1) {
+	if ($config{'debug'} >= 1) {
 		printf("<<<=== %s\n", $orig_line);
 		printf("===>>> %s\n", $line);
 	} else {
