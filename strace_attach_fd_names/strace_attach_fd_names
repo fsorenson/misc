@@ -44,14 +44,20 @@ my %shared_fd_tables;
 
 my %unfinished; # unfinished syscall strings per pid
 my %cwds; # cwd for each pid
-my %execnames; # executable names for each pid
+#my %execnames; # executable names for each pid
 
 #my @nopid_fd_mapping = [];
 my %nopid_fd_mapping;
 my %nopid_fd_cloexecs;
 my $nopid_unfinished = [];
 my $nopid_cwd = "";
-my $nopid_execname = "";
+#my $nopid_execname = "";
+
+my %tracking_data = (
+	'pids',
+);
+
+
 
 my %patterns;
 my %regexes;
@@ -105,18 +111,38 @@ sub set_execname {
 	my $pid = shift;
 	my $exe = shift;
 
-	if (!defined($pid) || $pid == -1) {
-		$nopid_execname = $exe;
-	} else {
-		$execnames{$pid} = $exe;
-	}
+	return if (!$config{'show_execnames'});
+	return if (!defined($exe));
+	$pid = -1 if (!defined($pid));
+
+	local *_set_execname = sub {
+		my $pid = shift;
+		my $exe = shift;
+
+		$tracking_data{$pid}{'execname'} = $exe;
+		return $tracking_data{$pid}{'execname'};
+	};
+	my $result = _set_execname($pid, $exe);
+	printf("set_execname(%s, %s) (%s)\n", $pid, $exe, $tracking_data{$pid}{'execname'}) if ($config{'debug'} >= 1);
+	return $result;
 }
 sub get_execname {
 	my $pid = shift;
 
-	return $nopid_execname if (!defined($pid) || $pid == -1);
-	return "" if (!defined($execnames{$pid}));
-	return $execnames{$pid};
+	return "" if (!$config{'show_execnames'});
+	$pid = -1 if (!defined($pid));
+
+	local *_get_execname = sub {
+		my $pid = shift;
+
+#		return "" if (!$config{'show_execnames'});
+		return "" if (!defined($tracking_data{$pid}{'execname'}));
+		return $tracking_data{$pid}{'execname'};
+	};
+	my $result = _get_execname($pid);
+	printf("get_execname(%s) -> '%s'\n",
+		get_match_val($pid), $result) if ($config{'debug'} >= 1);
+	return $result;
 }
 
 sub get_shared_fd_table_mapping {
