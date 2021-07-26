@@ -42,12 +42,9 @@ my %fd_cloexecs; # fds to close on exec, per pid
 # if execve is later called for this pid, the original fd table is duplicated, and this mapping is removed
 my %shared_fd_tables;
 
-my %cwds; # cwd for each pid
-
 #my @nopid_fd_mapping = [];
 my %nopid_fd_mapping;
 my %nopid_fd_cloexecs;
-my $nopid_cwd = "";
 
 my %tracking_data = (
 	'pids',
@@ -83,9 +80,12 @@ sub get_match_val {
 sub get_cwd {
 	my $pid = shift;
 
+	$pid = -1 if (!defined($pid));
+
 	local *_get_cwd = sub {
-		return $nopid_cwd if (!defined($pid) || $pid == -1);
-		return $cwds{$pid} if (defined($cwds{$pid}));
+		my $pid = shift;
+
+		return $tracking_data{$pid}{'cwd'} if (defined($tracking_data{$pid}{'cwd'}));
 		return "";
 	};
 	my $result = _get_cwd($pid);
@@ -97,11 +97,16 @@ sub set_cwd {
 	my $pid = shift;
 	my $cwd = shift;
 
-	if (!defined($pid) || $pid == -1) {
-		$nopid_cwd = $cwd;
-	} else {
-		$cwds{$pid} = $cwd;
+	return if (!defined($cwd));
+	$pid = -1 if (!defined($pid));
+
+	local *_set_cwd() {
+		my $pid = shift;
+		my $cwd = shift;
+
+		$tracking_data{$pid}{'cwd'} = $cwd;
 	}
+	_set_cwd($pid, $cwd);
 }
 sub set_execname {
 	my $pid = shift;
@@ -707,7 +712,7 @@ my $orig_line = $line;
 		if ($op eq "getcwd") {
 			printf("matched the getcwd pattern\n") if ($config{'debug'} >= 1);
 			if (my ($path) = $args =~ $regexes{'getcwd'}) {
-				set_cwd($pid, $path);
+				set_cwd($pid, $path) if (!ret_is_error($ret));
 			} else {
 				printf("getcwd op, but didn't match the re\n");
 			}
@@ -868,16 +873,15 @@ printf("matched 'openat2' regex\n");
 			} else { printf("close but didn't match the re\n"); }
 		} elsif ($op eq "chdir") {
 			if (my ($path) = $args =~ $regexes{'chdir'}) {
-				set_cwd($pid, $path);
+				set_cwd($pid, $path) if (!ret_is_error);
 			} else { printf("chdir, but didn't match the re\n"); }
 		} elsif ($op eq "fchdir") {
 			if (my ($fd, $fd_path) = $args =~ $regexes{'fchdir'}) {
 				$fd_path = get_fd_path($pid, $fd) if (!defined($fd_path));
-				set_cwd($pid, $fd_path) if ($fd_path ne "");
+				set_cwd($pid, $fd_path) if ($fd_path ne "" && !ret_is_error($ret));
 			} else {printf("fchdir but didn't match the re\n"); }
 		} elsif ($op eq "getdents" or $op eq "getdents64") {
 			if (($dfd, $dfd_path, $other_args) = $args =~ $regexes{'generic_function_fd'}) {
-
 				printf("matched 'getdents' regex\n") if ($config{'debug'} >= 1);
 
 				if ($config{'debug'} >= 2) {
