@@ -42,16 +42,12 @@ my %fd_cloexecs; # fds to close on exec, per pid
 # if execve is later called for this pid, the original fd table is duplicated, and this mapping is removed
 my %shared_fd_tables;
 
-my %unfinished; # unfinished syscall strings per pid
 my %cwds; # cwd for each pid
-#my %execnames; # executable names for each pid
 
 #my @nopid_fd_mapping = [];
 my %nopid_fd_mapping;
 my %nopid_fd_cloexecs;
-my $nopid_unfinished = [];
 my $nopid_cwd = "";
-#my $nopid_execname = "";
 
 my %tracking_data = (
 	'pids',
@@ -135,7 +131,6 @@ sub get_execname {
 	local *_get_execname = sub {
 		my $pid = shift;
 
-#		return "" if (!$config{'show_execnames'});
 		return "" if (!defined($tracking_data{$pid}{'execname'}));
 		return $tracking_data{$pid}{'execname'};
 	};
@@ -344,15 +339,15 @@ sub store_unfinished {
 	my $pid = shift;
 	my $store_line = shift;
 
-	$unfinished{$pid} = $store_line;
+	$tracking_data{$pid}{'unfinished'} = $store_line;
 }
 sub retrieve_unfinished {
 	my $pid = shift;
 	my $ret = "";
 
-	if (defined($unfinished{$pid})) {
-		$ret = $unfinished{$pid};
-		undef($unfinished{$pid});
+	if (defined($tracking_data{$pid}{'unfinished'})) {
+		$ret = $tracking_data{$pid}{'unfinished'};
+		undef($tracking_data{$pid}{'unfinished'});
 	}
 	return $ret;
 }
