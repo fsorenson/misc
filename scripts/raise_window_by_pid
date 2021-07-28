@@ -13,25 +13,40 @@ pid=${1:-}
 	echo "usage: $0 <pid>"
 	exit 1
 }
-current_pid=$(ps h -p $pid -o pid:1)
-[[ -z $current_pid ]] && {
-	echo "pid $pid not found"
-	exit 1
-}
-while [[ 42 ]] ; do
-	window_id=$(wmctrl -lp | awk -vpid=$current_pid '($3==pid){print $1}')
-	[[ -n $window_id ]] && break # found a window
 
-	ppid=$(ps h -p $current_pid -o ppid:1)
-	[[ -z $ppid ]] && break # no parent pid? maybe the process exited
-	[[ $ppid -eq 0 || $ppid -eq 1 ]] && { current_pid=0 ; break ; } # can't raise pid 0/1
-	current_pid=$ppid
-done
-if [[ -z $window_id ]] ; then
-	echo "unable to locate a window id for pid $pid"
-	exit 1
-fi
-for id in $window_id ; do
+raise_window_id() {
+	local id=$1
 	echo "raising window id '$id'"
 	xdotool windowraise $id
+}
+
+raise_pid_windows() {
+	local pid=$1 window_ids="" id ppid
+
+	local current_pid=$(ps h -p $pid -o pid:1)
+	[[ -z $current_pid ]] && {
+		echo "pid $pid not found"
+		return
+	}
+	while [[ 42 ]] ; do
+		window_ids=$(wmctrl -lp | awk -vpid=$current_pid '($3==pid){print $1}')
+		[[ -n $window_ids ]] && break # found a window
+
+		ppid=$(ps h -p $current_pid -o ppid:1)
+		[[ -z $ppid ]] && break # no parent pid? maybe the process exited
+		[[ $ppid -eq 0 || $ppid -eq 1 ]] && { current_pid=0 ; break ; } # can't raise pid 0/1
+		current_pid=$ppid
+	done
+	if [[ -z $window_ids ]] ; then
+		echo "unable to locate a window id for pid $pid"
+		return
+	fi
+	for id in $window_ids ; do
+		raise_window_id $id
+	done
+}
+
+while [[ $# -gt 0 ]] ; do
+	raise_pid_windows "$1"
+	shift
 done
