@@ -409,6 +409,9 @@ exit(1);
 	# man clone | egrep -o 'CLONE_[^ ,.)]+' | sort -u | paste -s - -d\|
 #	'clone_flags' => '(0|(?:\|CLONE_[^\|, ]+
 #	'clone_flags' => '(0|(?:\|CLONE_CHILD_CLEARTID|CLONE_CHILD_SETTID|CLONE_DETACHED|CLONE_FILES|CLONE_FS|CLONE_IO|CLONE_NEWIPC|CLONE_NEWNET|CLONE_NEWNS|CLONE_NEWPID|CLONE_NEWUTS|CLONE_PARENT|CLONE_PARENT_SETTID|CLONE_PID|CLONE_PTRACE|CLONE  _SETTID|CLONE_SETTLS|CLONE_SIGHAND|CLONE_STOPPED|CLONE_SYSVSEM|CLONE_THREAD|CLONE_UNTRACED|CLONE_VFORK|CLONE_VM)+)',
+
+	'signal_name' => '(?:SIG[A-Z0-9]+)',
+
 	'clone_flags' => '(0|(?:\\||CLONE_[A-Z0-9_]+|SIG[A-Z0-9]+)+)',
 
 	'open_flags' => "(0|(?:\\||O_[A-Z0-9_]+)+)",
@@ -444,6 +447,7 @@ $patterns{'fcntl_args'} = "$patterns{'possible_other_args'}";
 
 $patterns{'pipefd_with_possible_name'} = "($patterns{'fd_string'})$patterns{'possible_pipefd_name'}";
 $patterns{'sockfd_with_possible_name'} = "($patterns{'fd_string'})$patterns{'possible_sockfd_name'}";
+$patterns{'siginfo_t'} = "(?:\{si_signo=(?:SIG[A-Z0-9]+), si_code.+\})";
 
 
 
@@ -453,6 +457,10 @@ $patterns{'sockfd_with_possible_name'} = "($patterns{'fd_string'})$patterns{'pos
 
 
 	'op' => qr/^$patterns{'possible_pid_string'}$patterns{'possible_timestamp_string'}$patterns{'op_string'}\($patterns{'op_args_string'}\)$patterns{'ret_string'}$patterns{'possible_elapsed_string'}$/,
+	'process_exited' => qr/^$patterns{'possible_pid_string'}$patterns{'possible_timestamp_string'}\+\+\+ exited with ($patterns{'digits_string'}) \+\+\+/,
+	'process_signal' => qr/^$patterns{'possible_pid_string'}$patterns{'possible_timestamp_string'}--- ($patterns{'signal_name'}) ($patterns{'siginfo_t'}) ---/,
+	'strace_partial_line' => qr/^$patterns{'possible_pid_string'}$patterns{'possible_timestamp_string'}(.+)/,
+
 
 	'getcwd' => qr/^$patterns{'quoted_string'}, $patterns{'digits_string'}/, # don't capture digits unless we come up with a reason later
 
@@ -484,7 +492,7 @@ $patterns{'sockfd_with_possible_name'} = "($patterns{'fd_string'})$patterns{'pos
 	'socketpair' => qr/^($patterns{'socket_domain'}), ($patterns{'socket_type'}), ($patterns{'socket_proto'}), (\[$patterns{'sockfd_with_possible_name'}, $patterns{'sockfd_with_possible_name'}\])$/,
 
 #	'clone' => qr/^child_stack=$patterns{'hex_string_or_null'}, flags=($patterns{'clone_flags'}), parent_tidptr=$patterns{'hex_string'}, tls=$patterns{'hex_string'}, child_tidptr=$patterns{'hex_string'}$/,
-	'clone' => qr/^child_stack=$patterns{'hex_string_or_null'}, flags=($patterns{'clone_flags'})(, parent_tidptr=$patterns{'hex_string'})?(, tls=$patterns{'hex_string'})?(, child_tidptr=$patterns{'hex_string'})?$/,
+	'clone' => qr/^child_stack=$patterns{'hex_string_or_null'}, flags=($patterns{'clone_flags'})(, .+)?$/,
 # clone(child_stack=0x7fc9df076fb0, flags=CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD|CLONE_SYSVSEM|CLONE_SETTLS|CLONE_PARENT_SETTID|CLONE_CHILD_CLEARTID, parent_tidptr=0x7fc9df0779d0, tls=0x7fc9df077700, child_tidptr=0x7fc9df0779d0) = 9057
 # clone(child_stack=NULL, flags=CLONE_CHILD_CLEARTID|CLONE_CHILD_SETTID|SIGCHLD, child_tidptr=0x7f21efcbba10) = 1447033
 
@@ -1093,6 +1101,7 @@ if (0) { # TODO - fix parsing the socket strings
 					} else {
 						inherit_fd_table($ret, $pid);
 					}
+					set_execname($ret, get_execname($pid));
 				}
 			} else { printf("clone didn't match regex\n"); }
 
@@ -1177,6 +1186,30 @@ printf(" full string: %s\n", $line);
 			$op, $args, $ret,
 			(defined($elapsed) ? " <" . $elapsed . ">" : "")
 		) if ($rebuild_line);
+	} elsif (my ($pid, $timestamp, $ret) = $line =~ $regexes{'process_exited'}) {
+		if (defined($pid) && $config{'show_execnames'}) {
+			my $execname = get_execname($pid);
+			$line = sprintf("%d (%s) %s +++ exited with %d +++",
+				$pid, $execname,
+				(defined($timestamp) ? $timestamp . " " : ""),
+				$ret);
+		}
+	} elsif (($pid, $timestamp, my $signal, my $siginfo) = $line =~ $regexes{'process_signal'}) {
+		if (defined($pid) && $config{'show_execnames'}) {
+			my $execname = get_execname($pid);
+			$line = sprintf("%d (%s) %s --- %s %s ---",
+				$pid, $execname,
+				(defined($timestamp) ? $timestamp . " " : ""),
+				$signal, $siginfo);
+		}
+	} elsif (($pid, $timestamp, my $partial_line) = $line =~ $regexes{'strace_partial_line'}) {
+		if (defined($pid) && $config{'show_execnames'}) {
+			my $execname = get_execname($pid);
+			$line = sprintf("%d (%s) %s%s",
+				$pid, $execname,
+				(defined($timestamp) ? $timestamp . " " : ""),
+				$partial_line);
+		}
 	} else {
 		printf("didn't match op pattern: %s\n", $line) if ($config{'debug'} >= 1);
 	}
