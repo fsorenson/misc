@@ -34,21 +34,15 @@ STDOUT->autoflush(1);
 
 
 
-my %fd_mappings; # map fds per pid
-my %fd_cloexecs; # fds to close on exec, per pid
+#my %fd_mappings; # map fds per pid
+#my %fd_cloexecs; # fds to close on exec, per pid
 
 # if a clone() is done with CLONE_FILES, the processes share an fd table...
 # this contains mappings from a pid back to the process holding the actual fd table
 # if execve is later called for this pid, the original fd table is duplicated, and this mapping is removed
 my %shared_fd_tables;
 
-#my @nopid_fd_mapping = [];
-my %nopid_fd_mapping;
-my %nopid_fd_cloexecs;
-
-my %tracking_data = (
-	'pids',
-);
+my %tracking_data = ();
 
 
 
@@ -181,7 +175,7 @@ sub inherit_fd_table {
 
 	$orig_pid = get_shared_fd_table_mapping($orig_pid);
 
-	my @fds = keys(%{$fd_mappings{$orig_pid}});
+	my @fds = keys(%{$tracking_data{$orig_pid}{'fd_mappings'}});
 	foreach my $fd (@fds) {
 		store_fd_name($new_pid, $fd, get_fd_path($orig_pid, $fd));
 	}
@@ -218,6 +212,7 @@ sub drop_cloexec_fd {
 
 	$pid = -1 if (!defined($pid));
 	$pid = get_shared_fd_table_mapping($pid);
+	undef($tracking_data{$pid}{'cloexec'}{$fd}) if (defined($tracking_data{$pid}{'cloexec'}{$fd}));
 	printf("removed pid %d fd %d CLOEXEC\n", $pid, $fd) if ($config{'debug'} >= 1);
 }
 sub store_fd_name {
