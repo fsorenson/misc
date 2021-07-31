@@ -100,12 +100,12 @@ sub set_cwd {
 	return if (!defined($cwd));
 	$pid = -1 if (!defined($pid));
 
-	local *_set_cwd() {
+	local *_set_cwd = sub {
 		my $pid = shift;
 		my $cwd = shift;
 
 		$tracking_data{$pid}{'cwd'} = $cwd;
-	}
+	};
 	_set_cwd($pid, $cwd);
 }
 sub set_execname {
