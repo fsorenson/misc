@@ -148,7 +148,8 @@ sub get_execname {
 sub get_shared_fd_table_mapping {
 	my $pid = shift;
 
-	return $pid if (!defined($pid) || $pid == -1);
+	$pid = -1 if (!defined($pid));
+	return $pid if ($pid == -1);
 
 	if (defined($shared_fd_tables{$pid})) {
 		# this pid actually shares a table with another pid
@@ -196,9 +197,9 @@ sub clear_fd_table { # call when process is exiting
 #		for my $fd (@fds) {
 #			undef($fd_mappings{$pid}{$fd}) if (defined($fd_mappings{$pid}{$fd}));
 #		}
-#		undef($fd_mappings{$pid});
+#		undef($fd_mappings{$pid})
 #	}
-	undef($fd_mappings{$pid}) if (defined($fd_mappings{$pid}));
+	undef($tracking_data{$pid}{'fd_mappings'}) if (defined($tracking_data{$pid}{'fd_mappings'}));
 
 	printf("cleared fd table for pid %d\n", $pid) if ($config{'debug'} >= 1);
 }
@@ -207,27 +208,17 @@ sub store_cloexec_fd {
 	my $pid = shift;
 	my $fd = shift;
 
-	if (!defined($pid) || $pid == -1) {
-		$nopid_fd_cloexecs{$fd} = 1;
-		printf("stored nopid fd %d CLOEXEC\n", $fd) if ($config{'debug'} >= 1);
-	} else {
-		$fd_cloexecs{$pid}{$fd} = 1;
-		printf("stored pid %d fd %d CLOEXEC\n", $pid, $fd) if ($config{'debug'} >= 1);
-	}
+	$pid = -1 if (!defined($pid));
+	$tracking_data{$pid}{'cloexec'}{$fd} = true;
+	printf("stored pid %d fd %d CLOEXEC\n", $pid, $fd) if ($config{'debug'} >= 1);
 }
 sub drop_cloexec_fd {
 	my $pid = shift;
 	my $fd = shift;
 
-	if (!defined($pid) || $pid == -1) {
-		undef $nopid_fd_cloexecs{$fd} if (defined($nopid_fd_cloexecs{$fd}));
-		printf("removed fd %d CLOEXEC\n", $fd) if ($config{'debug'} >= 1);
-	} else {
-		$pid = get_shared_fd_table_mapping($pid);
-#		if (defined($shared_fd_tables{$pid})) {
-		undef $fd_cloexecs{$pid}{$fd} if (defined($fd_cloexecs{$pid}{$fd}));
-		printf("removed pid %d fd %d CLOEXEC\n", $pid, $fd) if ($config{'debug'} >= 1);
-	}
+	$pid = -1 if (!defined($pid));
+	$pid = get_shared_fd_table_mapping($pid);
+	printf("removed pid %d fd %d CLOEXEC\n", $pid, $fd) if ($config{'debug'} >= 1);
 }
 sub store_fd_name {
 	my $pid = shift;
@@ -236,29 +227,22 @@ sub store_fd_name {
 
 	$path =~ s/^<|>$//g;
 
+	$pid = -1 if (!defined($pid));
 	$pid = get_shared_fd_table_mapping($pid);
 
 	return if ($fd < 0);
 
-	if (!defined($pid) || $pid == -1) {
-		$nopid_fd_mapping{$fd} = $path;
-		printf("stored nopid fd: %d -> %s\n", $fd, $path) if ($config{'debug'} >= 1);
-	} else {
-		$fd_mappings{$pid}{$fd} = $path;
-		printf("storing pid: %d fd: %d -> %s\n", $pid, $fd, $path) if ($config{'debug'} >= 1);
-	}
+	$tracking_data{$pid}{'fd_mappings'}{$fd} = $path;
+	printf("storing pid: %d fd: %d -> %s\n", $pid, $fd, $path) if ($config{'debug'} >= 1);
 }
 sub drop_fd_name {
 	my $pid = shift;
 	my $fd = shift;
 
+	$pid = -1 if (!defined($pid));
 	$pid = get_shared_fd_table_mapping($pid);
 
-	if (!defined($pid) || $pid == -1) {
-		undef($nopid_fd_mapping{$fd}) if (defined($nopid_fd_mapping{$fd}));
-	} else {
-		undef($fd_mappings{$pid}{$fd}) if (defined($fd_mappings{$pid}{$fd}));
-	}
+	undef($tracking_data{$pid}{'fd_mappings'}{$fd}) if (defined($tracking_data{$pid}{'fd_mappings'}{$fd}));
 }
 sub get_dfd_path {
 	my $pid = shift;
@@ -280,6 +264,7 @@ sub get_fd_path {
 	my $pid = shift;
 	my $fd = shift;
 
+	$pid = -1 if (!defined($pid));
 	local *_get_fd_path = sub {
 		my $pid = shift;
 		my $fd = shift;
@@ -288,11 +273,7 @@ sub get_fd_path {
 
 		$pid = get_shared_fd_table_mapping($pid);
 
-		if (!defined($pid) or $pid == -1) {
-			return $nopid_fd_mapping{$fd} if (defined $nopid_fd_mapping{$fd});
-			return "";
-		}
-		return $fd_mappings{$pid}{$fd} if (defined($fd_mappings{$pid}{$fd}));
+		return $tracking_data{$pid}{'fd_mappings'}{$fd} if (defined($tracking_data{$pid}{'fd_mappings'}{$fd}));
 		return "";
 	};
 	my $result = _get_fd_path($pid, $fd);
@@ -305,6 +286,7 @@ sub get_atpath {
 	my $dfd = shift;
 	my $path = shift;
 
+	$pid = -1 if (!defined($pid));
 	local *_get_atpath = sub {
 		my $pid = shift;
 		my $dfd = shift;
@@ -1127,8 +1109,6 @@ if (0) { # TODO - fix parsing the socket strings
 #				printf("cmd_path: %s\nargv: %s\n", $cmd_path, $argv);
 			# TODO - clear the CLOEXEC fds
 #["dspmq", "-x", "QM1"], ["
-
-
 
 			}
 
