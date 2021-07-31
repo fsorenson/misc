@@ -53,8 +53,6 @@ my @generic_dfd_pathname_functions;
 my @no_parsing_functions;
 
 
-
-
 sub dump_backtrace {
 	my $trace = Devel::StackTrace->new;
 	printf("\n");
@@ -186,13 +184,6 @@ sub clear_fd_table { # call when process is exiting
 	my $pid = shift;
 
 	$pid = -1 if (!defined($pid));
-#	if (defined($fd_mappings{$pid})) {
-#		my @fds = keys(%{$fd_mappings{$pid}});
-#		for my $fd (@fds) {
-#			undef($fd_mappings{$pid}{$fd}) if (defined($fd_mappings{$pid}{$fd}));
-#		}
-#		undef($fd_mappings{$pid})
-#	}
 	undef($tracking_data{$pid}{'fd_mappings'}) if (defined($tracking_data{$pid}{'fd_mappings'}));
 
 	printf("cleared fd table for pid %d\n", $pid) if ($config{'debug'} >= 1);
@@ -868,7 +859,7 @@ printf("matched 'openat2' regex\n");
 			} else { printf("close but didn't match the re\n"); }
 		} elsif ($op eq "chdir") {
 			if (my ($path) = $args =~ $regexes{'chdir'}) {
-				set_cwd($pid, $path) if (!ret_is_error);
+				set_cwd($pid, $path) if (!ret_is_error($ret));
 			} else { printf("chdir, but didn't match the re\n"); }
 		} elsif ($op eq "fchdir") {
 			if (my ($fd, $fd_path) = $args =~ $regexes{'fchdir'}) {
@@ -1115,10 +1106,7 @@ if (0) { # TODO - fix parsing the socket strings
 			if (my ($execve_path, $execve_argv, $execve_envp) = $args =~ $regexes{'execve'}) {
 				my $execve_name = basename($execve_path);
 
-#printf("set execve name to %s\n", $execve_name);
-#			if (my ($cmd_path, $argv, $envp, $foo) = $args =~ $regexes{') {
 				set_execname($pid, basename($execve_path));
-
 #				printf("cmd_path: %s\nargv: %s\n", $cmd_path, $argv);
 			# TODO - clear the CLOEXEC fds
 #["dspmq", "-x", "QM1"], ["
@@ -1199,5 +1187,4 @@ printf(" full string: %s\n", $line);
 	} else {
 		printf("%s\n", $line);
 	}
-
 }
