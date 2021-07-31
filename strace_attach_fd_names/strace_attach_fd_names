@@ -197,6 +197,19 @@ sub clear_fd_table { # call when process is exiting
 
 	printf("cleared fd table for pid %d\n", $pid) if ($config{'debug'} >= 1);
 }
+sub dump_fd_mappings {
+	my @pids = keys(%tracking_data);
+	printf("indexes: %s\n", join(" ", @pids));
+
+	foreach my $pid (@pids) {
+		printf("pid %d\n", $pid);
+
+		my @fds = keys(%{$tracking_data{$pid}{'fd_mappings'}});
+		foreach my $fd (sort { $a <=> $b} (keys(%{$tracking_data{$pid}{'fd_mappings'}}))) {
+			printf("fd: %d - '%s'\n", $fd, $tracking_data{$pid}{'fd_mappings'}{$fd});
+		}
+	}
+}
 
 sub store_cloexec_fd {
 	my $pid = shift;
@@ -359,6 +372,11 @@ sub do_not_parse_function {
 }
 sub ret_is_error {
 	my $ret = shift;
+
+	if (!defined($ret)) {
+dump_backtrace();
+exit(1);
+	}
 
 	return ($ret =~ $regexes{'return_error'});
 }
