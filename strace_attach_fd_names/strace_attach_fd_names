@@ -84,7 +84,7 @@ sub get_cwd {
 	};
 	my $result = _get_cwd($pid);
 	printf("get_cwd(pid: %s): '%s'\n",
-		((defined($pid) and $pid != 0) ? $pid : "nopid"), $result) if ($config{'debug'} >= 1);
+		(($pid > 0) ? $pid : "nopid"), $result) if ($config{'debug'} >= 1);
 	return $result;
 }
 sub set_cwd {
@@ -185,7 +185,7 @@ sub inherit_fd_table {
 sub clear_fd_table { # call when process is exiting
 	my $pid = shift;
 
-	return if (!defined($pid) || $pid == -1);
+	$pid = -1 if (!defined($pid));
 #	if (defined($fd_mappings{$pid})) {
 #		my @fds = keys(%{$fd_mappings{$pid}});
 #		for my $fd (@fds) {
