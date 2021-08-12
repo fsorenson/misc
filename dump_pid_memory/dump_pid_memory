@@ -1,0 +1,39 @@
+#!/usr/bin/env python
+import re
+import sys
+
+def dump_pid(pid):
+	maps_file = open("/proc/{}/maps".format(pid), 'r')
+	mem_file = open("/proc/{}/mem".format(pid), 'rb', 0)
+	output_file = open("pid_{}.dump".format(pid), 'wb')
+	region = 0
+	for line in maps_file.readlines():  # for each mapped region
+		region = region + 1
+		print("\rpid {}: region {}".format(pid, region), end='')
+
+		m = re.match(r'([0-9A-Fa-f]+)-([0-9A-Fa-f]+) ([-r])', line)
+		if m.group(3) == 'r':  # if this is a readable region
+            start = int(m.group(1), 16)
+            end = int(m.group(2), 16)
+			if start >= 0x8000000000000000:
+				print("\n   skipping memory region {} at unreachable address: {:016x}".format(region, start))
+				# TODO: seek to 0x7fffffffffffffff SEEK_SET, then seek further with SEEK_CUR
+				continue
+			mem_file.seek(start)  # seek to region start
+			try:
+				chunk = mem_file.read(end - start)  # read region contents
+			except:
+				pass
+				continue
+			output_file.write(chunk)  # dump contents to standard output
+		maps_file.close()
+		mem_file.close()
+		output_file.close()
+	print("")
+
+# TODO: add option to create sparse file with mappings at actual memory locations
+# TODO: add option to select/exclude memory range types
+for pid in sys.argv[1:]:
+	dump_maps(pid)
+
+# vim: sw=4 ts=4
