@@ -207,7 +207,7 @@ int do_read_runtype(void) {
 	output("starting as reader, with runtype '%s'\n", get_runtype_str(run_config.run_type));
 
 	if (run_config.run_type == run_type_reader_read)
-		map = malloc(BUF_LEN);
+		posix_memalign((void **)&map, 4096, BUF_LEN * (run_config.grow_shrink + 1));
 
 	if (!run_config.do_reopens) {
 		fd = do_open(run_config.filename, open_flags);
@@ -273,7 +273,7 @@ int do_write_runtype(void) {
 
 	output("starting as writer\n");
 
-	buf = malloc(BUF_LEN * (run_config.grow_shrink + 1));
+	posix_memalign((void **)&buf, 4096, BUF_LEN * (run_config.grow_shrink + 1));
 	while (42) {
 
 		if (run_config.do_reopens)
