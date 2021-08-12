@@ -87,6 +87,7 @@ struct run_config_struct {
 	bool use_mmap;
 	bool do_reopens;
 	bool do_remaps;
+	bool do_sleeps;
 
 	lock_mode_t lock_mode;
 	bool open_rw;
@@ -120,6 +121,7 @@ struct run_config_struct {
 	.additional_fd = -1,
 
 	.sleep_time = (struct timespec){ -1, -1 },
+	.do_sleeps = true,
 };
 
 
@@ -241,7 +243,8 @@ int do_read_runtype(void) {
 		if (run_config.do_reopens)
 			close(fd);
 
-		nanosleep(&run_config.sleep_time, NULL);
+		if (run_config.do_sleeps)
+			nanosleep(&run_config.sleep_time, NULL);
 	}
 out:
 	return ret;
@@ -288,7 +291,8 @@ int do_write_runtype(void) {
 
 		output("%c", chars[char_num]);
 
-		nanosleep(&run_config.sleep_time, NULL);
+		if (run_config.do_sleeps)
+			nanosleep(&run_config.sleep_time, NULL);
 		char_num = (char_num + 1) % (sizeof(chars)/sizeof(chars[0]));
 	}
 	return EXIT_FAILURE;
@@ -540,6 +544,9 @@ int main(int argc, char *argv[]) {
 		output("reader with read() syscall selected, but mmap remap option given.  Ignoring remap\n");
 		run_config.do_remaps = false;
 	}
+
+	if (run_config.sleep_time.tv_sec == 0 && run_config.sleep_time.tv_nsec == 0)
+		run_config.do_sleeps = false;
 
 	output("using file: '%s'\n", run_config.filename);
 	if (run_config.open_direct)
