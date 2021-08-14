@@ -1,0 +1,45 @@
+92997 18:12:17.091578 open("/tmp/testfile", O_WRONLY|O_CREAT|O_TRUNC, 0666) = 3 <0.000019>
+18:12:17.091578 open("/tmp/testfile", O_WRONLY|O_CREAT|O_TRUNC, 0666) = 3 <0.000019>
+92997 open("/tmp/testfile", O_WRONLY|O_CREAT|O_TRUNC, 0666) = 3 <0.000019>
+open("/tmp/testfile", O_WRONLY|O_CREAT|O_TRUNC, 0666) = 3 <0.000019>
+92997 18:12:17.091578 open("/tmp/testfile", O_WRONLY|O_CREAT|O_TRUNC, 0666) = 3
+18:12:17.091578 open("/tmp/testfile", O_WRONLY|O_CREAT|O_TRUNC, 0666) = 3
+92997 open("/tmp/testfile", O_WRONLY|O_CREAT|O_TRUNC, 0666) = 3
+open("/tmp/testfile", O_WRONLY|O_CREAT|O_TRUNC, 0666) = 3
+
+92997 18:12:17.091578 open("/tmp/testfile", O_WRONLY|O_TRUNC) = 3 <0.000019>
+18:12:17.091578 open("/tmp/testfile", O_WRONLY|O_TRUNC) = 3 <0.000019>
+92997 open("/tmp/testfile", O_WRONLY|O_TRUNC) = 3 <0.000019>
+open("/tmp/testfile", O_WRONLY|O_TRUNC) = 3 <0.000019>
+92997 18:12:17.091578 open("/tmp/testfile", O_WRONLY|O_TRUNC) = 3
+18:12:17.091578 open("/tmp/testfile", O_WRONLY|O_TRUNC) = 3
+92997 open("/tmp/testfile", O_WRONLY|O_TRUNC) = 3
+open("/tmp/testfile", O_WRONLY|O_TRUNC) = 3
+
+
+92997 18:12:17.091578 open("/tmp/testfile", O_WRONLY|O_CREAT|O_TRUNC, 0666) = 3</tmp/testfile> <0.000019>
+18:12:17.091578 open("/tmp/testfile", O_WRONLY|O_CREAT|O_TRUNC, 0666) = 3</tmp/testfile> <0.000019>
+92997 open("/tmp/testfile", O_WRONLY|O_CREAT|O_TRUNC, 0666) = 3</tmp/testfile> <0.000019>
+open("/tmp/testfile", O_WRONLY|O_CREAT|O_TRUNC, 0666) = 3</tmp/testfile> <0.000019>
+92997 18:12:17.091578 open("/tmp/testfile", O_WRONLY|O_CREAT|O_TRUNC, 0666) = 3</tmp/testfile>
+18:12:17.091578 open("/tmp/testfile", O_WRONLY|O_CREAT|O_TRUNC, 0666) = 3</tmp/testfile>
+92997 open("/tmp/testfile", O_WRONLY|O_CREAT|O_TRUNC, 0666) = 3</tmp/testfile>
+open("/tmp/testfile", O_WRONLY|O_CREAT|O_TRUNC, 0666) = 3</tmp/testfile>
+
+92997 18:12:17.091578 open("/tmp/testfile", O_WRONLY|O_TRUNC) = 3</tmp/testfile> <0.000019>
+18:12:17.091578 open("/tmp/testfile", O_WRONLY|O_TRUNC) = 3</tmp/testfile> <0.000019>
+92997 open("/tmp/testfile", O_WRONLY|O_TRUNC) = 3</tmp/testfile> <0.000019>
+open("/tmp/testfile", O_WRONLY|O_TRUNC) = 3</tmp/testfile> <0.000019>
+92997 18:12:17.091578 open("/tmp/testfile", O_WRONLY|O_TRUNC) = 3</tmp/testfile>
+18:12:17.091578 open("/tmp/testfile", O_WRONLY|O_TRUNC) = 3</tmp/testfile>
+92997 open("/tmp/testfile", O_WRONLY|O_TRUNC) = 3</tmp/testfile>
+open("/tmp/testfile", O_WRONLY|O_TRUNC) = 3</tmp/testfile>
+
+
+
+# could also return ENOTDIR or EPERM/EACCES, ENFILE, or others
+92997 18:12:17.090705 open("/opt/rh/python27/root/usr/lib64/tls/x86_64/libc.so.6", O_RDONLY|O_CLOEXEC) = -1 ENOENT (No such file or directory) <0.000041>
+18:12:17.090705 open("/opt/rh/python27/root/usr/lib64/tls/x86_64/libc.so.6", O_RDONLY|O_CLOEXEC) = -1 ENOENT (No such file or directory) <0.000041>
+92997 open("/opt/rh/python27/root/usr/lib64/tls/x86_64/libc.so.6", O_RDONLY|O_CLOEXEC) = -1 ENOENT (No such file or directory) <0.000041>
+open("/opt/rh/python27/root/usr/lib64/tls/x86_64/libc.so.6", O_RDONLY|O_CLOEXEC) = -1 ENOENT (No such file or directory) <0.000041>
+92997 18:12:17.090705 open("/opt/rh/python27/root/usr/lib64/tls/x86_64/libc.so.6", O_RDONLY|O_CLOEXEC) = -1 ENOENT (No such file or directory)

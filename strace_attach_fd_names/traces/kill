@@ -1,0 +1,5 @@
+12345 (killable_process) getpid() = 12345
+98765 (killing_process) kill(12345, 0) = 0
+98765 (killing_process) kill(12345, SIGINT) = 0
+98765 (killing_process) kill(11111, SIGINT) = 0
+98765 (killing_process) kill(11111, 9) = 0

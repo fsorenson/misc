@@ -1,0 +1,3 @@
+[pid  6701] futex(0x7fadd23f9c9c, FUTEX_WAIT, 0, {tv_sec=1, tv_nsec=0})        = -1 ETIMEDOUT (Connection timed out)
+[pid  6701] (foobarbaz) futex(0x7fadd23f9c9c, FUTEX_WAIT, 0, {tv_sec=1, tv_nsec=0})        = -1 ETIMEDOUT (Connection timed out)
+6701	read(1, "some string", 4096) = 10
