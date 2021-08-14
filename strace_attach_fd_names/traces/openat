@@ -1,0 +1,265 @@
+# AT_FDCWD, result path, elapsed
+1119840 16:59:55.153682 openat(AT_FDCWD, "/usr/share/locale/locale.alias", O_RDONLY|O_CLOEXEC) = 3</usr/share/locale/locale.alias> <0.000037>
+16:59:55.153682 openat(AT_FDCWD, "/usr/share/locale/locale.alias", O_RDONLY|O_CLOEXEC) = 3</usr/share/locale/locale.alias> <0.000037>
+1119840 openat(AT_FDCWD, "/usr/share/locale/locale.alias", O_RDONLY|O_CLOEXEC) = 3</usr/share/locale/locale.alias> <0.000037>
+openat(AT_FDCWD, "/usr/share/locale/locale.alias", O_RDONLY|O_CLOEXEC) = 3</usr/share/locale/locale.alias> <0.000037>
+
+# AT_FDCWD, no result path, elapsed
+1119840 16:59:55.153682 openat(AT_FDCWD, "/usr/share/locale/locale.alias", O_RDONLY|O_CLOEXEC) = 3 <0.000037>
+16:59:55.153682 openat(AT_FDCWD, "/usr/share/locale/locale.alias", O_RDONLY|O_CLOEXEC) = 3 <0.000037>
+1119840 openat(AT_FDCWD, "/usr/share/locale/locale.alias", O_RDONLY|O_CLOEXEC) = 3 <0.000037>
+openat(AT_FDCWD, "/usr/share/locale/locale.alias", O_RDONLY|O_CLOEXEC) = 3 <0.000037>
+
+# AT_FDCWD, result path, no elapsed
+1119840 16:59:55.153682 openat(AT_FDCWD, "/usr/share/locale/locale.alias", O_RDONLY|O_CLOEXEC) = 3</usr/share/locale/locale.alias>
+16:59:55.153682 openat(AT_FDCWD, "/usr/share/locale/locale.alias", O_RDONLY|O_CLOEXEC) = 3</usr/share/locale/locale.alias>
+1119840 openat(AT_FDCWD, "/usr/share/locale/locale.alias", O_RDONLY|O_CLOEXEC) = 3</usr/share/locale/locale.alias>
+openat(AT_FDCWD, "/usr/share/locale/locale.alias", O_RDONLY|O_CLOEXEC) = 3</usr/share/locale/locale.alias>
+
+# AT_FDCWD, no result path, no elapsed
+1119840 16:59:55.153682 openat(AT_FDCWD, "/usr/share/locale/locale.alias", O_RDONLY|O_CLOEXEC) = 3
+16:59:55.153682 openat(AT_FDCWD, "/usr/share/locale/locale.alias", O_RDONLY|O_CLOEXEC) = 3
+1119840 openat(AT_FDCWD, "/usr/share/locale/locale.alias", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/usr/share/locale/locale.alias", O_RDONLY|O_CLOEXEC) = 3
+
+
+# AT_FDCWD, error return, elapsed
+1119840 16:59:55.153682 openat(AT_FDCWD, "/usr/share/locale/locale.alias", O_RDONLY|O_CLOEXEC) = -1 ENOENT (No such file or directory) <0.000037>
+16:59:55.153682 openat(AT_FDCWD, "/usr/share/locale/locale.alias", O_RDONLY|O_CLOEXEC) = -1 ENOENT (No such file or directory) <0.000037>
+1119840 openat(AT_FDCWD, "/usr/share/locale/locale.alias", O_RDONLY|O_CLOEXEC) = -1 ENOENT (No such file or directory) <0.000037>
+openat(AT_FDCWD, "/usr/share/locale/locale.alias", O_RDONLY|O_CLOEXEC) = -1 ENOENT (No such file or directory) <0.000037>
+
+# AT_FDCWD, error return, no elapsed
+1119840 16:59:55.153682 openat(AT_FDCWD, "/usr/share/locale/locale.alias", O_RDONLY|O_CLOEXEC) = -1 ENOENT (No such file or directory)
+16:59:55.153682 openat(AT_FDCWD, "/usr/share/locale/locale.alias", O_RDONLY|O_CLOEXEC) = -1 ENOENT (No such file or directory)
+1119840 openat(AT_FDCWD, "/usr/share/locale/locale.alias", O_RDONLY|O_CLOEXEC) = -1 ENOENT (No such file or directory)
+openat(AT_FDCWD, "/usr/share/locale/locale.alias", O_RDONLY|O_CLOEXEC) = -1 ENOENT (No such file or directory)
+
+
+
+# with DFD
+# dfd, dfd_path, result path, elapsed
+1120026 17:00:32.779494 openat(5</home/sos/caseno>, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY) = 6</home/sos/caseno/sosreport-1> <0.000058>
+17:00:32.779494 openat(5</home/sos/caseno>, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY) = 6</home/sos/caseno/sosreport-1> <0.000058>
+1120026 openat(5</home/sos/caseno>, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY) = 6</home/sos/caseno/sosreport-1> <0.000058>
+openat(5</home/sos/caseno>, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY) = 6</home/sos/caseno/sosreport-1> <0.000058>
+
+# dfd, no dfd_path, result path, elapsed
+1120026 17:00:32.779494 openat(5, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY) = 6</home/sos/caseno/sosreport-1> <0.000058>
+17:00:32.779494 openat(5, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY) = 6</home/sos/caseno/sosreport-1> <0.000058>
+1120026 openat(5, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY) = 6</home/sos/caseno/sosreport-1> <0.000058>
+openat(5, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY) = 6</home/sos/caseno/sosreport-1> <0.000058>
+
+
+# dfd, dfd_path, no result path, elapsed
+1120026 17:00:32.779494 openat(5</home/sos/caseno>, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY) = 6 <0.000058>
+17:00:32.779494 openat(5</home/sos/caseno>, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY) = 6 <0.000058>
+1120026 openat(5</home/sos/caseno>, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY) = 6 <0.000058>
+openat(5</home/sos/caseno>, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY) = 6 <0.000058>
+
+# dfd, no dfd_path, no_result path, elapsed
+1120026 17:00:32.779494 openat(5, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY) = 6 <0.000058>
+17:00:32.779494 openat(5, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY) = 6 <0.000058>
+1120026 openat(5, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY) = 6 <0.000058>
+openat(5, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY) = 6 <0.000058>
+
+
+
+# dfd, dfd_path, result path, no elapsed
+1120026 17:00:32.779494 openat(5</home/sos/caseno>, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY) = 6</home/sos/caseno/sosreport-1>
+17:00:32.779494 openat(5</home/sos/caseno>, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY) = 6</home/sos/caseno/sosreport-1>
+1120026 openat(5</home/sos/caseno>, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY) = 6</home/sos/caseno/sosreport-1>
+openat(5</home/sos/caseno>, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY) = 6</home/sos/caseno/sosreport-1>
+
+# dfd, no dfd_path, result path, no elapsed
+1120026 17:00:32.779494 openat(5, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY) = 6</home/sos/caseno/sosreport-1>
+17:00:32.779494 openat(5, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY) = 6</home/sos/caseno/sosreport-1>
+1120026 openat(5, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY) = 6</home/sos/caseno/sosreport-1>
+openat(5, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY) = 6</home/sos/caseno/sosreport-1>
+
+
+# dfd, dfd_path, no result path, no elapsed
+1120026 17:00:32.779494 openat(5</home/sos/caseno>, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY) = 6
+17:00:32.779494 openat(5</home/sos/caseno>, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY) = 6
+1120026 openat(5</home/sos/caseno>, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY) = 6
+openat(5</home/sos/caseno>, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY) = 6
+
+# dfd, no dfd_path, no_result path, no elapsed
+1120026 17:00:32.779494 openat(5, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY) = 6
+17:00:32.779494 openat(5, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY) = 6
+1120026 openat(5, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY) = 6
+openat(5, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY) = 6
+
+
+
+
+
+
+
+
+# errors
+# dfd, dfd_path, error result, elapsed
+1120026 17:00:32.779494 openat(5</home/sos/caseno>, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY) = -1 ENOENT (No such file or directory) <0.000058>
+17:00:32.779494 openat(5</home/sos/caseno>, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY) = -1 ENOENT (No such file or directory) <0.000058>
+1120026 openat(5</home/sos/caseno>, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY) = -1 ENOENT (No such file or directory) <0.000058>
+openat(5</home/sos/caseno>, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY) = -1 ENOENT (No such file or directory) <0.000058>
+
+# dfd, no dfd_path, error result, elapsed
+1120026 17:00:32.779494 openat(5, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY) = -1 ENOENT (No such file or directory) <0.000058>
+17:00:32.779494 openat(5, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY) = -1 ENOENT (No such file or directory) <0.000058>
+1120026 openat(5, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY) = -1 ENOENT (No such file or directory) <0.000058>
+openat(5, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY) = -1 ENOENT (No such file or directory) <0.000058>
+
+
+# dfd, dfd_path, error result, no elapsed
+1120026 17:00:32.779494 openat(5</home/sos/caseno>, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY) = -1 ENOENT (No such file or directory)
+17:00:32.779494 openat(5</home/sos/caseno>, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY) = -1 ENOENT (No such file or directory)
+1120026 openat(5</home/sos/caseno>, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY) = -1 ENOENT (No such file or directory)
+openat(5</home/sos/caseno>, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY) = -1 ENOENT (No such file or directory)
+
+# dfd, no dfd_path, error result, no elapsed
+1120026 17:00:32.779494 openat(5, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY) = -1 ENOENT (No such file or directory)
+17:00:32.779494 openat(5, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY) = -1 ENOENT (No such file or directory)
+1120026 openat(5, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY) = -1 ENOENT (No such file or directory)
+openat(5, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY) = -1 ENOENT (No such file or directory)
+
+
+
+
+
+
+
+
+
+
+# with file creation mode
+
+
+
+
+
+# AT_FDCWD, result path, elapsed
+1119840 16:59:55.153682 openat(AT_FDCWD, "/usr/share/locale/locale.alias", O_RDONLY|O_CLOEXEC, 0666) = 3</usr/share/locale/locale.alias> <0.000037>
+16:59:55.153682 openat(AT_FDCWD, "/usr/share/locale/locale.alias", O_RDONLY|O_CLOEXEC, 0666) = 3</usr/share/locale/locale.alias> <0.000037>
+1119840 openat(AT_FDCWD, "/usr/share/locale/locale.alias", O_RDONLY|O_CLOEXEC, 0666) = 3</usr/share/locale/locale.alias> <0.000037>
+openat(AT_FDCWD, "/usr/share/locale/locale.alias", O_RDONLY|O_CLOEXEC, 0666) = 3</usr/share/locale/locale.alias> <0.000037>
+
+# AT_FDCWD, no result path, elapsed
+1119840 16:59:55.153682 openat(AT_FDCWD, "/usr/share/locale/locale.alias", O_RDONLY|O_CLOEXEC, 0666) = 3 <0.000037>
+16:59:55.153682 openat(AT_FDCWD, "/usr/share/locale/locale.alias", O_RDONLY|O_CLOEXEC, 0666) = 3 <0.000037>
+1119840 openat(AT_FDCWD, "/usr/share/locale/locale.alias", O_RDONLY|O_CLOEXEC, 0666) = 3 <0.000037>
+openat(AT_FDCWD, "/usr/share/locale/locale.alias", O_RDONLY|O_CLOEXEC, 0666) = 3 <0.000037>
+
+# AT_FDCWD, result path, no elapsed
+1119840 16:59:55.153682 openat(AT_FDCWD, "/usr/share/locale/locale.alias", O_RDONLY|O_CLOEXEC, 0666) = 3</usr/share/locale/locale.alias>
+16:59:55.153682 openat(AT_FDCWD, "/usr/share/locale/locale.alias", O_RDONLY|O_CLOEXEC, 0666) = 3</usr/share/locale/locale.alias>
+1119840 openat(AT_FDCWD, "/usr/share/locale/locale.alias", O_RDONLY|O_CLOEXEC, 0666) = 3</usr/share/locale/locale.alias>
+openat(AT_FDCWD, "/usr/share/locale/locale.alias", O_RDONLY|O_CLOEXEC, 0666) = 3</usr/share/locale/locale.alias>
+
+# AT_FDCWD, no result path, no elapsed
+1119840 16:59:55.153682 openat(AT_FDCWD, "/usr/share/locale/locale.alias", O_RDONLY|O_CLOEXEC, 0666) = 3
+16:59:55.153682 openat(AT_FDCWD, "/usr/share/locale/locale.alias", O_RDONLY|O_CLOEXEC, 0666) = 3
+1119840 openat(AT_FDCWD, "/usr/share/locale/locale.alias", O_RDONLY|O_CLOEXEC, 0666) = 3
+openat(AT_FDCWD, "/usr/share/locale/locale.alias", O_RDONLY|O_CLOEXEC, 0666) = 3
+
+
+# AT_FDCWD, error return, elapsed
+1119840 16:59:55.153682 openat(AT_FDCWD, "/usr/share/locale/locale.alias", O_RDONLY|O_CLOEXEC, 0666) = -1 ENOENT (No such file or directory) <0.000037>
+16:59:55.153682 openat(AT_FDCWD, "/usr/share/locale/locale.alias", O_RDONLY|O_CLOEXEC, 0666) = -1 ENOENT (No such file or directory) <0.000037>
+1119840 openat(AT_FDCWD, "/usr/share/locale/locale.alias", O_RDONLY|O_CLOEXEC, 0666) = -1 ENOENT (No such file or directory) <0.000037>
+openat(AT_FDCWD, "/usr/share/locale/locale.alias", O_RDONLY|O_CLOEXEC, 0666) = -1 ENOENT (No such file or directory) <0.000037>
+
+# AT_FDCWD, error return, no elapsed
+1119840 16:59:55.153682 openat(AT_FDCWD, "/usr/share/locale/locale.alias", O_RDONLY|O_CLOEXEC, 0666) = -1 ENOENT (No such file or directory)
+16:59:55.153682 openat(AT_FDCWD, "/usr/share/locale/locale.alias", O_RDONLY|O_CLOEXEC, 0666) = -1 ENOENT (No such file or directory)
+1119840 openat(AT_FDCWD, "/usr/share/locale/locale.alias", O_RDONLY|O_CLOEXEC, 0666) = -1 ENOENT (No such file or directory)
+openat(AT_FDCWD, "/usr/share/locale/locale.alias", O_RDONLY|O_CLOEXEC, 0666) = -1 ENOENT (No such file or directory)
+
+
+
+# with DFD
+# dfd, dfd_path, result path, elapsed
+1120026 17:00:32.779494 openat(5</home/sos/caseno>, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY, 0666) = 6</home/sos/caseno/sosreport-1> <0.000058>
+17:00:32.779494 openat(5</home/sos/caseno>, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY, 0666) = 6</home/sos/caseno/sosreport-1> <0.000058>
+1120026 openat(5</home/sos/caseno>, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY, 0666) = 6</home/sos/caseno/sosreport-1> <0.000058>
+openat(5</home/sos/caseno>, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY, 0666) = 6</home/sos/caseno/sosreport-1> <0.000058>
+
+# dfd, no dfd_path, result path, elapsed
+1120026 17:00:32.779494 openat(5, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY, 0666) = 6</home/sos/caseno/sosreport-1> <0.000058>
+17:00:32.779494 openat(5, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY, 0666) = 6</home/sos/caseno/sosreport-1> <0.000058>
+1120026 openat(5, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY, 0666) = 6</home/sos/caseno/sosreport-1> <0.000058>
+openat(5, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY, 0666) = 6</home/sos/caseno/sosreport-1> <0.000058>
+
+
+# dfd, dfd_path, no result path, elapsed
+1120026 17:00:32.779494 openat(5</home/sos/caseno>, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY, 0666) = 6 <0.000058>
+17:00:32.779494 openat(5</home/sos/caseno>, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY, 0666) = 6 <0.000058>
+1120026 openat(5</home/sos/caseno>, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY, 0666) = 6 <0.000058>
+openat(5</home/sos/caseno>, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY, 0666) = 6 <0.000058>
+
+# dfd, no dfd_path, no_result path, elapsed
+1120026 17:00:32.779494 openat(5, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY, 0666) = 6 <0.000058>
+17:00:32.779494 openat(5, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY, 0666) = 6 <0.000058>
+1120026 openat(5, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY, 0666) = 6 <0.000058>
+openat(5, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY, 0666) = 6 <0.000058>
+
+
+
+# dfd, dfd_path, result path, no elapsed
+1120026 17:00:32.779494 openat(5</home/sos/caseno>, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY, 0666) = 6</home/sos/caseno/sosreport-1>
+17:00:32.779494 openat(5</home/sos/caseno>, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY, 0666) = 6</home/sos/caseno/sosreport-1>
+1120026 openat(5</home/sos/caseno>, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY, 0666) = 6</home/sos/caseno/sosreport-1>
+openat(5</home/sos/caseno>, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY, 0666) = 6</home/sos/caseno/sosreport-1>
+
+# dfd, no dfd_path, result path, no elapsed
+1120026 17:00:32.779494 openat(5, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY, 0666) = 6</home/sos/caseno/sosreport-1>
+17:00:32.779494 openat(5, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY, 0666) = 6</home/sos/caseno/sosreport-1>
+1120026 openat(5, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY, 0666) = 6</home/sos/caseno/sosreport-1>
+openat(5, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY, 0666) = 6</home/sos/caseno/sosreport-1>
+
+
+# dfd, dfd_path, no result path, no elapsed
+1120026 17:00:32.779494 openat(5</home/sos/caseno>, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY, 0666) = 6
+17:00:32.779494 openat(5</home/sos/caseno>, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY, 0666) = 6
+1120026 openat(5</home/sos/caseno>, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY, 0666) = 6
+openat(5</home/sos/caseno>, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY, 0666) = 6
+
+# dfd, no dfd_path, no_result path, no elapsed
+1120026 17:00:32.779494 openat(5, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY, 0666) = 6
+17:00:32.779494 openat(5, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY, 0666) = 6
+1120026 openat(5, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY, 0666) = 6
+openat(5, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY, 0666) = 6
+
+
+
+
+
+
+
+
+# errors
+# dfd, dfd_path, error result, elapsed
+1120026 17:00:32.779494 openat(5</home/sos/caseno>, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY, 0666) = -1 ENOENT (No such file or directory) <0.000058>
+17:00:32.779494 openat(5</home/sos/caseno>, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY, 0666) = -1 ENOENT (No such file or directory) <0.000058>
+1120026 openat(5</home/sos/caseno>, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY, 0666) = -1 ENOENT (No such file or directory) <0.000058>
+openat(5</home/sos/caseno>, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY, 0666) = -1 ENOENT (No such file or directory) <0.000058>
+
+# dfd, no dfd_path, error result, elapsed
+1120026 17:00:32.779494 openat(5, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY, 0666) = -1 ENOENT (No such file or directory) <0.000058>
+17:00:32.779494 openat(5, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY, 0666) = -1 ENOENT (No such file or directory) <0.000058>
+1120026 openat(5, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY, 0666) = -1 ENOENT (No such file or directory) <0.000058>
+openat(5, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY, 0666) = -1 ENOENT (No such file or directory) <0.000058>
+
+
+# dfd, dfd_path, error result, no elapsed
+1120026 17:00:32.779494 openat(5</home/sos/caseno>, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY, 0666) = -1 ENOENT (No such file or directory)
+17:00:32.779494 openat(5</home/sos/caseno>, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY, 0666) = -1 ENOENT (No such file or directory)
+1120026 openat(5</home/sos/caseno>, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY, 0666) = -1 ENOENT (No such file or directory)
+openat(5</home/sos/caseno>, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY, 0666) = -1 ENOENT (No such file or directory)
+
+# dfd, no dfd_path, error result, no elapsed
+1120026 17:00:32.779494 openat(5, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY, 0666) = -1 ENOENT (No such file or directory)
+17:00:32.779494 openat(5, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY, 0666) = -1 ENOENT (No such file or directory)
+1120026 openat(5, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY, 0666) = -1 ENOENT (No such file or directory)
+openat(5, "sosreport-1", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY, 0666) = -1 ENOENT (No such file or directory)
+

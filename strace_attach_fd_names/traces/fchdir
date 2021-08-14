@@ -1,0 +1,24 @@
+
+2111594 17:33:42.772264 fchdir(3</home/sos/caseno>) = 0 <0.000022>
+17:33:42.772264 fchdir(3</home/sos/caseno>) = 0 <0.000022>
+2111594 fchdir(3</home/sos/caseno>) = 0 <0.000022>
+fchdir(3</home/sos/caseno>) = 0 <0.000022>
+
+
+2111594 17:33:42.772264 fchdir(3</home/sos/caseno>) = 0
+17:33:42.772264 fchdir(3</home/sos/caseno>) = 0
+2111594 fchdir(3</home/sos/caseno>) = 0
+fchdir(3</home/sos/caseno>) = 0
+
+
+2111594 17:33:42.772264 fchdir(3) = 0 <0.000022>
+17:33:42.772264 fchdir(3) = 0 <0.000022>
+2111594 fchdir(3) = 0 <0.000022>
+fchdir(3) = 0 <0.000022>
+
+
+2111594 17:33:42.772264 fchdir(3) = 0
+17:33:42.772264 fchdir(3) = 0
+2111594 fchdir(3) = 0
+fchdir(3) = 0
+

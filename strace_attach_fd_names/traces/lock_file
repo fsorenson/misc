@@ -1,0 +1,58 @@
+1972315 12:23:44.691054 execve("./lock_file", ["./lock_file"], ["SHELL=/bin/bash", "SESSION_MANAGER=local/unix:@/tmp/.ICE-unix/3620,unix/unix:/tmp/.ICE-unix/3620", "WINDOWID=102760477", "COLORTERM=rxvt-xpm", "LESS=-R -M", "HISTCONTROL=ignoredups", "GNOME_DESKTOP_SESSION_ID=this-is-deprecated", "HISTSIZE=1500", "HOSTNAME=bearskin.sorenson.redhat.com", "GUESTFISH_OUTPUT=\\e[0m", "SSH_AUTH_SOCK=/run/user/1000/keyring/ssh", "XSOS_DEFAULT_VIEW=bios os kdump cpu intrupt mem disks mpath lspci ethtool softirq bonding ip netdev sysctl ps", "HISTTIMEFORMAT=%Y-%m-%d_%H:%M:%S - ", "CINNAMON_VERSION=4.8.6", "DESKTOP_SESSION=cinnamon2d", "SSH_AGENT_PID=3680", "LMOD_DIR=/usr/share/lmod/lmod/libexec", "EDITOR=vim", "CINNAMON_SLOWDOWN_FACTOR=0.0001", "XDG_SEAT=seat0", "PWD=/home/sos/caseno", "LOGNAME=sorenson", "XDG_SESSION_DESKTOP=cinnamon2d", "XDG_SESSION_TYPE=x11", "QTLIB=/usr/lib64/qt-3.3/lib", "MODULESHOME=/usr/share/lmod/lmod", "MANPATH=/usr/share/lmod/lmod/share/man:", "XAUTHORITY=/run/user/1000/gdm/Xauthority", "TZ=:/etc/localtime", "GUESTFISH_RESTORE=\\e[0m", "GJS_DEBUG_TOPICS=JS ERROR;JS LOG", "WINDOWPATH=2", "CRASHPAGER=/usr/bin/less -X -F", "GDM_LANG=en_US.UTF-8", "HOME=/home/sorenson", "USERNAME=sorenson", "SSH_ASKPASS=/usr/libexec/openssh/x11-ssh-askpass", "LANG=en_US.UTF-8", "LS_COLORS=rs=0:di=38;5;116:ln=01;36:mh=00:pi=40;33:so=01;35:do=01;35:bd=40;33;01:cd=40;33;01:or=40;31;01:mi=00:su=37;41:sg=30;43"..., "XDG_CURRENT_DESKTOP=X-Cinnamon", "LMOD_SETTARG_FULL_SUPPORT=no", "GUESTFISH_PS1=\\[\\e[1;32m\\]><fs>\\[\\e[0;31m\\] ", "ORIG_LESSOPEN=|/usr/bin/lesspipe.sh", "LMOD_VERSION=8.4.1", "UNMODIFIED_ORIG_LESSOPEN=||/usr/bin/lesspipe.sh %s", "QTINC=/usr/lib64/qt-3.3/include", "CLUTTER_DEFAULT_FPS=15", "GJS_DEBUG_OUTPUT=stderr", "MODULEPATH_ROOT=/usr/share/modulefiles", "MOZ_GMP_PATH=/usr/lib64/mozilla/plugins/gmp-gmpopenh264/system-installed", "XDG_SESSION_CLASS=user", "LMOD_PKG=/usr/share/lmod/lmod", "PYTHONPATH=:~/lib/python", "TERM=xterm-256color", "GTK_OVERLAY_SCROLLING=0", "LESSOPEN=|/usr/bin/lesspipe.sh %s", "USER=sorenson", "CINNAMON_SOFTWARE_RENDERING=1", "COLORFGBG=default;default;0", "DISPLAY=:1", "LMOD_ROOT=/usr/share/lmod", "SHLVL=2", "BASH_ENV=/usr/share/lmod/lmod/init/bash", "LMOD_sys=Linux", "GUESTFISH_INIT=\\e[1;34m", "XDG_VTNR=2", "CLUTTER_PAINT=disable-culling", "XDG_SESSION_ID=2", "LIBGL_ALWAYS_SOFTWARE=1", "XDG_RUNTIME_DIR=/run/user/1000", "S_COLORS=auto", "QTDIR=/usr/lib64/qt-3.3", "KDEDIRS=/usr", "GTK3_MODULES=xapp-gtk3-module", "XDG_DATA_DIRS=/home/sorenson/.local/share/flatpak/exports/share:/var/lib/flatpak/exports/share:/usr/local/share/:/usr/share/", "PATH=/usr/lib64/qt-3.3/bin:/usr/lib64/ccache:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/sbin:/home/sorenson/bin:/home/so"..., "CINNAMON_2D=1", "HISTIGNORE=&:[bf]g:exit", "MODULEPATH=/etc/modulefiles:/usr/share/modulefiles:/usr/share/modulefiles/Linux:/usr/share/modulefiles/Core:/usr/share/lmod/lmod"..., "GLOBIGNORE=*/.:*/..", "GDMSESSION=cinnamon2d", "HISTFILESIZE=1000000", "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus", "LMOD_CMD=/usr/share/lmod/lmod/libexec/lmod", "MAIL=/var/spool/mail/sorenson", "RUBYLIB=:~/.facter", "MUFFIN_NO_SHADOWS=1", "BASH_FUNC_ml%%=() {  eval $($LMOD_DIR/ml_cmd \"$@\")\n}", "BASH_FUNC_module%%=() {  eval $($LMOD_CMD bash \"$@\") && eval $(${LMOD_SETTARG_CMD:-:} -s sh)\n}", "OLDPWD=/home/sos", "_=/usr/bin/strace"]) = 0 <0.000891>
+1972315 12:23:44.692280 brk(NULL)       = 0xf41000 <0.000018>
+1972315 12:23:44.692345 arch_prctl(0x3001 /* ARCH_??? */, 0x7ffc2f000990) = -1 EINVAL (Invalid argument) <0.000018>
+1972315 12:23:44.692556 access("/etc/ld.so.preload", R_OK) = -1 ENOENT (No such file or directory) <0.000028>
+1972315 12:23:44.692655 openat(AT_FDCWD, "/etc/ld.so.cache", O_RDONLY|O_CLOEXEC) = 3</etc/ld.so.cache> <0.000027>
+1972315 12:23:44.692839 fstat(3</etc/ld.so.cache>, {st_dev=makedev(0xfd, 0x1), st_ino=411261806, st_mode=S_IFREG|0644, st_nlink=1, st_uid=0, st_gid=0, st_blksize=4096, st_blocks=456, st_size=232419, st_atime=1624828201 /* 2021-06-27T16:10:01.387300773-0500 */, st_atime_nsec=387300773, st_mtime=1624309505 /* 2021-06-21T16:05:05.745147839-0500 */, st_mtime_nsec=745147839, st_ctime=1624309505 /* 2021-06-21T16:05:05.753147913-0500 */, st_ctime_nsec=753147913}) = 0 <0.000020>
+1972315 12:23:44.692948 mmap(NULL, 232419, PROT_READ, MAP_PRIVATE, 3</etc/ld.so.cache>, 0) = 0x7f6b2a2f9000 <0.000024>
+1972315 12:23:44.693020 close(3</etc/ld.so.cache>) = 0 <0.000031>
+1972315 12:23:44.693140 openat(AT_FDCWD, "/lib64/libc.so.6", O_RDONLY|O_CLOEXEC) = 3</usr/lib64/libc-2.32.so> <0.000029>
+1972315 12:23:44.693219 read(3</usr/lib64/libc-2.32.so>, "\177ELF\2\1\1\3\0\0\0\0\0\0\0\0\3\0>\0\1\0\0\0 \203\2\0\0\0\0\0@\0\0\0\0\0\0\0 \0311\0\0\0\0\0\0\0\0\0@\08\0\16\0@\0D\0C\0\6\0\0\0\4\0\0\0@\0\0\0\0\0\0\0@\0\0\0\0\0\0\0@\0\0\0\0\0\0\0\20\3\0\0\0\0\0\0\20\3\0\0\0\0\0\0\10\0\0\0\0\0\0\0\3\0\0\0\4\0\0\0"..., 832) = 832 <0.000021>
+1972315 12:23:44.693290 pread64(3</usr/lib64/libc-2.32.so>, "\6\0\0\0\4\0\0\0@\0\0\0\0\0\0\0@\0\0\0\0\0\0\0@\0\0\0\0\0\0\0\20\3\0\0\0\0\0\0\20\3\0\0\0\0\0\0\10\0\0\0\0\0\0\0\3\0\0\0\4\0\0\0\360\225\31\0\0\0\0\0\360\225\31\0\0\0\0\0\360\225\31\0\0\0\0\0\34\0\0\0\0\0\0\0\34\0\0\0\0\0\0\0\20\0\0\0\0\0\0\0\1\0\0\0\4\0\0\0\0\0\0\0\0\0\0\0"..., 784, 64) = 784 <0.000020>
+1972315 12:23:44.693359 pread64(3</usr/lib64/libc-2.32.so>, "\4\0\0\0\20\0\0\0\5\0\0\0GNU\0\2\0\0\300\4\0\0\0\3\0\0\0\0\0\0\0", 32, 848) = 32 <0.000019>
+1972315 12:23:44.693424 pread64(3</usr/lib64/libc-2.32.so>, "\4\0\0\0\24\0\0\0\3\0\0\0GNU\0J\177\263t\t\177\271'\373\223\323^\371\213\250\222b\320\304\244\4\0\0\0\20\0\0\0\1\0\0\0GNU\0\0\0\0\0\3\0\0\0\2\0\0\0\0\0\0\0", 68, 880) = 68 <0.000019>
+1972315 12:23:44.693491 fstat(3</usr/lib64/libc-2.32.so>, {st_dev=makedev(0xfd, 0x1), st_ino=213701, st_mode=S_IFREG|0755, st_nlink=1, st_uid=0, st_gid=0, st_blksize=4096, st_blocks=6296, st_size=3222048, st_atime=1624816801 /* 2021-06-27T13:00:01.656959314-0500 */, st_atime_nsec=656959314, st_mtime=1612325504 /* 2021-02-02T22:11:44-0600 */, st_mtime_nsec=0, st_ctime=1613065628 /* 2021-02-11T11:47:08.426311854-0600 */, st_ctime_nsec=426311854}) = 0 <0.000019>
+1972315 12:23:44.693569 mmap(NULL, 8192, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) = 0x7f6b2a2f7000 <0.000022>
+1972315 12:23:44.693640 pread64(3</usr/lib64/libc-2.32.so>, "\6\0\0\0\4\0\0\0@\0\0\0\0\0\0\0@\0\0\0\0\0\0\0@\0\0\0\0\0\0\0\20\3\0\0\0\0\0\0\20\3\0\0\0\0\0\0\10\0\0\0\0\0\0\0\3\0\0\0\4\0\0\0\360\225\31\0\0\0\0\0\360\225\31\0\0\0\0\0\360\225\31\0\0\0\0\0\34\0\0\0\0\0\0\0\34\0\0\0\0\0\0\0\20\0\0\0\0\0\0\0\1\0\0\0\4\0\0\0\0\0\0\0\0\0\0\0"..., 784, 64) = 784 <0.000019>
+1972315 12:23:44.693707 mmap(NULL, 1876640, PROT_READ, MAP_PRIVATE|MAP_DENYWRITE, 3</usr/lib64/libc-2.32.so>, 0) = 0x7f6b2a12c000 <0.000028>
+1972315 12:23:44.693778 mprotect(0x7f6b2a152000, 1683456, PROT_NONE) = 0 <0.000039>
+1972315 12:23:44.693852 mmap(0x7f6b2a152000, 1372160, PROT_READ|PROT_EXEC, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3</usr/lib64/libc-2.32.so>, 0x26000) = 0x7f6b2a152000 <0.000046>
+1972315 12:23:44.693942 mmap(0x7f6b2a2a1000, 307200, PROT_READ, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3</usr/lib64/libc-2.32.so>, 0x175000) = 0x7f6b2a2a1000 <0.000026>
+1972315 12:23:44.694011 mmap(0x7f6b2a2ed000, 24576, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3</usr/lib64/libc-2.32.so>, 0x1c0000) = 0x7f6b2a2ed000 <0.000042>
+1972315 12:23:44.694110 mmap(0x7f6b2a2f3000, 12960, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_ANONYMOUS, -1, 0) = 0x7f6b2a2f3000 <0.000026>
+1972315 12:23:44.694202 close(3</usr/lib64/libc-2.32.so>) = 0 <0.000018>
+1972315 12:23:44.694290 mmap(NULL, 8192, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) = 0x7f6b2a12a000 <0.000022>
+1972315 12:23:44.694355 arch_prctl(ARCH_SET_FS, 0x7f6b2a2f8540) = 0 <0.000018>
+1972315 12:23:44.694530 mprotect(0x7f6b2a2ed000, 12288, PROT_READ) = 0 <0.000027>
+1972315 12:23:44.694595 mprotect(0x403000, 4096, PROT_READ) = 0 <0.000025>
+1972315 12:23:44.694662 mprotect(0x7f6b2a35d000, 4096, PROT_READ) = 0 <0.000027>
+1972315 12:23:44.694748 munmap(0x7f6b2a2f9000, 232419) = 0 <0.000046>
+1972315 12:23:44.694898 openat(AT_FDCWD, "testfile", O_RDWR|O_CREAT, 0666) = 3</home/sos/caseno/testfile> <0.000030>
+1972315 12:23:44.695028 fstat(1</dev/pts/15>, {st_dev=makedev(0, 0x19), st_ino=18, st_mode=S_IFCHR|0620, st_nlink=1, st_uid=1000, st_gid=5, st_blksize=1024, st_blocks=0, st_rdev=makedev(0x88, 0xf), st_atime=1624901024 /* 2021-06-28T12:23:44.705365252-0500 */, st_atime_nsec=705365252, st_mtime=1624901024 /* 2021-06-28T12:23:44.705365252-0500 */, st_mtime_nsec=705365252, st_ctime=1624116303 /* 2021-06-19T10:25:03.705365252-0500 */, st_ctime_nsec=705365252}) = 0 <0.000019>
+1972315 12:23:44.695220 brk(NULL)       = 0xf41000 <0.000016>
+1972315 12:23:44.695266 brk(0xf62000)   = 0xf62000 <0.000019>
+1972315 12:23:44.695317 brk(NULL)       = 0xf62000 <0.000016>
+1972315 12:23:44.695386 write(1</dev/pts/15>, "flock test: can't test flocks()\n", 32) = 32 <0.000030>
+1972315 12:23:44.695461 flock(3</home/sos/caseno/testfile>, LOCK_SH|LOCK_NB) = 0 <0.000019>
+1972315 12:23:44.695519 write(1</dev/pts/15>, "flock shared: shared flock succeeded\n", 37) = 37 <0.000022>
+1972315 12:23:44.695600 flock(3</home/sos/caseno/testfile>, LOCK_UN) = 0 <0.000017>
+1972315 12:23:44.695654 flock(3</home/sos/caseno/testfile>, LOCK_EX|LOCK_NB) = 0 <0.000016>
+1972315 12:23:44.695708 write(1</dev/pts/15>, "flock exclusive: exclusive flock succeeded\n", 43) = 43 <0.000022>
+1972315 12:23:44.695768 flock(3</home/sos/caseno/testfile>, LOCK_UN) = 0 <0.000016>
+1972315 12:23:44.695822 write(1</dev/pts/15>, "\n", 1) = 1 <0.000020>
+1972315 12:23:44.695882 write(1</dev/pts/15>, "\n", 1) = 1 <0.000020>
+1972315 12:23:44.695943 fcntl(3</home/sos/caseno/testfile>, F_GETLK, {l_type=F_UNLCK, l_whence=SEEK_SET, l_start=0, l_len=0, l_pid=0}) = 0 <0.000018>
+1972315 12:23:44.696008 write(1</dev/pts/15>, "posix lock test, READ: file is not locked for READ\n", 51) = 51 <0.000029>
+1972315 12:23:44.696082 fcntl(3</home/sos/caseno/testfile>, F_GETLK, {l_type=F_UNLCK, l_whence=SEEK_SET, l_start=0, l_len=0, l_pid=0}) = 0 <0.000016>
+1972315 12:23:44.696141 write(1</dev/pts/15>, "posix lock test, WRITE: file is not locked for WRITE\n", 53) = 53 <0.000022>
+1972315 12:23:44.696203 fcntl(3</home/sos/caseno/testfile>, F_GETLK, {l_type=F_UNLCK, l_whence=SEEK_SET, l_start=0, l_len=0, l_pid=0}) = 0 <0.000016>
+1972315 12:23:44.696261 write(1</dev/pts/15>, "posix lock test, READ-WRITE: file is not locked for READ or WRITE\n", 66) = 66 <0.000021>
+1972315 12:23:44.696322 write(1</dev/pts/15>, "\n", 1) = 1 <0.000020>
+1972315 12:23:44.696389 fcntl(3</home/sos/caseno/testfile>, F_OFD_GETLK, {l_type=F_UNLCK, l_whence=SEEK_SET, l_start=0, l_len=0, l_pid=0}) = 0 <0.000016>
+1972315 12:23:44.696448 write(1</dev/pts/15>, "OFD lock test, READ: file is not locked for READ\n", 49) = 49 <0.000021>
+1972315 12:23:44.696509 fcntl(3</home/sos/caseno/testfile>, F_OFD_GETLK, {l_type=F_UNLCK, l_whence=SEEK_SET, l_start=0, l_len=0, l_pid=0}) = 0 <0.000016>
+1972315 12:23:44.696568 write(1</dev/pts/15>, "OFD lock test, WRITE: file is not locked for WRITE\n", 51) = 51 <0.000021>
+1972315 12:23:44.696629 fcntl(3</home/sos/caseno/testfile>, F_OFD_GETLK, {l_type=F_UNLCK, l_whence=SEEK_SET, l_start=0, l_len=0, l_pid=0}) = 0 <0.000016>
+1972315 12:23:44.696687 write(1</dev/pts/15>, "OFD lock test, READ-WRITE: file is not locked for READ or WRITE\n", 64) = 64 <0.000021>
+1972315 12:23:44.696760 exit_group(0)   = ?
+1972315 12:23:44.696943 +++ exited with 0 +++

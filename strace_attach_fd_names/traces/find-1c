@@ -1,0 +1,25 @@
+12345 11:04:51.502037 getcwd("/cwd/from/getcwd/call", 4096) = 18 <0.000026>
+12345 10:36:05.388356 openat(AT_FDCWD, "relative/directory/to/known/cwd", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY) = 4 <0.000037>
+12345 10:36:05.388916 getdents64(4, 0x55bab9bd8e60 /* 31 entries */, 32768) = 1160 <0.000065>
+12345 10:36:05.389133 getdents64(4, 0x55bab9bd8e60 /* 0 entries */, 32768) = 0 <0.000038>
+12345 10:36:05.389292 close(4)                = 0 <0.000031>
+
+12345 10:36:05.388356 openat(AT_FDCWD, "/absolute/directory/to/known/cwd", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY) = 4 <0.000037>
+12345 10:36:05.388916 getdents64(4, 0x55bab9bd8e60 /* 31 entries */, 32768) = 1160 <0.000065>
+12345 10:36:05.389133 getdents64(4, 0x55bab9bd8e60 /* 0 entries */, 32768) = 0 <0.000038>
+12345 10:36:05.389292 close(4)                = 0 <0.000031>
+
+
+
+
+
+10:36:05.388356 openat(AT_FDCWD, "relative/directory/to/unknown/cwd", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY) = 4 <0.000037>
+10:36:05.388916 getdents64(4, 0x55bab9bd8e60 /* 31 entries */, 32768) = 1160 <0.000065>
+10:36:05.389133 getdents64(4, 0x55bab9bd8e60 /* 0 entries */, 32768) = 0 <0.000038>
+10:36:05.389292 close(4)                = 0 <0.000031>
+
+10:36:05.388356 openat(AT_FDCWD, "/absolute_directory/to/unknown/cwd", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY) = 4 <0.000037>
+10:36:05.388916 getdents64(4, 0x55bab9bd8e60 /* 31 entries */, 32768) = 1160 <0.000065>
+10:36:05.389133 getdents64(4, 0x55bab9bd8e60 /* 0 entries */, 32768) = 0 <0.000038>
+10:36:05.389292 close(4)                = 0 <0.000031>
+
