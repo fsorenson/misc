@@ -1,0 +1,16 @@
+#!/bin/bash
+
+# kill 'man' and 'bc'
+for p in $(pgrep '\b(bc|man)\b') ; do kill $p ; kill -CONT $p ; done
+
+# find bash pids with cwd==$HOME
+homebash=$(for p in $(pidof bash) ; do lsof -p $p 2>/dev/null | egrep -q "\bcwd\b.+$HOME$" && echo $p ; done)
+
+# filter those pids for those without any child processes
+for pid in $homebash ; do
+	cpid_count=$(ps h --ppid $pid --pid $pid -o pid | wc -w)
+	[[ $cpid_count -eq 1 ]] && kill $pid
+done
+
+
+
