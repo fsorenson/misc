@@ -401,6 +401,8 @@ exit(1);
 	'file_mode_string' => "0[0-7]+",
 	'possible_file_mode_string' => "(?:, (0[0-7]+))?",
 
+	'proc_pid_exe' => '(?:"/proc/([0-9]+|self)/exe")',
+
 	'possible_pipefd_name' => "(?:<(.+)>)?",
 	'possible_sockfd_name' => "(?:<(.+)>)?",
 
@@ -491,6 +493,8 @@ $patterns{'siginfo_t'} = "(?:\{si_signo=(?:SIG[A-Z0-9]+), si_code.+\})";
 	'pipe' => qr/^\[$patterns{'pipefd_with_possible_name'}, $patterns{'pipefd_with_possible_name'}\]$/,
 	'socketpair' => qr/^($patterns{'socket_domain'}), ($patterns{'socket_type'}), ($patterns{'socket_proto'}), (\[$patterns{'sockfd_with_possible_name'}, $patterns{'sockfd_with_possible_name'}\])$/,
 
+	'readlink' => qr/$patterns{'proc_pid_exe'}, $patterns{'quoted_string'}, $patterns{'digits_string'}$/,
+
 #	'clone' => qr/^child_stack=$patterns{'hex_string_or_null'}, flags=($patterns{'clone_flags'}), parent_tidptr=$patterns{'hex_string'}, tls=$patterns{'hex_string'}, child_tidptr=$patterns{'hex_string'}$/,
 	'clone' => qr/^child_stack=$patterns{'hex_string_or_null'}, flags=($patterns{'clone_flags'})(, .+)?$/,
 # clone(child_stack=0x7fc9df076fb0, flags=CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD|CLONE_SYSVSEM|CLONE_SETTLS|CLONE_PARENT_SETTID|CLONE_CHILD_CLEARTID, parent_tidptr=0x7fc9df0779d0, tls=0x7fc9df077700, child_tidptr=0x7fc9df0779d0) = 9057
@@ -538,7 +542,6 @@ $patterns{'siginfo_t'} = "(?:\{si_signo=(?:SIG[A-Z0-9]+), si_code.+\})";
 	'getpid', 'getuid', 'geteuid', 'getgid', 'getegid',
 	'setpgid', 'getpgid', 'chown', 'lchown',
 	'futex', 'access', 'stat', 'lstat',
-	'readlink',
 	'brk', 'mmap', 'munmap', 'mprotect',
 	'prctl', 'arch_prctl', 'uname', 'prlimit', 'prlimit64', 'set_robust_list', 'set_tid_address',
 	'wait4', 'kill', 'exit_group', 'statfs',
@@ -1090,6 +1093,20 @@ if (0) { # TODO - fix parsing the socket strings
 				}
 }
 			} else { printf("didn't match socketpair regex: %s\n", $regexes{'socketpair'}); };
+		} elsif ($op eq 'readlink') {
+			if ($config{'show_execnames'} && !ret_is_error($ret) && (my ($proc_pid, $link_target) = $args =~ $regexes{'readlink'})) {
+				$proc_pid = $pid if ($proc_pid eq 'self');
+				printf("found a readlink for pid " . $proc_pid . " to %s\n", $link_target) if ($config{'debug'} >= 2);
+
+				my $current_execname = get_execname($proc_pid);
+				printf("pid %d - current execname: %s, execname from readlink: %s\n", $proc_pid, $current_execname, basename($link_target)) if ($config{'debug'} >= 2);
+
+				if ($current_execname eq "") {
+					printf("setting execname for pid %d to '%s'\n", $proc_pid, basename($link_target)) if ($config{'debug'} >= 1);
+				}
+
+				set_execname($proc_pid, basename($link_target)) if ($current_execname eq "");
+			}
 		} elsif ($op eq "clone") {
 			# if CLONE_FILES is set, the two processes SHARE fd table -- not sure how to implement that
 			# if execve is later called, the fd table is duplicated, and no longer shared
