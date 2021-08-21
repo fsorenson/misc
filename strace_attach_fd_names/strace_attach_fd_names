@@ -24,9 +24,8 @@ GetOptions(
 
 
 if ($config{'debug'} >= 1) {
-	printf("resulting DEBUG: %d\n", $config{'debug'});
-	printf("resulting config{'debug'}: %d\n", $config{'debug'});
-	printf("resulting show_execname: $config{'show_execnames'}\n");
+	printf("config{'debug'}: %d\n", $config{'debug'});
+	printf("config{'show_execnames'}: $config{'show_execnames'}\n");
 }
 
 
@@ -1188,11 +1187,9 @@ if (0) { # TODO - fix parsing the socket strings
 # read write pread pwrite lseek readv writev preadv pwritev preadv2 pwritev2 fsync ioctl select
 			} else { printf("generic %s(dfd, path...), but '%s' didn't match the regex '%s'\n", $op, $args, $regexes{'generic_function_dfd_path'}); }
 		} elsif (do_not_parse_function($op)) {
-#			printf("%s\n", $line);
-
 		} else {
-printf("matched the main pattern, but didn't find a matching op for '$op'\n");
-printf(" full string: %s\n", $line);
+			printf("matched the main pattern, but didn't find a matching op for '$op'\n");
+			printf(" full string: %s\n", $line);
 		}
 
 		my $execname = $config{'show_execnames'} ? get_execname($pid) : "";
@@ -1230,7 +1227,7 @@ printf(" full string: %s\n", $line);
 				$partial_line);
 		}
 	} else {
-		printf("didn't match op pattern: %s\n", $line) if ($config{'debug'} >= 1);
+		printf("didn't match any patterns: %s\n", $line) if ($config{'debug'} >= 1);
 	}
 
 	if ($config{'debug'} >= 1) {
