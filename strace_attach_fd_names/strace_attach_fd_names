@@ -1131,13 +1131,21 @@ if (0) { # TODO - fix parsing the socket strings
 			} else { }
 		} elsif ($op eq "execve") {
 			if (my ($execve_path, $execve_argv, $execve_envp) = $args =~ $regexes{'execve'}) {
-				my $execve_name = basename($execve_path);
+#				my $execve_name = basename($execve_path);
+
+				$this_line_execname = get_execname($pid) if ($config{'show_execnames'} && $this_line_execname eq "");
 
 				set_execname($pid, basename($execve_path));
-#				printf("cmd_path: %s\nargv: %s\n", $cmd_path, $argv);
-			# TODO - clear the CLOEXEC fds
-#["dspmq", "-x", "QM1"], ["
+				printf("execve_path %s\nargv: %s\n", $execve_path, $execve_argv) if ($config{'debug'} >= 1);
 
+				if (get_cwd($pid) eq "" && (my ($args1, $exec_pwd, $args2) = $execve_envp =~ $regexes{'execve_pwd_path'})) {
+					set_cwd($pid, $exec_pwd);
+					printf("in execve(), environment variable PWD is '%s'; setting cwd\n",
+						$exec_pwd) if ($config{'debug'} >= 1);
+				}
+			# TODO - clear the CLOEXEC fds
+			# duplicate the fd table, if the process was cloned with CLONE_FILES (table is shared)
+			}
 			}
 
 		} elsif ($op eq "exit") { # TODO - what about exit_group?
