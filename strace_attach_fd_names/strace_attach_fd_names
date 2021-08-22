@@ -421,6 +421,8 @@ exit(1);
 
 	'clone_flags' => '(0|(?:\\||CLONE_[A-Z0-9_]+|SIG[A-Z0-9]+)+)',
 
+	'timerfd_flags' => '(?:0|(?:\\||(?:TFD_[A-Z]+))+)',
+	'epoll_create1_flags' => '(0|(?:\\||EPOLL_CLOEXEC))',
 	'open_flags' => "(0|(?:\\||O_[A-Z0-9_]+)+)",
 	'dup3_flags' => "(0|O_CLOEXEC)",
 
@@ -497,6 +499,10 @@ $patterns{'siginfo_t'} = "(?:\{si_signo=(?:SIG[A-Z0-9]+), si_code.+\})";
 
 	'pipe' => qr/^\[$patterns{'pipefd_with_possible_name'}, $patterns{'pipefd_with_possible_name'}\]$/,
 	'socketpair' => qr/^($patterns{'socket_domain'}), ($patterns{'socket_type'}), ($patterns{'socket_proto'}), (\[$patterns{'sockfd_with_possible_name'}, $patterns{'sockfd_with_possible_name'}\])$/,
+	'timerfd_create' => qr/^($patterns{'clockid'}), ($patterns{'timerfd_flags'})/,
+
+	'epoll_create1' => qr/^$patterns{'epoll_create1_flags'}/,
+	'epoll_wait' => qr/^$patterns{'fd_with_possible_path'}, $patterns{'square_brackets_arg'}, ($patterns{'digits_string'}), ($patterns{'digits_string'})$/,
 
 	'readlink' => qr/$patterns{'proc_pid_exe'}, $patterns{'quoted_string'}, $patterns{'digits_string'}$/,
 
@@ -903,6 +909,39 @@ printf("matched 'openat2' regex\n");
 					$rebuild_line = true;
 				}
 			} else { printf("close but didn't match the re\n"); }
+		} elsif ($op eq 'timerfd_create') {
+			if (!ret_is_error($ret)) {
+				if (my ($fd, $fd_string) = $ret =~ $regexes{'return_fd_path'}) {
+					if (!defined($fd_string)) {
+						$fd_string= sprintf("pid_%d_timerfd_%d", $pid, $fd);
+						$ret = sprintf("%d<%s>", $fd, $fd_string);
+						$rebuild_line = true;
+					}
+					if (my ($clockid, $timerfd_flags) = $args =~ $regexes{'timerfd_create'}) {
+						printf("timerfd_flags: %s\n", $timerfd_flags) if ($config{'debug'} >= 2);
+						if (grep { $_ eq 'TFD_CLOEXEC' } split('\|', $timerfd_flags)) {
+							printf("timerfd_create setting cloexec\n") if ($config{'debug'} >= 2);
+							store_cloexec_fd($pid, $fd);
+						} else { }
+					}
+				}
+			}
+		} elsif ($op eq 'epoll_create' || $op eq 'epoll_create1') {
+			if (!ret_is_error($ret)) {
+				if (my ($fd, $fd_string) = $ret =~ $regexes{'return_fd_path'}) {
+
+					printf("epoll_create1 fd: %d, fd_string: %s\n", $fd, $fd_string) if ($config{'debug'} >= 1);
+					if (!defined($fd_string)) {
+						$fd_string = sprintf("pid_%d_eventpoll_fd_%d", $pid, $fd);
+						$ret = sprintf("%d<%s>", $fd, $fd_string);
+						$rebuild_line = true;
+					}
+					store_fd_name($pid, $fd, $fd_string);
+					if ($op eq 'epoll_create1') {
+						store_cloexec_fd($pid, $fd) if ($args eq 'EPOLL_CLOEXEC' || $args eq '' . oct('02000000'));
+					}
+				}
+			}
 		} elsif ($op eq "chdir") {
 			if (my ($path) = $args =~ $regexes{'chdir'}) {
 				set_cwd($pid, $path) if (!ret_is_error($ret));
