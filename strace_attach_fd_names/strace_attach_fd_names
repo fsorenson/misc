@@ -58,6 +58,11 @@ sub dump_backtrace {
 	print $trace->as_string;
 	printf("\n");
 }
+sub print_pattern {
+	my $name = shift;
+
+	printf("%s: %s\n", $name, $patterns{$name});
+}
 sub trim {
 	my $s = shift;
 	$s =~ s/^\s+|\s+$//g;
