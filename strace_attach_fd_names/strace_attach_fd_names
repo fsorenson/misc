@@ -774,20 +774,16 @@ printf("matched the fstatat pattern\n");
 						printf("  return fd: %d\n", get_match_val($fd));
 						printf("  return fd path: %s\n", get_match_val($fd_path));
 					}
-					if (defined($fd_path)) {
+					if (defined($fd_path) && $fd_path ne "") {
 						store_fd_name($pid, $fd, $fd_path);
+						set_cwd($pid, $fd_path) if ($pathname eq "."); # determined cwd from return string
+						printf("derived CWD from open(\".\"...): '%s'\n", $fd_path) if ($config{'debug'} >= 1);
 					} else {
-						store_fd_name($pid, $fd, $pathname);
-						$ret = sprintf("%d<%s>", $fd, $pathname);
+						# see if we can determine the path from $cwd and $pathname
+						$fd_path = get_atpath($pid, "AT_FDCWD", $pathname);
+						store_fd_name($pid, $fd, $fd_path);
+						$ret = sprintf("%d<%s>", $fd, $fd_path);
 						$rebuild_line = true;
-if (0) {
-						$line = sprintf("%s%s%s(%s) = %s%s",
-							(defined($pid) ? $pid . " " : ""),
-							(defined($timestamp) ? $timestamp . " " : ""),
-							$op, $args, $ret,
-							(defined($elapsed) ? " " . $elapsed : "")
-						);
-}
 					}
 				} # otherwise, error or couldn't parse return string
 			} else {
