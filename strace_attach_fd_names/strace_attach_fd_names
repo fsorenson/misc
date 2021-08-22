@@ -14,8 +14,9 @@ use constant { true => 1, false => 0 };
 my %config = (
 	'debug' => 0,
 	'show_execnames' => false,
-);
 
+	'normalize_pids' => true, # no reason not to, but making it a config option, just in case
+);
 
 GetOptions(
 	'debug|verbose|v+' => \$config{'debug'},
@@ -651,6 +652,13 @@ while (<>) {
 	if ($line eq "" or substr($line, 0, 1) eq "#") { next; }
 
 
+	if ($config{'normalize_pids'}) {
+		# normalize the alternate pid string: '[pid #####]'
+		if (my ($pid_str, $pid_match, $line_remainder) = $line =~ $regexes{'alternate_pid'}) {
+			printf("normalizing pid string: '%s' => %d\n", $pid_str, $pid_match) if ($config{'debug'} >= 1);
+			$line = "" . $pid_match . " " . $line_remainder;
+		}
+	}
 #	qr/^$patterns{'possible_pid_string'}$patterns{'possible_timestamp_string'}$patterns{'op_string'}\($patterns{'op_args_string'} <unfinished ...>$/,
 #	if (@matches = $line =~ $regexes{'unfinished'}) {
 #	if (($pid, $timestamp, $op, my $op_args) = $line =~ $regexes{'unfinished'}) {
