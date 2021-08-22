@@ -529,14 +529,23 @@ $patterns{'siginfo_t'} = "(?:\{si_signo=(?:SIG[A-Z0-9]+), si_code.+\})";
 @generic_fd_functions = (
 	"futimens", "flock", 'ftruncate',
 	"fchmod", "fchown", "flock", "fstat", "fstatfs",
-	"read", "write", "pread", "pwrite", "readv", "writev", "preadv", "pwritev", "preadv2", "pwritev2", "lseek",
-	"pread64", "fadvise64",
+
+	'read', 'readv', 'pread', 'preadv', 'preadv2', 'pread64',
+	'write', 'writev', 'pwrite', 'pwritev', 'pwritev2', 'pwrite64',
+
+	"lseek",
+	"fadvise64", 'fallocate',
 	"fsync", "fdatasync",
-	"ioctl"
+	"ioctl",
+	'epoll_wait', # TODO: anything to parse?
+	'epoll_ctl', # TODO: 3rd arg 'fd'
+	'splice', # TODO: 1st arg 'fd_in', 3rd arg 'fd_out'
+	'getpeername',
+	'timerfd_settime',
 );
 
 @generic_dfd_pathname_functions = ( "faccessat", "fchownat", "unlinkat", "fchmodat",
-	"utimensat", "futimensat", "mkdirat", "fstatat", "fstatat64",
+	"utimensat", "futimensat", "mkdirat", "fstatat", "fstatat64", 'statx',
 	"newfstatat",
 );
 
@@ -554,7 +563,7 @@ $patterns{'siginfo_t'} = "(?:\{si_signo=(?:SIG[A-Z0-9]+), si_code.+\})";
 	'mremap', 'madvise',
 	'clock_gettime', 'clock_getres',
 	'sched_yield', 'sched_getaffinity', 'sched_setaffinity',
-	'mkdir', 'rmdir', 'unlink',
+	'mkdir', 'rmdir', 'link', 'unlink',
 
 
 	# TODO: gettid
