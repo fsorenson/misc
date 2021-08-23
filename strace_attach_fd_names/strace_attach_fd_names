@@ -745,6 +745,21 @@ my $orig_line = $line;
 # qr/^$patterns{'possible_pid_string'}$patterns{'possible_timestamp_string'}$patterns{'op_string'}\($patterns{'op_args_string'}\)$patterns{'ret_string'}$patterns{'possible_elapsed_string'}$/
 
 
+	if ((my $pid, $this_line_execname, my $timestamp, my $rest) = $line =~ $regexes{'line_with_execname'}) {
+
+		if ($config{'debug'} >= 1) {
+			printf("looks like the line already has an execname: %s\n", $this_line_execname);
+			printf("  pid: %d\n", $pid);
+			printf("  timestamp: %s\n", defined($timestamp) ? $timestamp : "<undefined>");
+			printf("  the rest: %s\n", $rest);
+
+		}
+		set_execname($pid, $this_line_execname) if (get_execname($pid) eq "");
+		$line = sprintf("%s%s%s",
+			defined($pid) ? $pid . " " : "",
+			defined($timestamp) ? $timestamp . " " : "",
+			$rest);
+	} else { $this_line_execname = ""; }
 
 	if ( ($pid, $timestamp, $op, $args, $ret, $elapsed) = $line =~ $regexes{'op'}) {
 		my $rebuild_line = false;
