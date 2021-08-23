@@ -14,6 +14,11 @@ use constant { true => 1, false => 0 };
 my %config = (
 	'debug' => 0,
 	'show_execnames' => false,
+	'file_positions' => false, # TODO - open(), read(), write(), lseek()
+	'expand_getdents' => false, # like strace_getdents awk script -- not very reversible, though
+	'output_ls' => false, # gather file & directory information from getdents, *stat*, readlink* calls, and output at end as if from 'ls -alR'
+	'proc_stats' => false, # output per-process syscall stats (rather than combined '-c' stats)
+	'delays' => false, # output relative delay between syscall completion and next syscall start, for each pid
 
 	'normalize_pids' => true, # no reason not to, but making it a config option, just in case
 );
@@ -21,6 +26,11 @@ my %config = (
 GetOptions(
 	'debug|verbose|v+' => \$config{'debug'},
 	'execnames|e' => sub { $config{'show_execnames'} = true },
+#	'file_positions|fpos' => sub { $config{'file_positions'} = true }, # TODO
+#	'expand_getdents' => sub { $config{'expand_getdents'} = true }, # TODO
+#	'output_ls' => sub { $config{'output_ls'} = true }, # TODO
+#	'proc_stats' => sub { $config{'proc_stats'} = true }, # TODO
+#	'delays' => sub { $config{'delays'} = true }, # TODO
 );
 
 
