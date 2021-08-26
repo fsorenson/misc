@@ -1,0 +1,780 @@
+#!/usr/bin/perl -w
+
+use warnings;
+use strict;
+
+no warnings 'portable';
+
+my $queued_bytes = '';
+my $queued_len = 0;
+
+my $DEBUG = 0;
+
+sub trim {
+	my $s = shift;
+	$s =~ s/^\s+|\s+$//g;
+	return $s
+}
+
+use constant {
+	SHB => 0x0a0d0d0a,
+	IDB => 0x00000001,
+#	PB => 0x00000002, # obsolete
+	SPB => 0x00000003,
+	NRB => 0x00000004,
+	ISB => 0x00000005,
+	EPB => 0x00000006,
+#	SDJ => 0x00000009,
+#	DSB => 0x0000000a, # also 'ZigBee NWK Key Data', 'ZigBee APS Key Data'
+	CB => 0x00000bad,
+	CB2 => 0x40000bad,
+};
+#   IDB - interface description block
+#   EPB - enhanced packet block
+#   SPB - simple packet block
+#   NRB - name resolution block
+#   ISB - interface statistics block
+#   CB - custom block
+#      - systemd Journal Export Block
+#   DSB - Decryption Secrets Block
+
+
+sub calc_pad_bytes {
+	my $len = shift;
+
+	return (int(($len + 3)/4))*4 - $len;
+}
+sub print_pad_bytes {
+	my $len = shift;
+	for (my $i = 0 ; $i < $len ; $i++) {
+		printf("%c", 0);
+	}
+}
+sub print_u8 {
+	my $val = shift;
+
+	printf("%c", $val & 0xff);
+}
+sub print_u16 {
+	my $val = shift;
+
+	printf("%c%c", $val & 0xff, ($val >> 8) & 0xff);
+}
+sub print_u32 {
+	my $val = shift;
+
+	printf("%c%c%c%c",
+		$val & 0xff, ($val >> 8) & 0xff,
+		($val >> 16) & 0xff, ($val >> 24) & 0xff);
+}
+
+sub output_queued {
+printf STDERR "queued len: %d (%x) - writing %d (%x), count of queued bytes: %d (%x)\n",
+	$queued_len, $queued_len,
+	$queued_len + 12, $queued_len + 12,
+	length($queued_bytes), length($queued_bytes) if ($DEBUG >= 1);
+
+	print_u32($queued_len + 12);
+	for (my $i = 0 ; $i < $queued_len ; $i++) {
+		printf("%c", ord(substr($queued_bytes, $i, 1)) & 0xff);
+	}
+	print_pad_bytes(calc_pad_bytes($queued_len));
+	print_u32($queued_len + 12);
+	$queued_bytes = '';
+	$queued_len = 0;
+}
+
+sub queue_u8 {
+	$queued_bytes .= chr(int($_[0]) & 0xff);
+	$queued_len++;
+	printf STDERR "queued 1 byte\n" if ($DEBUG >= 1);
+}
+sub queue_u16 {
+	my $val = shift;
+
+	$queued_bytes .= sprintf("%c%c", $val & 0xff, ($val >> 8) & 0xff);
+	$queued_len += 2;
+	printf STDERR "queued 2 bytes\n" if ($DEBUG >= 1);
+}
+sub queue_u32 {
+	my $val = shift;
+
+	$queued_bytes .= sprintf("%c%c%c%c",
+		$val & 0xff, ($val >> 8) & 0xff,
+		($val >> 16) & 0xff, ($val >> 24) & 0xff);
+	$queued_len += 4;
+	printf STDERR "queued 4 bytes\n" if ($DEBUG >= 1);
+}
+sub queue_u64 {
+	my $val = shift;
+
+	queue_u32($val & 0xffffffff);
+	queue_u32(($val >> 32) & 0xffffffff);
+	printf STDERR "queued 8 bytes\n" if ($DEBUG > 1);
+}
+sub queue_bytes {
+	my $val = shift;
+	my $len = length($val);
+
+	for (my $i = 0 ; $i < $len ; $i++) {
+		$queued_bytes .= sprintf("%c", ord(substr($val, $i, 1)) & 0xff);
+		$queued_len++;
+	}
+	printf STDERR "queued %d bytes\n", $len if ($DEBUG >= 1);
+}
+sub queue_pad_bytes {
+	my $len = shift;
+	for (my $i = 0 ; $i < $len ; $i++) {
+		$queued_bytes .= sprintf("%c", 0);
+		$queued_len++;
+	}
+	printf STDERR "queued %d pad bytes\n", $len if ($DEBUG >= 1);
+}
+sub queue_end_of_options {
+	queue_u16(0); # opt_endofopt = 0
+	queue_u16(0); # option length = 0
+}
+
+# magic (32 bits)
+sub print_magic { print_u32(SHB); }
+# byte order magic (32 bits)
+# 0x1a2b3c4d by endian
+sub queue_byte_order_magic {
+	$queued_bytes .= sprintf("%c%c%c%c", 0x4d, 0x3c, 0x2b, 0x1a);
+	$queued_len += 4;
+#	printf STDERR "queued 4 bytes byte order magic\n" if ($DEBUG >= 1);
+}
+# major version (16 bits)
+# minor version (16 bits)
+sub queue_version {
+	my $maj = shift;
+	my $min = shift;
+
+	queue_u16($maj);
+	queue_u16($min);
+}
+
+
+
+# SECTION (pcapng file) HEADER BLOCK
+#
+# from https://github.com/pcapng/pcapng/blob/master/reference-draft-tuexen-opsawg-pcapng.xml
+
+#    0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+# 0 |                   Block Type = 0x0A0D0D0A                     |
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+# 4 |                      Block Total Length                       |
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+# 8 |                      Byte-Order Magic                         |
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+#12 |          Major Version        |         Minor Version         |
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+#16 |                                                               |
+#   |                          Section Length                       |
+#   |                                                               |
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+#24 /                                                               /
+#   /                      Options (variable)                       /
+#   /                                                               /
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+#   |                      Block Total Length                       |
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
+# SHB - mandatory; must appear at least once in each file
+# optional blocks:
+#   IDB - interface description block
+#   EPB - enhanced packet block
+#   SPB - simple packet block
+#   NRB - name resolution block
+#   ISB - interface statistics block
+#   CB - custom block
+#      - systemd Journal Export Block
+#   DSB - Decryption Secrets Block
+#
+
+# options
+#	opt_endofopt - code: 0; length: 0
+#	opt_comment - code: 1; length: variable
+#
+# section header block options
+#	2 - shb_hardware  - variable length
+#	3 - shb_os        - variable length
+#	4 - shb_userappl  - variable length
+#
+#
+# interface description block
+#                        1                   2                   3
+#    0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+# 0 |                    Block Type = 0x00000001                    |
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+# 4 |                      Block Total Length                       |
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+# 8 |           LinkType            |           Reserved            |
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+#12 |                            SnapLen                            |
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+#16 /                                                               /
+#   /                      Options (variable)                       /
+#   /                                                               /
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+#   |                      Block Total Length                       |
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+# Interface Description Block options'
+#	3 - if_description (variable)
+#	4 - if_IPv4addr (8 bytes)
+#	5 - if_IPv6addr (17 bytes)
+#	6 - if_MACaddr (8 bytes)
+#	7 - if_EUIaddr (8 bytes)
+#	8 - if_speed (8 bytes)
+#	9 - if_tsresol (1 byte)
+#	10 - if_tzone (4 bytes)
+#	11 - if_filter (variable, minimum 1)
+#	12 - if_os (variable)
+#	13 - if_fcslen (1 byte)
+#	14 - if_tsoffset (8 bytes)
+#	15 - if_hardware (variable)
+#	16 - if_txspeed (8 bytes)
+#	17 - if_rxspeed (8 bytes)
+
+# Enhanced Packet Block
+#                        1                   2                   3
+#    0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+# 0 |                    Block Type = 0x00000006                    |
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+# 4 |                      Block Total Length                       |
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+# 8 |                         Interface ID                          |
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+#12 |                        Timestamp (High)                       |
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+#16 |                        Timestamp (Low)                        |
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+#20 |                    Captured Packet Length                     |
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+#24 |                    Original Packet Length                     |
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+#28 /                                                               /
+#   /                          Packet Data                          /
+#   /              variable length, padded to 32 bits               /
+#   /                                                               /
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+#   /                                                               /
+#   /                      Options (variable)                       /
+#   /                                                               /
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+#   |                      Block Total Length                       |
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
+# Table 4: Enhanced Packet Block Options
+# Name		Code	Length			Multiple allowed?
+# epb_flags	2	4			no
+# epb_hash	3	variable, minimum hash type-dependent	yes
+# epb_dropcount	4	8			no
+# epb_packetid	5	8			no
+# epb_queue	6	4			no
+# epb_verdict	7	variable, minimum verdict type-dependent	yes
+
+
+# Simple Packet Block
+#                        1                   2                   3
+#    0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+# 0 |                    Block Type = 0x00000003                    |
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+# 4 |                      Block Total Length                       |
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+# 8 |                    Original Packet Length                     |
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+#12 /                                                               /
+#   /                          Packet Data                          /
+#   /              variable length, padded to 32 bits               /
+#   /                                                               /
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+#   |                      Block Total Length                       |
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
+# Name Resolution Block
+#                        1                   2                   3
+#    0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+# 0 |                    Block Type = 0x00000004                    |
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+# 4 |                      Block Total Length                       |
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+# 8 |      Record Type              |      Record Value Length      |
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+#12 /                       Record Value                            /
+#   /              variable length, padded to 32 bits               /
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+#   .                                                               .
+#   .                  . . . other records . . .                    .
+#   .                                                               .
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+#   |  Record Type = nrb_record_end |   Record Value Length = 0     |
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+#   /                                                               /
+#   /                      Options (variable)                       /
+#   /                                                               /
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+#   |                      Block Total Length                       |
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
+# Name			Code	Length
+#nrb_record_end		0x0000	0
+#nrb_record_ipv4	0x0001	variable
+#nrb_record_ipv6	0x0002	variable
+
+# Table 7: Name Resolution Block Options
+# Name	Code	Length	Multiple allowed?
+# ns_dnsname	2	variable	no
+# ns_dnsIP4addr	3	4	no
+# ns_dnsIP6addr	4	16	no
+
+sub queue_option_varlen {
+	my $id = shift;
+	my $val = shift;
+	my $len = length($val);
+
+	queue_u16($id); # option num
+	queue_u16($len);
+	queue_bytes($val);
+	queue_pad_bytes(calc_pad_bytes($len));
+}
+
+sub queue_option {
+	my $name = shift;
+	my $val = shift;
+
+	if ($name eq "opt_comment") { queue_option_varlen(1, $val);
+	##### Section Header Block options
+	} elsif ($name eq "shb_hardware") { queue_option_varlen(2, $val)
+	} elsif ($name eq "shb_os") { queue_option_varlen(3, $val);
+	} elsif ($name eq "shb_userappl") { queue_option_varlen(4, $val);
+
+	} elsif ($name eq "if_name") { queue_option_varlen(2, $val);
+	} elsif ($name eq "if_tsresol") {
+		queue_u16(9); # option #
+		queue_u16(1); # length
+		queue_u8($val);
+		queue_pad_bytes(3);
+	} elsif ($name eq "if_filter") { queue_option_varlen(11, $val);
+	} elsif ($name eq "if_os") { queue_option_varlen(12, $val);
+
+	}
+}
+
+
+print_magic();
+
+queue_byte_order_magic();
+queue_version(1, 0);
+queue_u64(0xffffffffffffffff); # section length - use -1 for 'figure it out'
+
+# block total length (32 bits) -- same as above
+
+# OS option
+queue_option('opt_comment', "strace-to-pcap");
+#queue_option("opt_comment", "Generated from input file Standard input.");
+#queue_option("shb_userappl", "Text2pcap (Wireshark) 3.4.7 (Git commit e42cbf6a415f)");
+
+#queue_option(3, "Linux 3.10.0-1160.11.1.el7.x86_64");
+#queue_option(4, "Dumpcap 1.10.14 (Git Rev Unknown from unknown)");
+queue_end_of_options();
+output_queued();
+
+
+
+#########################################
+
+
+# block type (32 bits)
+# block total length (32 bits)
+# linktype (16 bits)
+# reserved (16 bits) -- must be 0
+# snaplen (32 bits) -- 0 means no limit
+
+# build an idb
+	print_u32(1); # block type IDB
+	queue_u16(1); # linktype - ethernet - https://www.ietf.org/id/draft-tuexen-opsawg-pcapng-03.html#LINKTYPES
+	queue_u16(0); # reserved - must be 0
+	queue_u32(256*1024); # snaplen - 0 = no limit
+
+#	queue_option("if_name", "lo");
+
+# tsresol
+	queue_option("if_tsresol", 9);
+
+
+#00000080  29 00 00 00 00 00 00 00  8c 00 00 00 01 00 00 00  |)...............|
+
+#queue_option(11, "\0tcp port 2049 or udp port 514"); # prefixed by an octet designating the type of filter
+#queue_option(12, "Linux 3.10.0-1160.11.1.el7.x86_64");
+
+queue_end_of_options();
+output_queued();
+
+
+
+
+# header is complete...  now start creating syslog frames containing strace lines
+
+
+sub htons {
+	return (($_[0] >> 8) & 0xff) + (($_[0] << 8) & 0xff00);
+}
+sub ntohs { return htons($_[0]); }
+
+sub u16_endian { (($_[0] >> 8) & 0xff) + (($_[0] & 0xff) << 8); }
+sub u32_endian {
+	(($_[0] >> 24) & 0x000000ff) + (($_[0] >> 8) & 0x0000ff00) +
+	(($_[0] << 8) & 0x00ff0000) + (($_[0] <<24) & 0xff000000); }
+
+sub ts_to_sec {
+	my $ts = shift;
+
+	my $h = substr($ts, 0, 2) + 0;
+	my $m = substr($ts, 3, 2) + 0;
+	my $s = substr($ts, 6) + 0;
+
+	return (($h*60)+$m)*60 + $s;
+}
+sub sec_to_ts {
+	my $s = shift;
+	my $us = int(($s * 1000000) % 1000000);
+	$s = int($s);
+	my $m = int($s / 60);
+	$s -= (60 * $m);
+	my $h = int($m / 60);
+	$m -= (60 * $h);
+
+	return sprintf("%02d:%02d:%02d.%06d", $h, $m, $s, $us);
+}
+my $ip_chksum = 0;
+sub ip_chksum_init { $ip_chksum = 0; }
+sub ip_chksum_add {
+	$ip_chksum += $_[0];
+
+	$ip_chksum = (($ip_chksum & 0xffff) + (($ip_chksum >> 16) & 0xffff)) & 0xffff;
+
+#	$ip_chksum = $ip_chksum & 0xffff;
+
+#	if ($ip_chksum > 0xffff) {
+#		$ip_chksum = ($ip_chksum & 0xffff) + (($ip_chksum >> 16) & 0xffff);
+#	}
+}
+sub ip_chksum_get { $ip_chksum ^ 0xffff; }
+
+
+my $udp_chksum;
+sub udp_chksum_init { $udp_chksum = 0; }
+sub udp_chksum_add {
+
+
+if (1) {
+	my $newval = $udp_chksum + $_[0];
+printf STDERR "udp_chksum_add:  current sum:  0x%04x\n", $udp_chksum;
+printf STDERR "udp_chksum_add:  adding        0x%04x\n", $_[0];
+printf STDERR "udp_chksum_add:  new sum:      0x%04x\n", $newval;
+if ($newval > 0xffff) {
+	$newval = ($newval & 0xffff) + (($newval >> 16) & 0xffff);
+	printf STDERR "udp_chksum_add:  fix carryover 0x%04x\n", $newval;
+}
+}
+
+
+	$udp_chksum += $_[0];
+	$udp_chksum = (($udp_chksum & 0xffff) + (($udp_chksum >> 16) & 0xffff)) & 0xffff;
+}
+sub udp_chksum_get { $udp_chksum ^ 0xffff; }
+
+sub calc_udp_checksum {
+	my $msg = shift;
+	my ($tot, $word, $tmp);
+	while ($word = substr($msg, 0, 2)) {
+		substr($msg, 0, 2) = '';
+		$tot += unpack('n', $word);
+	}
+	my $back = pack('n', $tot % 65535);
+	return (~$back);
+}
+sub output_udp {
+	my $src_ip = shift;
+	my $dst_ip = shift;
+	my $src_port = shift;
+	my $dst_port = shift;
+	my $data = shift;
+
+	my $len = length($data);
+	my $pad_bytes = calc_pad_bytes($len);
+
+if (0) { # checksum code
+	udp_chksum_init();
+
+	my $pseudo_udp = pack('A4
+                               A4
+		C C  n
+		n    n
+		n    n
+		',
+		$src_ip,
+		$dst_ip,
+		0, 17, $len + 8,
+		$src_port, $dst_port,
+		$len + 8, 0);
+	$pseudo_udp .= $data;
+
+	length($data) % 2 and $pseudo_udp .= chr(0);
+
+	printf STDERR "pseudo_udp contents:\n";
+	for (my $i = 0 ; $i < length($pseudo_udp) ; $i++) {
+		my $ch = ord(substr($pseudo_udp, $i, 1));
+		printf STDERR "%02x (%c)  ", $ch, $ch;
+	}
+	printf STDERR "\n";
+
+
+	udp_chksum_init();
+	my $pseudo_udp2 = "";
+	$pseudo_udp2 .= chr(0x7f) . chr(0) . chr(0) . chr(1);
+	$pseudo_udp2 .= chr(0x7f) . chr(0) . chr(0) . chr(1);
+	$pseudo_udp2 .= chr(0) . chr(17) . chr(($len + 8) >> 8) . chr(($len + 8) & 0xff);
+	$pseudo_udp2 .= chr((htons($src_port) >> 8) & 0xff) . chr(htons($src_port) & 0xff);
+	$pseudo_udp2 .= chr((htons($dst_port) >> 8) & 0xff) . chr(htons($dst_port) & 0xff);
+	$pseudo_udp2 .= chr(($len + 8) >> 8) . chr(($len + 8) & 0xff);
+	$pseudo_udp2 .= chr(0) . chr(0); # 0xf9 0xf9
+	$pseudo_udp2 .= $data;
+	$pseudo_udp2 .= chr(0) if ($len % 2);
+
+	printf STDERR "pseudo_udp contents take 2:\n";
+	for (my $i = 0 ; $i < length($pseudo_udp2) ; $i++) {
+		my $ch = ord(substr($pseudo_udp2, $i, 1));
+		printf STDERR "%02x (%c)  ", $ch, $ch;
+	}
+	printf STDERR "\n";
+
+	for (my $i = 0 ; $i < length($pseudo_udp2) ; $i += 2) {
+		udp_chksum_add(
+				(ord(substr($pseudo_udp2, $i, 1)) << 8) +
+				(ord(substr($pseudo_udp2, $i + 1, 1)) & 0xff));
+	}
+	printf STDERR "test checksum: 0x%04x\n", udp_chksum_get();
+
+	udp_chksum_init();
+
+#	printf("udp checksum: 0x%04x\n", calc_udp_checksum($pseudo_udp));
+	my $r = calc_udp_checksum($pseudo_udp);
+	printf STDERR "udp checksum: %s\n", $r;
+
+	udp_chksum_add(($src_ip >> 0x16) & 0xffff);
+	udp_chksum_add($src_ip & 0xffff);
+
+	udp_chksum_add(($dst_ip >> 0x16) & 0xffff);
+	udp_chksum_add($dst_ip & 0xffff);
+
+	udp_chksum_add(0x00 << 8 + 17);
+#	udp_chksum_add(htons((0x00 << 8) + 17));
+
+#	udp_chksum_add(u16_endian($len + 8));
+	udp_chksum_add($len + 8);
+}
+
+	print_u16(u16_endian($src_port));
+
+	print_u16(u16_endian($dst_port));
+
+	if ($len % 2) {
+		$data .= sprintf("%c", 0);
+	}
+
+	print_u16(u16_endian($len + 8));
+#	print_u16(u16_endian(udp_chksum_get()));
+	print_u16(0);
+
+	for (my $i = 0 ; $i < $len ; $i++) {
+		print_u8(ord(substr($data, $i, 1)));
+	}
+	print_pad_bytes($len % 4);
+}
+
+sub output_ipv4 {
+#	output_ipv4(0x7f000001, 0x7f000001, $len);
+	my $src_ip = shift;
+	my $dst_ip = shift;
+	my $len = shift;
+
+	# ip version (4 bits)
+	# ip header len (4 bits): 20 bytes
+	ip_chksum_init();
+	print_u8(0x45); # 0x40 (ipv4) | header: 20 bytes/4 (4-byte words)
+	print_u8(0); # ecn
+	ip_chksum_add(0x4500);
+
+	#total length
+	print_u16(u16_endian(0x1c + $len));
+	ip_chksum_add(0x1c+$len);
+
+	# id
+	print_u16(u16_endian(0x1234));
+	ip_chksum_add(0x1234);
+
+	print_u16(0) ; # 3 bits of flags + 13 bits of fragment offset
+	ip_chksum_add(0);
+
+	print_u8(0xff); # ttl = 255
+	print_u8(17); # UDP
+	ip_chksum_add(0xff11);
+
+#	ip_chksum_add(0x7f00);
+#	ip_chksum_add(0x0001);
+#	ip_chksum_add(0x7f00);
+#	ip_chksum_add(0x0001);
+	ip_chksum_add(($src_ip >> 16) & 0xffff);
+	ip_chksum_add($src_ip & 0xffff);
+	ip_chksum_add(($dst_ip >> 16) & 0xffff);
+	ip_chksum_add($dst_ip & 0xffff);
+
+#	printf STDERR "ip checksum is 0x%04x\n", ip_chksum_get();
+	print_u16(u16_endian(ip_chksum_get()));
+#	print_u32(u32_endian(0x7f000001));
+#	print_u32(u32_endian(0x7f000001));
+	print_u32(u32_endian($src_ip));
+	print_u32(u32_endian($dst_ip));
+}
+
+
+sub output_frame {
+	my $ts = shift;
+	my $ts_subsec = shift;
+	my $val = shift;
+	my $len = length($val);
+
+	# frame
+	$ts *= 1000000000;
+	$ts += $ts_subsec;
+
+	print_u32(EPB);
+	# block length?
+	print_u32(60 + 20 + 6 + $len + calc_pad_bytes(0x2a + $len));
+	print_u32(0); # interface id
+
+	print_u32($ts >> 32); # tstamp high
+	print_u32($ts & 0xffffffff); # tstamp low
+
+	print_u32( 0x2a + $len); # captured len
+	print_u32( 0x2a + $len); # frame length
+	printf("%c%c%c%c%c%c", 0x0a, 0x02, 0x02, 0x02, 0x02, 0x01); # dst eth
+	printf("%c%c%c%c%c%c", 0x0a, 0x02, 0x02, 0x02, 0x02, 0x02); # src eth
+	print_u16(u16_endian(0x0800)); # ethernet type: ipv4
+
+	# ip section
+	output_ipv4(0x7f000001, 0x7f000001, $len);
+
+	# udp
+	# src_ip dest_ip src_port dst_port udp_bytes
+	output_udp(0x7f000001, 0x7f000001, 30000, 514, $val);
+
+	# finish up the EPB
+
+#	print_u32(0x00000006); # epb_queue
+	print_u16(0x0002); # flags
+	print_u8(0x04); # length of flags
+
+
+	# flags
+	print_u8(0x00);
+	print_u8(0x02);
+	print_u8(0x00);
+	print_u8(0x00);
+	print_u8(0x00); # pad this option
+
+	print_u32(0); # end of options
+
+        print_u32(60 + 20 + 6 + $len + calc_pad_bytes(0x2a + $len)); # EPB length again
+}
+
+die("must give strace filename") if (!defined($ARGV[0]));
+
+open(my $strace, '<', $ARGV[0]) or die("could not open file: $!");
+
+#1674404 1629750610.503553 arch_prctl(0x3001 /* ARCH_??? */, 0x7ffe793a9e90) = -1 EINVAL (Invalid argument) <0.000015>
+
+#my $re = qr/^([0-9]+) ((?|(?:(?:2[0-3]|[0-1][0-9]):[0-5][0-9]:(?:60|[0-5][0-9]))|(?:1[0-9]{9}))\.(?:(?:[0-9]{3}){1,3})) ([^\(]+)\((.+)\) = ([0-9].*) <([0-9]+\.[0-9]+)>$/;
+#my $re = qr/^([0-9]+) ([^ ]+) ([^\(]+)\((.+)\) = ([0-9].*) <([0-9]+\.[0-9]+)>$/;
+#my $re = qr/^([0-9]+) ([^\.]+)\.([0-9]+) ([^\(]+)\((.+)\) = ([0-9].*) <([0-9]+\.[0-9]+)>$/;
+my $re = qr/^([0-9]+) ([^\.]+)\.([0-9]+) ([^\(]+)\((.+)\) = ([0-9].*) <([0-9]+)\.([0-9]+)>$/;
+
+
+my $rw_re = qr/^([0-9]+[^,]*), "([^"]+)"(.+)/;
+
+
+my $reader_pid = 0;
+my $writer_pid = 0;
+
+while (<$strace>) {
+	my $line = $_;
+	my $rw = "";
+
+	$line = trim($line);
+
+	if (my ($pid, $ts, $ts_subsec, $op, $args, $ret, $elapsed, $elapsed_subsec) = $line =~ $re) {
+
+		if ($reader_pid == 0) {
+			$reader_pid = $pid;
+			$rw = "reader";
+		} elsif ($reader_pid == $pid) {
+			$rw = "reader";
+		} elsif ($writer_pid == 0) {
+			$writer_pid = $pid;
+			$rw = "writer";
+		} elsif ($writer_pid = $pid) {
+			$rw = "writer";
+		} else {
+			next;
+		}
+		printf STDERR "packet is from %s\n", $rw if ($DEBUG >= 1);
+		if ($op eq "open" || $op eq "openat" || $op eq "close") {
+		} elsif ($op eq "pread64" || $op eq "pwrite64") {
+			if (my ($fh_info, $buf, $rem) = $args =~ $rw_re) {
+				printf("buf: %s\n", $buf);
+
+				$buf = '"' . substr($buf, 0, 10) . '"';
+				$args = $fh_info . ", " . $buf . $rem;
+#				$line = sprintf("%d (%s) %s(%s)%s %s",
+#					$pid, $rw, $op, $args, $ret, $elapsed);
+			}
+		} else {
+			next;
+		}
+
+		$ts_subsec *= 10**(9 - length($ts_subsec)); # make it ns
+		my $elapsed_string = sprintf("%s.%s", $elapsed, $elapsed_subsec);
+
+		if (index($ts, ':') >= 0) {
+			$ts = ts_to_sec($ts);
+			$ts += 1629435600; # 2021-08-20
+		} else {
+		}
+
+		$elapsed_subsec *= 10**(9 - length($elapsed_subsec));
+
+		my $end_ts = $ts + $elapsed;
+		my $end_ts_subsec = $ts_subsec + $elapsed_subsec;
+		if ($end_ts_subsec >= 1000000000) {
+			$end_ts_subsec -= 1000000000;
+			$end_ts++;
+		}
+
+		my $output_string = sprintf("%s(%s) = %s <%s>", $op, $args, $ret, $elapsed_string);
+
+		output_frame($ts, $ts_subsec,
+			(length($rw) > 0 ? $rw . " call:  " : "call:  ") . $output_string);
+		output_frame($end_ts, $end_ts_subsec,
+			(length($rw) > 0 ? $rw . " return:  " : "return:  ") . $output_string);
+	} else {
+		printf("did not match: %s\n", $line);
+	}
+}
+close($strace);
