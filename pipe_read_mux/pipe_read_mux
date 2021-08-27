@@ -1,0 +1,58 @@
+#!/usr/bin/perl -w
+
+use warnings;
+use strict;
+
+use IO::Select;
+use constant { true => 1, false => 0 };
+
+
+#open my $fifo1, "fifo1" or die $!;
+#open my $fifo2, "fifo2" or die $!;
+
+open my $fifo1, '+<', "fifo1" or die $!;
+open my $fifo2, '+<', "fifo2" or die $!;
+
+
+my $select = IO::Select->new();
+$select->add($fifo1, $fifo2);
+
+my %fifos = ( 1 => $fifo1, 2 => $fifo2 );
+my %eofs = ( 1 => false, 2 => false );
+my $eof1 = false;
+my $eof2 = false;
+
+my $timeout = 1;
+
+my $line;
+
+STDOUT->autoflush(1);
+
+sub trim {
+	my $s = shift;
+	$s =~ s/^\s+|\s+$//g;
+	return $s
+}
+
+
+
+my $nopen = 2;
+#while (!$eof1 && !$eof2) {
+while ($nopen > 0) {
+	printf(".");
+	if (my @readables = $select->can_read($timeout)) {
+		foreach my $in (@readables) {
+			my $filenum = ($in == $fifo1) ? 1 : 2;
+			printf("trying to read from fifo%d\n", $filenum);
+			if ($in->eof()) {
+				$select->remove($in);
+				$nopen--;
+			} else {
+				my $line = (<$in>);
+				$line = trim($line);
+				printf("fifo%d got line: %s\n", $filenum, $line);
+			}
+		}
+	}
+}
+
