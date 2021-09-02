@@ -1,0 +1,340 @@
+
+
+
+
+
+
+
+
+
+###############################################################################
+
+kernel code defining LOOKUP-related function/structures, etc.
+
+fs/nfs/nfs3xdr.c
+#define PROC(proc, argtype, restype, timer)                             \
+[NFS3PROC_##proc] = {                                                   \
+	.p_proc      = NFS3PROC_##proc,                                 \
+	.p_encode    = (kxdreproc_t)nfs3_xdr_enc_##argtype##3args,      \
+	.p_decode    = (kxdrdproc_t)nfs3_xdr_dec_##restype##3res,       \
+	.p_arglen    = NFS3_##argtype##args_sz,                         \
+	.p_replen    = NFS3_##restype##res_sz,                          \
+	.p_timer     = timer,                                           \
+	.p_statidx   = NFS3PROC_##proc,                                 \
+	.p_name      = #proc,                                           \
+	}
+
+struct rpc_procinfo     nfs3_procedures[] = {
+	PROC(GETATTR,           getattr,        getattr,        1),
+	PROC(SETATTR,           setattr,        setattr,        0),
+	PROC(LOOKUP,            lookup,         lookup,         2),
+
+>>> becomes
+[NFS3PROC_LOOKUP] = {                                                   \
+	.p_proc      = NFS3PROC_LOOKUP,                                 \
+	.p_encode    = (kxdreproc_t)nfs3_xdr_enc_lookup3args,      \
+	.p_decode    = (kxdrdproc_t)nfs3_xdr_dec_lookup3res,       \
+	.p_arglen    = NFS3_lookupargs_sz,                         \
+	.p_replen    = NFS3_lookupres_sz,                          \
+	.p_timer     = 2,                                           \
+	.p_statidx   = NFS3PROC_LOOKUP,                                 \
+	.p_name      = LOOKUP,                                           \
+	}
+
+which refers to these:
+
+#define NFS3_lookupargs_sz      (NFS3_fh_sz+NFS3_filename_sz)
+#define NFS3_lookupres_sz       (1+NFS3_fh_sz+(2 * NFS3_post_op_attr_sz))
+
+
+include/uapi/linux/nfs3.h:#define NFS3PROC_LOOKUP               3
+
+
+/*
+ * 3.3.3  LOOKUP3args
+ *
+ *      struct LOOKUP3args {
+ *              diropargs3  what;
+ *      };
+ */
+static void nfs3_xdr_enc_lookup3args(struct rpc_rqst *req,
+                                     struct xdr_stream *xdr,
+                                     const struct nfs3_diropargs *args)
+{
+	encode_diropargs3(xdr, args->fh, args->name, args->len);
+}
+
+
+/*
+ * 3.3.3  LOOKUP3res
+ *
+ *      struct LOOKUP3resok {
+ *              nfs_fh3         object;
+ *              post_op_attr    obj_attributes;
+ *              post_op_attr    dir_attributes;
+ *      };
+ *
+ *      struct LOOKUP3resfail {
+ *              post_op_attr    dir_attributes;
+ *      };
+ *
+ *      union LOOKUP3res switch (nfsstat3 status) {
+ *      case NFS3_OK:
+ *              LOOKUP3resok    resok;
+ *      default:
+ *              LOOKUP3resfail  resfail;
+ *      };
+ */
+static int nfs3_xdr_dec_lookup3res(struct rpc_rqst *req,
+                                   struct xdr_stream *xdr,
+                                   struct nfs3_diropres *result)
+{
+...
+
+
+##########################################################################
+
+LOOKUP call and reply sizes
+
+include/uapi/linux/limits.h
+#define NAME_MAX         255    /* # chars in a file name */
+
+include/uapi/linux/nfs3.h:
+#define NFS3_MAXNAMLEN          NAME_MAX
+
+fs/nfs/nfs3xdr.c
+#define NFS3_fhandle_sz         (1+16)
+
+#define NFS3_filename_sz (1+(NFS3_MAXNAMLEN>>2))
+#define NFS3_fh_sz  (NFS3_fhandle_sz) /* shorthand */
+
+#define NFS3_fattr_sz           (21)
+#define NFS3_post_op_attr_sz    (1+NFS3_fattr_sz)
+
+#define NFS3_lookupargs_sz      (NFS3_fh_sz+NFS3_filename_sz)
+#define NFS3_lookupres_sz       (1+NFS3_fh_sz+(2 * NFS3_post_op_attr_sz))
+
+
+I saved all the defines above to a .c file, and ran the C preprocessor to expand them:
+####
+
+
+$ cat test_defines.c
+# 1 "test_defines.c"
+# 1 "<built-in>"
+# 1 "<command-line>"
+# 31 "<command-line>"
+# 1 "/usr/include/stdc-predef.h" 1 3 4
+# 32 "<command-line>" 2
+# 1 "test_defines.c"
+# 14 "test_defines.c"
+NAME MAX - 255
+NFS3 MAXNAMLEN - 255
+filename_sz - (1+(255>>2))
+fhandle_sz - (1+16)
+fh_sz - ((1+16))
+fattr_sz - (21)
+post_op_attr_sz - (1+(21))
+lookpargs_sz - (((1+16))+(1+(255>>2)))
+lookupres_sz - (1+((1+16))+(2 * (1+(21))))
+
+
+
+(this is not valid C code, and won't compile as-is... we're just doing this to see how macro expansion works.  The next section shows compiling and using the macros)
+
+
+####
+wrapping it all as a C program (with some #define macro tricks), compiling and running:
+
+$ cat test_defines.c
+#include <stdio.h>
+
+#define NAME_MAX         255    /* # chars in a file name */
+#define NFS3_MAXNAMLEN          NAME_MAX
+
+#define NFS3_fhandle_sz         (1+16)
+#define NFS3_filename_sz (1+(NFS3_MAXNAMLEN>>2))
+#define NFS3_fh_sz  (NFS3_fhandle_sz) /* shorthand */
+
+#define NFS3_fattr_sz           (21)
+#define NFS3_post_op_attr_sz    (1+NFS3_fattr_sz)
+
+#define NFS3_lookupargs_sz      (NFS3_fh_sz+NFS3_filename_sz)
+#define NFS3_lookupres_sz       (1+NFS3_fh_sz+(2 * NFS3_post_op_attr_sz))
+
+#define XSTR(s) STR(s)
+#define STR(s) #s
+
+#define output_macro(m) do { \
+        printf("%s: \"%s\" = %d\n", \
+                #m, XSTR(m), m); \
+} while (0)
+
+int main(int argc, char *argv[]) {
+        output_macro(NAME_MAX);
+        output_macro(NFS3_MAXNAMLEN);
+        output_macro(NFS3_fhandle_sz);
+        output_macro(NFS3_filename_sz);
+        output_macro(NFS3_fh_sz);
+        output_macro(NFS3_fattr_sz);
+        output_macro(NFS3_post_op_attr_sz);
+        output_macro(NFS3_lookupargs_sz);
+        output_macro(NFS3_lookupres_sz);
+
+        return 0;
+}
+
+$ gcc test_defines.c -o test_defines
+
+$ ./test_defines
+NAME_MAX: "255" = 255
+NFS3_MAXNAMLEN: "255" = 255
+NFS3_fhandle_sz: "(1+16)" = 17
+NFS3_filename_sz: "(1+(255>>2))" = 64
+NFS3_fh_sz: "((1+16))" = 17
+NFS3_fattr_sz: "(21)" = 21
+NFS3_post_op_attr_sz: "(1+(21))" = 22
+NFS3_lookupargs_sz: "(((1+16))+(1+(255>>2)))" = 81
+NFS3_lookupres_sz: "(1+((1+16))+(2 * (1+(21))))" = 62
+
+
+#################################################################
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# mount vm6:/exports /mnt/vm6 -overs=3,sec=sys
+# ls -al /mnt/vm6/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+
+(filename is 255 bytes long)
+
+
+the packet capture looks like this:
+
+as part of the nfs v3 mount process, we got the filehandle of the mount, which is the base directory under which everything else starts.  In my case, the filehandle of '/exports' is 0x62d40c52
+
+I created a 255-byte filename (all 'A') so we could look at the LOOKUP call and reply:
+
+$ tshark -z proto,colinfo,rpc.fraglen,rpc.fraglen -z proto,colinfo,nfs.fh.length,nfs.fh.length -n -r trace.pcap 'frame.number in {62..63}'
+   62 7.319087496 192.168.122.60 → 192.168.122.61 NFS 430 V3 LOOKUP Call, DH: 0x62d40c52/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA  nfs.fh.length == 8  rpc.fraglen == 360
+   63 7.319572096 192.168.122.61 → 192.168.122.60 NFS 298 V3 LOOKUP Reply (Call In 62), FH: 0x0d2a0253  nfs.fh.length == 20  rpc.fraglen == 228
+
+
+so the filehandle of 'AAAAA...' is 0x0d2a0253
+
+
+I added in the size of the rpc fragment and the size of a filehandle, so we can see how the sizes compare to the allocated memory
+
+
+maximum call size:  81 words (324 bytes)
+maximum reply size: 62 words (248 bytes)
+
+
+
+The call size from the packet capture also includes the RPC header, which is 92 bytes (in this case), but does not include the 4 bytes describing the size itself, so the size of the nfs portion of the call is 272 bytes (360 - 92 + 4).
+
+The nfs filehandle length for the the base directory of the export is 8 bytes (the nfs.fh.length), instead of the full 64 bytes.
+
+
+The NFS LOOKUP call arguments are (from the RFC, page 37):
+
+3.3.3 Procedure 3: LOOKUP -  Lookup filename
+
+   SYNOPSIS
+
+      LOOKUP3res NFSPROC3_LOOKUP(LOOKUP3args) = 3;
+
+      struct LOOKUP3args {
+           diropargs3  what;
+      };
+
+diropargs3 is on pae 27:
+
+      struct diropargs3 {
+         nfs_fh3     dir;
+         filename3   name;
+      };
+
+nfs_fh3 is on page 21:
+
+	struct nfs_fh3 {
+		opaque       data<NFS3_FHSIZE>;
+
+filename3 is on page 15:
+	filename3
+		typedef string filename3<>;
+
+
+Fixed sizes are indicated in [], and variable sizes are with angle brackets: <>
+If there's something inside the angle brackets, that's the maximum size, so 'data<NFS3_FHSIZE>' means it's variable number of bytes, with a maximum of NFS3_FHSIZE
+
+so in this case, the args are (272 bytes):
+272 bytes - lookup3args:
+ 12 bytes
+   4 bytes - nfs filehandle length = 8
+    8 bytes - nfs filehandle
+ 260 bytes -
+   4 bytes - name length = 255
+   255 bytes - name = AAAAAAA...
+   1 byte - fill byte to make the number of bytes divisible by 4
+
+since the filehandle size was only 8 bytes, the call size is 56 bytes smaller (64-8) than what we reserved.  If the filehandle was the full 64 bytes, the call would have been:
+
+   272 bytes + 56 = 328 bytes
+
+(which is strangely 4 bytes smaller than what we allocated...  perhaps another bug?  I'm looking... I think the calculation for the size of a filename might be wrong!)
+
+
+
+the nfs reply looks like this:
+
+	union LOOKUP3res switch (nfsstat3 status) {
+		case NFS3_OK:
+			LOOKUP3resok    resok;
+		default:
+			LOOKUP3resfail  resfail;
+	};
+
+this means there's a 4-byte status flag ('nfsstat3 status'), followed by a structure for success or failure
+
+	struct LOOKUP3resok {
+		nfs_fh3      object;
+		post_op_attr obj_attributes;
+		post_op_attr dir_attributes;
+     };
+
+      struct LOOKUP3resfail {
+           post_op_attr dir_attributes;
+      };
+
+earlier, we found the maximum response size was 62 words, or 248 bytes
+
+
+The size of an RPC header for a reply is only 28 bytes (only 24 bytes included in the size).
+
+The size of the RPC fragment (from the pcap) was 228 bytes, and the nfs filehandle length was 20 bytes.
+
+Subtracting the 24 bytes of the RPC header, and adding the unused bytes of the filehandle (64-20):
+
+$ echo $(( 228 - 24 + (64-20) ))
+248
+
+
+
+
