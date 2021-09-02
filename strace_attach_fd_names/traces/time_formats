@@ -1,0 +1,74 @@
+# various prefixes for '-f' '-t*' and '-r' arguments
+
+# 'strace -t' -- timestamp with seconds
+14:20:14 execve("/timestamp_with_seconds", ["find", "-exec", "ls", "-lind", "{}", ";"], 0x7fff8a3e6290 /* 91 vars */) = 0
+
+# 'strace -tt' or 'strace -f -tt' before seeing other pids -- timestamp with microseconds
+14:20:26.534495 execve("/timestamp_with_microseconds", ["find", "-exec", "ls", "-lind", "{}", ";"], 0x7ffc88c8f5a0 /* 91 vars */) = 0
+14:20:26.538707 brk(NULL)               = 0x563bb864e000
+14:20:26.538840 arch_prctl(0x3001 /* ARCH_??? */, 0x7ffeefdb90e0) = -1 EINVAL (Invalid argument)
+
+# 'strace -f -tt' -- alternate pid, timestamp with microseconds
+[pid 4120863] 14:23:52.016152 read(3, "", 4096) = 0
+[pid 4120863] 14:23:52.016224 close(3)  = 0
+[pid 4120863] 14:23:52.016336 openat(AT_FDCWD, "/alternate_pid/timestamp_with_microseconds", O_RDONLY) = -1 ENOENT (No such file or directory)
+
+# 'strace -ttt' or 'strace -f -ttt' before seeing other pids -- epoch_time timestamp with microseconds
+1628968554.808565 execve("/epoch_time_timestamp_with_microseconds", ["find", "-exec", "ls", "-lind", "{}", ";"], 0x7ffdd8c6dc70 /* 91 vars */) = 0
+1628968554.812065 brk(NULL)             = 0x55fd21615000
+1628968554.812297 arch_prctl(0x3001 /* ARCH_??? */, 0x7ffc558797b0) = -1 EINVAL (Invalid argument)
+# *** compare with '-r' below--the time is very large in comparison
+#   i.e.     0.000106 arch_prctl(0x3001 /* ARCH_??? */, 0x7ffcf7e6b620) = -1 EINVAL (Invalid argument)
+
+
+# 'strace -f -ttt' -- alternate pid, epoch_time timestamp with microseconds
+[pid 4119921] 1628968560.410797 read(3, "", 4096) = 0
+[pid 4119921] 1628968560.410840 close(3) = 0
+[pid 4119921] 1628968560.410898 openat(AT_FDCWD, "/alternate_pid/epoch_time_timestamp_with_microseconds", O_RDONLY) = -1 ENOENT (No such file or directory)
+# compare with '-f -r' below--the time is very large in comparison
+#   i.e. [pid 4116430]      0.000143 fchdir(3)   = 0
+
+
+# with relative time
+# 'strace -r' or 'strace -f -r' before any other pids are seen -- relative time
+    0.000000 execve("/relative_time", ["find", "-exec", "ls", "-lind", "{}", ";"], 0x7ffd94252e00 /* 91 vars */) = 0
+    0.002258 brk(NULL)                 = 0x559f16f73000
+    0.000106 arch_prctl(0x3001 /* ARCH_??? */, 0x7ffcf7e6b620) = -1 EINVAL (Invalid argument)
+# *** compare with '-ttt' above--the time is very small in comparison
+
+# 'strace -t -r' or 'strace -f -t -r' before other pids seen -- timestamp with seconds, relative time
+14:26:05 (+     0.000000) execve("/timestamp_with_seconds/relative_time", ["find", "-exec", "ls", "-lind", "{}", ";"], 0x7ffe8646c540 /* 91 vars */) = 0
+14:26:05 (+     0.002050) brk(NULL)     = 0x56372a308000
+14:26:05 (+     0.000189) arch_prctl(0x3001 /* ARCH_??? */, 0x7ffc3e602840) = -1 EINVAL (Invalid argument)
+
+# 'strace -f -t -r' -- alternate pid, timestamp with seconds, relative time
+[pid 4121485] 14:27:33 (+     0.000100) read(3, "", 4096) = 0
+[pid 4121485] 14:27:33 (+     0.000066) close(3) = 0
+[pid 4121485] 14:27:33 (+     0.000093) openat(AT_FDCWD, "/alternate_pid/timestamp_with_seconds/relative_time", O_RDONLY) = -1 ENOENT (No such file or directory)
+
+# 'strace -tt -r' or 'strace -f -tt -r' before seeing other pids -- timestamp with microseconds, relative time
+14:28:51.537819 (+     0.000000) execve("/timestamp_with_microseconds/relative_time", ["find", "-exec", "ls", "-lind", "{}", ";"], 0x7ffcaa714378 /* 91 vars */) = 0
+14:28:51.541680 (+     0.003364) brk(NULL) = 0x55801d13d000
+14:28:51.541758 (+     0.000076) arch_prctl(0x3001 /* ARCH_??? */, 0x7ffdffb929d0) = -1 EINVAL (Invalid argument)
+
+# 'strace -f -tt -r' -- alternate pid, timestamp with microseconds, relative time
+[pid 4121876] 14:30:03.015841 (+     0.000141) read(3, "", 4096) = 0
+[pid 4121876] 14:30:03.015943 (+     0.000100) close(3) = 0
+[pid 4121876] 14:30:03.016096 (+     0.000153) openat(AT_FDCWD, "/alternate_pid/timestamp_with_microseconds/relative_time", O_RDONLY) = -1 ENOENT (No such file or directory)
+
+# 'strace -ttt -r' or 'strace -f -ttt -r' before seeing other pids -- epoch timestamp with microseconds, relative time
+1628969468.717642 (+     0.000000) execve("/epoch_timestamp_with_microseconds/relative_time", ["find", "-exec", "ls", "-lind", "{}", ";"], 0x7ffedb8d4bc8 /* 91 vars */) = 0
+1628969468.720367 (+     0.002346) brk(NULL) = 0x55bdf5f49000
+1628969468.720494 (+     0.000124) arch_prctl(0x3001 /* ARCH_??? */, 0x7ffcd100fb50) = -1 EINVAL (Invalid argument)
+
+# 'strace -f -ttt -r' -- alternate pid, epoch timestamp with microseconds, relative time
+[pid 4122385] 1628969555.594034 (+     0.000103) read(3, "", 4096) = 0
+[pid 4122385] 1628969555.594102 (+     0.000068) close(3) = 0
+[pid 4122385] 1628969555.594213 (+     0.000110) openat(AT_FDCWD, "/alternate_pid/epoch_timestamp_with_microseconds/relative_time", O_RDONLY) = -1 ENOENT (No such file or directory)
+
+# 'strace -f -r' -- alternate pid, relative_time
+[pid 4116429]      0.000370 wait4(4116430,  <unfinished ...>
+[pid 4116430]      1.594213 openat(AT_FDCWD, "/alternate_pid/relative_time", O_RDONLY) = -1 ENOENT (No such file or directory)
+[pid 4116430]      0.000143 fchdir(3)   = 0
+#   compare with '-f -ttt' above -- the time is very small in comparison
+#   i.e.: 1628968554.812065 brk(NULL)             = 0x55fd21615000

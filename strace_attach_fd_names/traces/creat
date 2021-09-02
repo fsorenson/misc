@@ -1,0 +1,29 @@
+92997 18:12:17.091578 creat("/tmp/testfile", 0666) = 3 <0.000019>
+18:12:17.091578 creat("/tmp/testfile", 0666) = 4 <0.000019>
+92997 creat("/tmp/testfile", 0666) = 5 <0.000019>
+creat("/tmp/testfile", 0666) = 6 <0.000019>
+92997 18:12:17.091578 creat("/tmp/testfile", 0666) = 7
+18:12:17.091578 creat("/tmp/testfile", 0666) = 8
+92997 creat("/tmp/testfile", 0666) = 9
+creat("/tmp/testfile", 0666) = 10
+
+
+92997 18:12:17.091578 creat("/tmp/testfile", 0666) = 11</tmp/testfile> <0.000019>
+18:12:17.091578 creat("/tmp/testfile", 0666) = 12</tmp/testfile> <0.000019>
+92997 creat("/tmp/testfile", 0666) = 13</tmp/testfile> <0.000019>
+creat("/tmp/testfile", 0666) = 14</tmp/testfile> <0.000019>
+92997 18:12:17.091578 creat("/tmp/testfile", 0666) = 15</tmp/testfile>
+18:12:17.091578 creat("/tmp/testfile", 0666) = 16</tmp/testfile>
+92997 creat("/tmp/testfile", 0666) = 17</tmp/testfile>
+creat("/tmp/testfile", 0666) = 18</tmp/testfile>
+
+
+92997 18:12:17.091578 creat("/tmp/testfile", 0666) = -1 ENOENT (No such file or directory) <0.000019>
+18:12:17.091578 creat("/tmp/testfile", 0666) = -1 ENOENT (No such file or directory) <0.000019>
+92997 creat("/tmp/testfile", 0666) = -1 ENOENT (No such file or directory) <0.000019>
+creat("/tmp/testfile", 0666) = -1 ENOENT (No such file or directory) <0.000019>
+
+92997 18:12:17.091578 creat("/tmp/testfile", 0666) = -1 ENOENT (No such file or directory)
+18:12:17.091578 creat("/tmp/testfile", 0666) = -1 ENOENT (No such file or directory)
+92997 creat("/tmp/testfile", 0666) = -1 ENOENT (No such file or directory)
+creat("/tmp/testfile", 0666) = -1 ENOENT (No such file or directory)
