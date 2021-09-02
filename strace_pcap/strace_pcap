@@ -394,61 +394,54 @@ sub queue_option {
 	}
 }
 
+sub output_SHB {
+	print_magic();
 
-print_magic();
+	queue_byte_order_magic();
+	queue_version(1, 0);
+	queue_u64(0xffffffffffffffff); # section length - use -1 for 'figure it out'
+	# block total length (32 bits) -- same as above
 
-queue_byte_order_magic();
-queue_version(1, 0);
-queue_u64(0xffffffffffffffff); # section length - use -1 for 'figure it out'
+	# OS option
+	queue_option('opt_comment', "strace-to-pcap");
+	#queue_option("opt_comment", "Generated from input file Standard input.");
+	#queue_option("shb_userappl", "Text2pcap (Wireshark) 3.4.7 (Git commit e42cbf6a415f)");
 
-# block total length (32 bits) -- same as above
-
-# OS option
-queue_option('opt_comment', "strace-to-pcap");
-#queue_option("opt_comment", "Generated from input file Standard input.");
-#queue_option("shb_userappl", "Text2pcap (Wireshark) 3.4.7 (Git commit e42cbf6a415f)");
-
-#queue_option(3, "Linux 3.10.0-1160.11.1.el7.x86_64");
-#queue_option(4, "Dumpcap 1.10.14 (Git Rev Unknown from unknown)");
-queue_end_of_options();
-output_queued();
-
+	#queue_option(3, "Linux 3.10.0-1160.11.1.el7.x86_64");
+	#queue_option(4, "Dumpcap 1.10.14 (Git Rev Unknown from unknown)");
+	queue_end_of_options();
+	output_queued();
 
 
-#########################################
+	#########################################
 
 
-# block type (32 bits)
-# block total length (32 bits)
-# linktype (16 bits)
-# reserved (16 bits) -- must be 0
-# snaplen (32 bits) -- 0 means no limit
+	# block type (32 bits)
+	# block total length (32 bits)
+	# linktype (16 bits)
+	# reserved (16 bits) -- must be 0
+	# snaplen (32 bits) -- 0 means no limit
 
-# build an idb
+	# build an idb
 	print_u32(1); # block type IDB
-	queue_u16(1); # linktype - ethernet - https://www.ietf.org/id/draft-tuexen-opsawg-pcapng-03.html#LINKTYPES
+	# queue_u16(1); # linktype - ethernet - https://www.ietf.org/id/draft-tuexen-opsawg-pcapng-03.html#LINKTYPES
+	# queue_u16(101); # linktype - DLT_RAW raw ip - https://www.ietf.org/id/draft-tuexen-opsawg-pcapng-03.html#LINKTYPES
+	queue_u16($config{'linktype'});
 	queue_u16(0); # reserved - must be 0
 	queue_u32(256*1024); # snaplen - 0 = no limit
 
-#	queue_option("if_name", "lo");
+	queue_option("if_name", "strace");
 
-# tsresol
-	queue_option("if_tsresol", 9);
+	# tsresol
+	queue_option("if_tsresol", 6);
 
+	#queue_option(11, "\0tcp port 2049 or udp port 514"); # prefixed by an octet designating the type of filter
+	#queue_option(12, "Linux 3.10.0-1160.11.1.el7.x86_64");
 
-#00000080  29 00 00 00 00 00 00 00  8c 00 00 00 01 00 00 00  |)...............|
+	queue_end_of_options();
+	output_queued();
 
-#queue_option(11, "\0tcp port 2049 or udp port 514"); # prefixed by an octet designating the type of filter
-#queue_option(12, "Linux 3.10.0-1160.11.1.el7.x86_64");
-
-queue_end_of_options();
-output_queued();
-
-
-
-
-# header is complete...  now start creating syslog frames containing strace lines
-
+}
 
 sub htons {
 	return (($_[0] >> 8) & 0xff) + (($_[0] << 8) & 0xff00);
@@ -715,6 +708,8 @@ open(my $strace, '<', $ARGV[0]) or die("could not open file: $!");
 #my $re = qr/^([0-9]+) ([^\.]+)\.([0-9]+) ([^\(]+)\((.+)\) = ([0-9].*) <([0-9]+\.[0-9]+)>$/;
 my $re = qr/^([0-9]+) ([^\.]+)\.([0-9]+) ([^\(]+)\((.+)\) = ([0-9].*) <([0-9]+)\.([0-9]+)>$/;
 
+output_SHB();
+# header is complete...  now start creating syslog frames containing strace lines
 
 my $rw_re = qr/^([0-9]+[^,]*), "([^"]+)"(.+)/;
 
