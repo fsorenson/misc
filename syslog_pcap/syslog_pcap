@@ -57,6 +57,12 @@ use constant {
 #      - systemd Journal Export Block
 #   DSB - Decryption Secrets Block
 
+my %config = (
+	'subsec_digits' => 6,
+	'linktype' => LINKTYPE_DLT_RAW,
+	'src_ip' => 0x7f000001,
+	'dst_ip' => 0x7f000001,
+);
 
 sub calc_pad_bytes {
 	my $len = shift;
