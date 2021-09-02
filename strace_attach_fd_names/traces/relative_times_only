@@ -1,0 +1,74 @@
+# various prefixes for '-f' '-t*' and '-r' arguments
+
+# 'strace -t' -- timestamp with seconds
+14:20:14 
+
+# 'strace -tt' or 'strace -f -tt' before seeing other pids -- timestamp with microseconds
+14:20:26.534495 
+14:20:26.538707 
+14:20:26.538840 
+
+# 'strace -f -tt' -- alternate pid, timestamp with microseconds
+[pid 4120863] 14:23:52.016152 
+[pid 4120863] 14:23:52.016224 
+[pid 4120863] 14:23:52.016336 
+
+# 'strace -ttt' or 'strace -f -ttt' before seeing other pids -- epoch_time timestamp with microseconds
+1628968554.808565 
+1628968554.812065 
+1628968554.812297 
+# *** compare with '-r' below--the time is very large in comparison
+#   i.e.     0.000106 arch_prctl(0x3001 /* ARCH_??? */, 0x7ffcf7e6b620) = -1 EINVAL (Invalid argument)
+
+
+# 'strace -f -ttt' -- alternate pid, epoch_time timestamp with microseconds
+[pid 4119921] 1628968560.410797 
+[pid 4119921] 1628968560.410840 
+[pid 4119921] 1628968560.410898 
+# compare with '-f -r' below--the time is very large in comparison
+#   i.e. [pid 4116430]      0.000143 fchdir(3)   = 0
+
+
+# with relative time
+# 'strace -r' or 'strace -f -r' before any other pids are seen -- relative time
+    0.000000 
+    0.002258 
+    0.000106 
+# *** compare with '-ttt' above--the time is very small in comparison
+
+# 'strace -t -r' or 'strace -f -t -r' before other pids seen -- timestamp with seconds, relative time
+14:26:05 (+     0.000000) 
+14:26:05 (+     0.002050) 
+14:26:05 (+     0.000189) 
+
+# 'strace -f -t -r' -- alternate pid, timestamp with seconds, relative time
+[pid 4121485] 14:27:33 (+     0.000100) 
+[pid 4121485] 14:27:33 (+     0.000066) 
+[pid 4121485] 14:27:33 (+     0.000093) 
+
+# 'strace -tt -r' or 'strace -f -tt -r' before seeing other pids -- timestamp with microseconds, relative time
+14:28:51.537819 (+     0.000000) 
+14:28:51.541680 (+     0.003364) 
+14:28:51.541758 (+     0.000076) 
+
+# 'strace -f -tt -r' -- alternate pid, timestamp with microseconds, relative time
+[pid 4121876] 14:30:03.015841 (+     0.000141) 
+[pid 4121876] 14:30:03.015943 (+     0.000100) 
+[pid 4121876] 14:30:03.016096 (+     0.000153) 
+
+# 'strace -ttt -r' or 'strace -f -ttt -r' before seeing other pids -- epoch timestamp with microseconds, relative time
+1628969468.717642 (+     0.000000) 
+1628969468.720367 (+     0.002346) 
+1628969468.720494 (+     0.000124) 
+
+# 'strace -f -ttt -r' -- alternate pid, epoch timestamp with microseconds, relative time
+[pid 4122385] 1628969555.594034 (+     0.000103) 
+[pid 4122385] 1628969555.594102 (+     0.000068) 
+[pid 4122385] 1628969555.594213 (+     0.000110) 
+
+# 'strace -f -r' -- alternate pid, relative_time
+[pid 4116429]      0.000370 
+[pid 4116430]      1.594213 
+[pid 4116430]      0.000143 
+#   compare with '-f -ttt' above -- the time is very small in comparison
+#   i.e.: 1628968554.812065 brk(NULL)             = 0x55fd21615000
