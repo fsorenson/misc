@@ -5,6 +5,25 @@ use strict;
 
 no warnings 'portable';
 
+
+use constant {
+	false => 0,
+	true => 1,
+};
+
+use constant {
+	EPB_HEADER_LEN => 9*4, # 9*4 + any options size
+	ETH_HEADER_LEN => 14, # 2x eth addrs + 4-byte type
+	IP_HEADER_LEN => 20,
+	UDP_HEADER_LEN => 8,
+};
+
+# linktypes
+use constant {
+	LINKTYPE_ETH => 1,
+	LINKTYPE_DLT_RAW => 101,
+};
+
 my $queued_bytes = '';
 my $queued_len = 0;
 
