@@ -64,17 +64,20 @@ my %config = (
 	'dst_ip' => 0x7f000001,
 );
 
-sub calc_pad_bytes {
-	my $len = shift;
+sub calc_pad_bytes { ($_[0] % 4 == 0) ? 0 : 4 - ($_[0] % 4); }
 
-	return (int(($len + 3)/4))*4 - $len;
-}
 sub print_pad_bytes {
 	my $len = shift;
 	for (my $i = 0 ; $i < $len ; $i++) {
 		printf("%c", 0);
 	}
 }
+sub bytes_u8 { return (chr($_[0] & 0xff)); }
+sub bytes_u16 { return (chr(($_[0] >> 8) & 0xff) . chr($_[0] & 0xff)); }
+sub bytes_u32 { return (chr(($_[0] >> 24) & 0xff) . chr(($_[0] >> 16) & 0xff) .
+	chr(($_[0] >> 8) & 0xff) . chr($_[0] & 0xff)); }
+sub bytes_u64 { bytes_u32($_[0] >> 32) . bytes_u32($_[0] & 0xffffffff); }
+
 sub print_u8 {
 	my $val = shift;
 
@@ -456,7 +459,8 @@ sub u16_endian { (($_[0] >> 8) & 0xff) + (($_[0] & 0xff) << 8); }
 sub u32_endian {
 	(($_[0] >> 24) & 0x000000ff) + (($_[0] >> 8) & 0x0000ff00) +
 	(($_[0] << 8) & 0x00ff0000) + (($_[0] <<24) & 0xff000000); }
-
+sub endian_u16 { u16_endian($_[0]); }
+sub endian_u32 { u32_endian($_[0]); }
 sub ts_to_sec {
 	my $ts = shift;
 
@@ -477,39 +481,19 @@ sub sec_to_ts {
 
 	return sprintf("%02d:%02d:%02d.%06d", $h, $m, $s, $us);
 }
-my $ip_chksum = 0;
-sub ip_chksum_init { $ip_chksum = 0; }
 sub ip_chksum_add {
-	$ip_chksum += $_[0];
+	my $ip_chksum = shift;
+	my $add = shift;
+
+	$ip_chksum += $add;
 
 	$ip_chksum = (($ip_chksum & 0xffff) + (($ip_chksum >> 16) & 0xffff)) & 0xffff;
-
-#	$ip_chksum = $ip_chksum & 0xffff;
-
-#	if ($ip_chksum > 0xffff) {
-#		$ip_chksum = ($ip_chksum & 0xffff) + (($ip_chksum >> 16) & 0xffff);
-#	}
+	return $ip_chksum;
 }
-sub ip_chksum_get { $ip_chksum ^ 0xffff; }
-
-
+sub ip_chksum_get { $_[0] ^ 0xffff; }
 my $udp_chksum;
 sub udp_chksum_init { $udp_chksum = 0; }
 sub udp_chksum_add {
-
-
-if (1) {
-	my $newval = $udp_chksum + $_[0];
-printf STDERR "udp_chksum_add:  current sum:  0x%04x\n", $udp_chksum;
-printf STDERR "udp_chksum_add:  adding        0x%04x\n", $_[0];
-printf STDERR "udp_chksum_add:  new sum:      0x%04x\n", $newval;
-if ($newval > 0xffff) {
-	$newval = ($newval & 0xffff) + (($newval >> 16) & 0xffff);
-	printf STDERR "udp_chksum_add:  fix carryover 0x%04x\n", $newval;
-}
-}
-
-
 	$udp_chksum += $_[0];
 	$udp_chksum = (($udp_chksum & 0xffff) + (($udp_chksum >> 16) & 0xffff)) & 0xffff;
 }
