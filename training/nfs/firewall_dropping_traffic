@@ -1,0 +1,169 @@
+vm6:/exports on /mnt/vm6 type nfs (rw,relatime,vers=3,rsize=262144,wsize=262144,namlen=255,hard,proto=tcp,timeo=600,retrans=2,sec=sys,mountaddr=192.168.122.61,mountvers=3,mountport=20048,mountproto=udp,local_lock=none,addr=192.168.122.61)
+
+# tshark -i bond0 -w trace.pcap tcp port 2049
+Running as user "root" and group "root". This could be dangerous.
+Capturing on 'bond0'
+
+
+# ls -l /mnt/vm6 >/dev/null
+
+
+on the server side, drop incoming traffic
+# iptables -A INPUT -p tcp --dport 2049 -j DROP
+
+
+on the client re-run 'ls' to cause another RPC:
+# ls -l /mnt/vm6 >/dev/null
+
+(** hangs **)
+
+
+the packet trace looks like this:
+
+
+(the second field is time from the first packet, and the third field is the time since the previous packet)
+
+$ tshark -2n -r trace.pcap -Tfields -E header=y -e frame.number -e frame.time_relative -e frame.time_delta_displayed -e _ws.col.Info
+frame.number    frame.time_relative     frame.time_delta_displayed      _ws.col.Info
+74      0.054687179     0.000457588     V3 GETATTR Call (Reply In 75), FH: 0x62cafb3e
+75      0.055397561     0.000710382     V3 GETATTR Reply (Call In 74)  Regular File mode: 0755 uid: 0 gid: 0
+76      0.055846820     0.000449259     V3 READDIRPLUS Call (Reply In 77), FH: 0x62d40c52
+77      0.057209273     0.001362453     V3 READDIRPLUS Reply (Call In 76) . .. test_lock_pid.c dir1 dir2 frame-20471.bin mv_file3 mv_file2-c do_finds do_readlinks mv_file2 bz16552
+92-mv_files bz1655292-find test_stale testfile.vm7 test_fcntl-simple test_open_deleted zz test_locks_parallel.c~ test_nfs4acls large_1 testfile test_locks_para
+llel.c case_2914349_dir test_locks_parallel test_opens_parallel.c
+78      0.057381916     0.000172643     916 → 2049 [ACK] Seq=4397 Ack=8417 Win=1424 Len=0 TSval=4251426830 TSecr=624311503
+79      0.057805878     0.000423962     V3 READDIRPLUS Call (Reply In 80), FH: 0x62d40c52
+80      0.058473645     0.000667767     V3 READDIRPLUS Reply (Call In 79) test.txt lockd_funcs paropen2 testdir readdir_weirdness mangled_filenames testdir2 change_filelens2 .mixu
+p.swp new_foo test lockfile tmp_files empty.txt facl.test readdir_weirdness_bak find_files mismatch_test change_filelens1-b change_filelens1 readdir_weirdness-dir2 mv_file readdir
+_test dir1-bak mv_file2-b dir3
+81      0.058590115     0.000116470     916 → 2049 [ACK] Seq=4525 Ack=12517 Win=1424 Len=0 TSval=4251426831 TSecr=624311505
+82      0.059127345     0.000537230     V3 READDIRPLUS Call (Reply In 83), FH: 0x62d40c52
+83      0.059726961     0.000599616     V3 READDIRPLUS Reply (Call In 82) mv_link1 d dirent_test access.c access test_access user1_dir
+84      0.098920590     0.039193629     916 → 2049 [ACK] Seq=4653 Ack=13697 Win=1424 Len=0 TSval=4251426872 TSecr=624311506
+
+***** I blocked the TCP traffic on the nfs server side *****
+
+85      18.612046788    18.513126198    V3 GETATTR Call, FH: 0x62d40c52
+86      18.812925192    0.200878404     [TCP Retransmission] 916 → 2049 [PSH, ACK] Seq=4653 Ack=13697 Win=1424 Len=104 TSval=4251445586 TSecr=624311506
+87      19.013915808    0.200990616     [TCP Retransmission] 916 → 2049 [PSH, ACK] Seq=4653 Ack=13697 Win=1424 Len=104 TSval=4251445787 TSecr=624311506
+88      19.416872658    0.402956850     [TCP Retransmission] 916 → 2049 [PSH, ACK] Seq=4653 Ack=13697 Win=1424 Len=104 TSval=4251446190 TSecr=624311506
+89      20.222847678    0.805975020     [TCP Retransmission] 916 → 2049 [PSH, ACK] Seq=4653 Ack=13697 Win=1424 Len=104 TSval=4251446996 TSecr=624311506
+90      21.834880960    1.612033282     [TCP Retransmission] 916 → 2049 [PSH, ACK] Seq=4653 Ack=13697 Win=1424 Len=104 TSval=4251448608 TSecr=624311506
+91      25.058865052    3.223984092     [TCP Retransmission] 916 → 2049 [PSH, ACK] Seq=4653 Ack=13697 Win=1424 Len=104 TSval=4251451832 TSecr=624311506
+92      31.498891118    6.440026066     [TCP Retransmission] 916 → 2049 [PSH, ACK] Seq=4653 Ack=13697 Win=1424 Len=104 TSval=4251458272 TSecr=624311506
+93      44.394917450    12.896026332    [TCP Retransmission] 916 → 2049 [PSH, ACK] Seq=4653 Ack=13697 Win=1424 Len=104 TSval=4251471168 TSecr=624311506
+94      70.186940538    25.792023088    [TCP Retransmission] 916 → 2049 [PSH, ACK] Seq=4653 Ack=13697 Win=1424 Len=104 TSval=4251496960 TSecr=624311506
+95      121.771019994   51.584079456    [TCP Retransmission] 916 → 2049 [PSH, ACK] Seq=4653 Ack=13697 Win=1424 Len=104 TSval=4251548544 TSecr=624311506
+(this timestamp is 14:49:36.732964919)
+
+notice the tcp backoff timer approximately doubles each time:
+        85-86 and 86-87 are 0.2 seconds
+        87-88 is 0.403 seconds
+        88-89 is 0.806
+        89-90 is 1.61
+        90-91 is 3.22
+        91-92 is 6.44
+        92-93 is 12.89
+        93-94 is 25.79
+        94-95 is 51.58
+        95-96 is 103.04
+
+
+here, we get the 'not responding' message from the kernel:
+Jun 17 14:50:53 vm7 kernel: nfs: server vm6 not responding, still trying
+
+that's at about the 198 second mark in the pcap, or 180 seconds since the first network traffic that was dropped ((retries + 1) * (timeo / 10)) seconds
+
+
+***** the nfs client now tries to start a new tcp connection (notice that 'Seq=0' instead of 4653) *****
+
+96      224.811970705   103.040950711   [TCP Port numbers reused] 916 → 2049 [SYN] Seq=0 Win=29200 Len=0 MSS=1460 SACK_PERM=1 TSval=4251651585 TSecr=0 WS=128
+(this timestamp is 14:51:19.773915630, and is about 3:26 after the first dropped traffic)
+
+
+97      225.815000032   1.003029327     [TCP Retransmission] 916 → 2049 [SYN] Seq=0 Win=29200 Len=0 MSS=1460 SACK_PERM=1 TSval=4251652588 TSecr=0 WS=128
+98      227.818949361   2.003949329     [TCP Retransmission] 916 → 2049 [SYN] Seq=0 Win=29200 Len=0 MSS=1460 SACK_PERM=1 TSval=4251654592 TSecr=0 WS=128
+99      231.827125656   4.008176295     [TCP Retransmission] 916 → 2049 [SYN] Seq=0 Win=29200 Len=0 MSS=1460 SACK_PERM=1 TSval=4251658600 TSecr=0 WS=128
+100     239.850903423   8.023777767     [TCP Retransmission] 916 → 2049 [SYN] Seq=0 Win=29200 Len=0 MSS=1460 SACK_PERM=1 TSval=4251666624 TSecr=0 WS=128
+101     255.882867670   16.031964247    [TCP Retransmission] 916 → 2049 [SYN] Seq=0 Win=29200 Len=0 MSS=1460 SACK_PERM=1 TSval=4251682656 TSecr=0 WS=128
+102     287.915013863   32.032146193    [TCP Retransmission] 916 → 2049 [SYN] Seq=0 Win=29200 Len=0 MSS=1460 SACK_PERM=1 TSval=4251714688 TSecr=0 WS=128
+
+***** another new connection attempt *****
+
+103     355.051215944   67.136202081    [TCP Port numbers reused] 916 → 2049 [SYN] Seq=0 Win=29200 Len=0 MSS=1460 SACK_PERM=1 TSval=4251781824 TSecr=0 WS=128
+104     356.052901924   1.001685980     [TCP Retransmission] 916 → 2049 [SYN] Seq=0 Win=29200 Len=0 MSS=1460 SACK_PERM=1 TSval=4251782826 TSecr=0 WS=128
+105     358.058882218   2.005980294     [TCP Retransmission] 916 → 2049 [SYN] Seq=0 Win=29200 Len=0 MSS=1460 SACK_PERM=1 TSval=4251784832 TSecr=0 WS=128
+106     362.066914688   4.008032470     [TCP Retransmission] 916 → 2049 [SYN] Seq=0 Win=29200 Len=0 MSS=1460 SACK_PERM=1 TSval=4251788840 TSecr=0 WS=128
+107     370.090871834   8.023957146     [TCP Retransmission] 916 → 2049 [SYN] Seq=0 Win=29200 Len=0 MSS=1460 SACK_PERM=1 TSval=4251796864 TSecr=0 WS=128
+108     386.123170365   16.032298531    [TCP Retransmission] 916 → 2049 [SYN] Seq=0 Win=29200 Len=0 MSS=1460 SACK_PERM=1 TSval=4251812896 TSecr=0 WS=128
+109     418.218983164   32.095812799    [TCP Retransmission] 916 → 2049 [SYN] Seq=0 Win=29200 Len=0 MSS=1460 SACK_PERM=1 TSval=4251844992 TSecr=0 WS=128
+
+***** another new connection attempt *****
+
+110     488.363254535   70.144271371    [TCP Port numbers reused] 916 → 2049 [SYN] Seq=0 Win=29200 Len=0 MSS=1460 SACK_PERM=1 TSval=4251915136 TSecr=0 WS=128
+111     489.364864246   1.001609711     [TCP Retransmission] 916 → 2049 [SYN] Seq=0 Win=29200 Len=0 MSS=1460 SACK_PERM=1 TSval=4251916138 TSecr=0 WS=128
+112     491.370845757   2.005981511     [TCP Retransmission] 916 → 2049 [SYN] Seq=0 Win=29200 Len=0 MSS=1460 SACK_PERM=1 TSval=4251918144 TSecr=0 WS=128
+113     495.378846938   4.008001181     [TCP Retransmission] 916 → 2049 [SYN] Seq=0 Win=29200 Len=0 MSS=1460 SACK_PERM=1 TSval=4251922152 TSecr=0 WS=128
+114     503.402945398   8.024098460     [TCP Retransmission] 916 → 2049 [SYN] Seq=0 Win=29200 Len=0 MSS=1460 SACK_PERM=1 TSval=4251930176 TSecr=0 WS=128
+115     519.434880124   16.031934726    [TCP Retransmission] 916 → 2049 [SYN] Seq=0 Win=29200 Len=0 MSS=1460 SACK_PERM=1 TSval=4251946208 TSecr=0 WS=128
+
+tcp tries closing the connection (FIN), then resets (RST):
+
+116     534.378428476   14.943548352    2049 → 916 [FIN, ACK] Seq=1 Ack=3814860854 Win=336 Len=0 TSval=624845824 TSecr=4251426872
+117     534.378705469   0.000276993     916 → 2049 [RST] Seq=3814860854 Win=0 Len=0
+
+***** close and reset *****
+118     534.583691307   0.204985838     [TCP Out-Of-Order] 2049 → 916 [FIN, ACK] Seq=1 Ack=3814860854 Win=336 Len=0 TSval=624846030 TSecr=4251426872
+119     534.583788604   0.000097297     916 → 2049 [RST] Seq=3814860854 Win=0 Len=0
+
+***** close and reset *****
+120     534.789675584   0.205886980     [TCP Out-Of-Order] 2049 → 916 [FIN, ACK] Seq=1 Ack=3814860854 Win=336 Len=0 TSval=624846236 TSecr=4251426872
+121     534.789768967   0.000093383     916 → 2049 [RST] Seq=3814860854 Win=0 Len=0
+
+***** close and reset *****
+122     535.202579092   0.412810125     [TCP Out-Of-Order] 2049 → 916 [FIN, ACK] Seq=1 Ack=3814860854 Win=336 Len=0 TSval=624846649 TSecr=4251426872
+123     535.202678946   0.000099854     916 → 2049 [RST] Seq=3814860854 Win=0 Len=0
+
+***** close and reset *****
+124     536.029721786   0.827042840     [TCP Out-Of-Order] 2049 → 916 [FIN, ACK] Seq=1 Ack=3814860854 Win=336 Len=0 TSval=624847476 TSecr=4251426872
+125     536.029850144   0.000128358     916 → 2049 [RST] Seq=3814860854 Win=0 Len=0
+
+***** close and reset *****
+126     537.681754369   1.651904225     [TCP Out-Of-Order] 2049 → 916 [FIN, ACK] Seq=1 Ack=3814860854 Win=336 Len=0 TSval=624849128 TSecr=4251426872
+127     537.681846799   0.000092430     916 → 2049 [RST] Seq=3814860854 Win=0 Len=0
+
+***** close and reset *****
+128     540.985594105   3.303747306     [TCP Out-Of-Order] 2049 → 916 [FIN, ACK] Seq=1 Ack=3814860854 Win=336 Len=0 TSval=624852432 TSecr=4251426872
+129     540.985692817   0.000098712     916 → 2049 [RST] Seq=3814860854 Win=0 Len=0
+
+***** close and reset *****
+130     547.593852131   6.608159314     [TCP Out-Of-Order] 2049 → 916 [FIN, ACK] Seq=1 Ack=3814860854 Win=336 Len=0 TSval=624859040 TSecr=4251426872
+131     547.594086118   0.000233987     916 → 2049 [RST] Seq=3814860854 Win=0 Len=0
+
+***** try to restart with SYN *****
+132     551.466879196   3.872793078     [TCP Retransmission] 916 → 2049 [SYN] Seq=0 Win=29200 Len=0 MSS=1460 SACK_PERM=1 TSval=4251978240 TSecr=0 WS=128
+
+***** close and reset *****
+133     560.809761864   9.342882668     [TCP Retransmission] 2049 → 916 [FIN, ACK] Seq=1 Ack=3814860854 Win=336 Len=0 TSval=624872256 TSecr=4251426872
+134     560.809851080   0.000089216     916 → 2049 [RST] Seq=3814860854 Win=0 Len=0
+
+***** close and reset *****
+135     587.241860865   26.432009785    [TCP Retransmission] 2049 → 916 [FIN, ACK] Seq=1 Ack=3814860854 Win=336 Len=0 TSval=624898688 TSecr=4251426872
+136     587.241969282   0.000108417     916 → 2049 [RST] Seq=3814860854 Win=0 Len=0
+
+I remove the iptables rule on the server side:
+# iptables -F
+
+
+137     627.627070779   40.385101497    [TCP Port numbers reused] 916 → 2049 [SYN] Seq=0 Win=29200 Len=0 MSS=1460 SACK_PERM=1 TSval=4252054400 TSecr=0 WS=128
+138     627.628192894   0.001122115     2049 → 916 [SYN, ACK] Seq=0 Ack=1 Win=28960 Len=0 MSS=1460 SACK_PERM=1 TSval=624939074 TSecr=4252054400 WS=128
+139     627.628321276   0.000128382     916 → 2049 [ACK] Seq=1 Ack=1 Win=29312 Len=0 TSval=4252054401 TSecr=624939074
+
+140     627.628523305   0.000202029     V3 GETATTR Call (Reply In 142), FH: 0x62d40c52
+141     627.629225404   0.000702099     2049 → 916 [ACK] Seq=1 Ack=105 Win=29056 Len=0 TSval=624939075 TSecr=4252054401
+142     627.630787833   0.001562429     V3 GETATTR Reply (Call In 140)  Directory mode: 0775 uid: 0 gid: 0
+
+
+Jun 17 14:58:02 vm7 kernel: nfs: server vm6 OK
+
+143     627.630854089   0.000066256     916 → 2049 [ACK] Seq=105 Ack=117 Win=29312 Len=0 TSval=4252054404 TSecr=624939077
