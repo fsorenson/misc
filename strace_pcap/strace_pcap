@@ -743,8 +743,7 @@ while (<$strace>) {
 		} else {
 			next;
 		}
-
-		$ts_subsec *= 10**(9 - length($ts_subsec)); # make it ns
+		$ts_subsec *= 10**($config{'subsec_digits'} - length($ts_subsec));
 		my $elapsed_string = sprintf("%s.%s", $elapsed, $elapsed_subsec);
 
 		if (index($ts, ':') >= 0) {
@@ -753,12 +752,12 @@ while (<$strace>) {
 		} else {
 		}
 
-		$elapsed_subsec *= 10**(9 - length($elapsed_subsec));
+		$elapsed_subsec *= 10**($config{'subsec_digits'} - length($elapsed_subsec));
 
 		my $end_ts = $ts + $elapsed;
 		my $end_ts_subsec = $ts_subsec + $elapsed_subsec;
-		if ($end_ts_subsec >= 1000000000) {
-			$end_ts_subsec -= 1000000000;
+		if ($end_ts_subsec >= 10**$config{'subsec_digits'}) {
+			$end_ts_subsec -= 10**$config{'subsec_digits'};
 			$end_ts++;
 		}
 
