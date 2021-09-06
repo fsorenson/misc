@@ -70,13 +70,24 @@ sub trim {
 #   DSB - Decryption Secrets Block
 
 my %config = (
+	'debug' => 0,
+	'tag' => '',
+	'max_queue' => 20,
+
 	'subsec_digits' => 6,
 	'linktype' => LINKTYPE_DLT_RAW,
+
+	'ip_id' => 0x1234,
+	'ip_ttl' => 255,
 	'src_ip' => 0x7f000001,
 	'dst_ip' => 0x7f000001,
+	'src_port' => 30000,
+	'dst_port' => 514,
 );
 my $trace_is_test_program = false;
 
+	'ts_adjust' => 0,
+	'ts_subsec_adjust' => 0,
 sub calc_pad_bytes { ($_[0] % 4 == 0) ? 0 : 4 - ($_[0] % 4); }
 
 sub print_pad_bytes {
