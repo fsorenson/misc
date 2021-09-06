@@ -60,6 +60,69 @@ sub trim {
         IPPROTO_TCP => 6,
         IPPROTO_UDP => 17,
 };
+my %patterns;
+my %regexes;
+
+# (?=pattern)	is a positive look-ahead assertion
+# (?!pattern)	is a negative look-ahead assertion
+# (?<=pattern)	is a positive look-behind assertion
+# (?<!pattern)	is a negative look-behind assertion
+
+$patterns{'ip_octet'} = "(?:(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?))";
+$patterns{'ipv4_addr'} = "(?:(?:$patterns{'ip_octet'}\.){3}(?:$patterns{'ip_octet'}))";
+
+# iso_8601 - 2006-08-14T02:34:56(.[0-9]+)?-06:00 - YYYY-MM-DD<T>HH:MM:SS,<microseconds><-+><timezone offset from UTC>
+# iso_3339 - 2006-08-14 02:34:56(.[0-9]+)?-06:00
+# rfc_email - Mon, 14 Aug 2006 02:34:56 -0600
+
+%patterns = (%patterns,
+	'epoch_seconds' => '(?:[1-9][0-9]{8,9})',
+	'seconds' => '(?:0|[1-9][0-9]{0,7})',
+	'subseconds' => '(?:(?<![0-9])(?:[0-9]{3}){1,3})', # ms, us, ns -- multiple of 3 digits
+
+	'Y' => '(?:19[7-9][0-9]|[2-9][0-9])',
+
+	# month of year - %m - 00..12
+	'datefmt feb m' => '(?:02)',
+	'datefmt 30_day m' => '(?:0[469]|11)',
+	'datefmt 31_day m' => '(?:(?:0[134578])|(?:1[02]))',
+);
+%patterns = (%patterns,
+	# day of month - %d
+	'datefmt feb d' => '(?:0[1-9]|[12][0-9])', # 29-day months - day of month - %d - 00..29
+	'datefmt 30_day d' => '(?:0[1-9]|[12][0-9]|30)', # 30-day months - day of month - %d - 00..30
+	'datefmt 31_day d' => '(?:0[1-9]|[12][0-9]|3[01])', # 31-day months - day of month - %d - 00..31
+
+	# short month name - 'Jan', etc.
+	#
+	'datefmt feb b' => '(?:Feb)',
+	'datefmt 30_day b' => '(?:Apr|Jun|Sep|Nov)',
+	'datefmt 31_day b' => '(?:Jan|Mar|May|Jul|Aug|Oct|Dec)',
+
+	'H' => '(?:(?:[01][0-9]|2[0-3]))',
+	'M' => '(?:[0-5]:[0-9])',
+	'S' => '(?:[0-5][0-9]|60)',
+	'H:M:S_leapsecond' => '(?:23:59:60)',
+
+	'DOW' => '(?:Sun|Mon|Tue|Wed|Thu|Fri|Sat)'
+);
+$patterns{'datefmt feb m-d'} = "(?:$patterns{'datefmt feb m'}-$patterns{'datefmt feb d'})";
+$patterns{'datefmt 30_day m-d'} = "(?:$patterns{'datefmt 30_day m'}-$patterns{'datefmt 30_day d'})";
+$patterns{'datefmt 31_day m-d'} = "(?:$patterns{'datefmt 31_day m'}-$patterns{'datefmt 31_day d'})";
+
+$patterns{'Y-m-d'} = "(?:$patterns{'Y'}-(?:$patterns{'datefmt feb m-d'}|$patterns{'datefmt 30_day m-d'}|$patterns{'datefmt 31_day m-d'}))";
+
+
+#$patterns{'Ymd'} = "(?:$patterns{'Y'}-(?:$patterns{'feb'}|$patterns{'30_day_md'}|$patterns{'31_day_md'}))";
+$patterns{'H:M:S'} = "(?:$patterns{'H'}:$patterns{'M'}:$patterns{'S'}|$patterns{'H:M:S_leapsecond'})";
+$patterns{'ts_offset'} = "(?:[-+]$patterns{'H'}:$patterns{'M'})";
+
+$patterns{'datefmt feb d b'} = "(?:$patterns{'datefmt feb d'} $patterns{'datefmt feb b'})";
+$patterns{'datefmt 30_day d b'} = "(?:$patterns{'datefmt 30_day d'} $patterns{'datefmt 30_day b'})";
+$patterns{'datefmt 31_day d b'} = "(?:$patterns{'datefmt 31_day d'} $patterns{'datefmt 31_day b'})";
+
+$patterns{'datefmt d b'} = "(?:$patterns{'datefmt feb d b'}|$patterns{'datefmt 30_day d b'}|$patterns{'datefmt 31_day d b'}";
+
 #   IDB - interface description block
 #   EPB - enhanced packet block
 #   SPB - simple packet block
@@ -68,6 +131,20 @@ sub trim {
 #   CB - custom block
 #      - systemd Journal Export Block
 #   DSB - Decryption Secrets Block
+$patterns{'feb_md'} = '(?:02-(?:0[1-9]|[12][0-9]))';
+$patterns{'iso_8601_timestamp'} = "(?:($patterns{'Y-m-d'})T($patterns{'H:M:S'})[,.]($patterns{'subseconds'})($patterns{'ts_offset'}))";
+$patterns{'iso_3339_timestamp'} = "(?:($patterns{'Y-m-d'}) ($patterns{'H:M:S'})[,.]($patterns{'subseconds'})($patterns{'ts_offset'}))";
+$patterns{'epoch_timestamp'} = "(?:($patterns{'epoch_seconds'})\.($patterns{'subseconds'}))";
+$patterns{'seconds_time'} = "(?:($patterns{'seconds'}?)(?:\.($patterns{'subseconds'}))?)";
+
+%regexes = (%regexes,
+	'Y-m-d' => qr/$patterns{'Y-m-d'}/,
+);
+$regexes{'iso_8601_line'} = qr/^$patterns{'iso_8601_timestamp'}\s(.+)$/;
+$regexes{'iso_3339_line'} = qr/^$patterns{'iso_3339_timestamp'}\s+(.+)$/;
+$regexes{'epoch_line'} = qr/^$patterns{'epoch_timestamp'}\s+(.+)$/;
+$regexes{'seconds_time'} = qr/^$patterns{'seconds_time'}$/;
+$regexes{'adjustment_time'} = qr/^(?:($patterns{'seconds'}?)(?:\.([0-9]+)?))$/;
 
 my %config = (
 	'debug' => 0,
