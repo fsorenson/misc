@@ -16,7 +16,6 @@ STDOUT->autoflush(1);
 my $program_name = 'syslog-pcap'; # for lack of a better name
 my $program_version = '0.1'; # version number of this thing
 
-
 use constant {
 	false => 0,
 	true => 1,
@@ -31,11 +30,6 @@ use constant {
 	LINKTYPE_DLT_RAW => 101, # https://www.ietf.org/id/draft-tuexen-opsawg-pcapng-03.html#LINKTYPES
 
 	BYTE_ORDER_MAGIC => 0x1a2b3c4d,
-sub trim {
-	my $s = shift;
-	$s =~ s/^\s+|\s+$//g;
-	return $s
-}
 
 	SHB => 0x0a0d0d0a,
 	IDB => 0x00000001,
@@ -48,8 +42,6 @@ sub trim {
 #	DSB => 0x0000000a, # also 'ZigBee NWK Key Data', 'ZigBee APS Key Data'
 	CB => 0x00000bad,
 	CB2 => 0x40000bad,
-
-
 
 	# option-related
 	EPB_FLAG_DIRECTION_UNKNOWN => 0,
@@ -130,14 +122,7 @@ $patterns{'datefmt 31_day d b'} = "(?:$patterns{'datefmt 31_day d'} $patterns{'d
 
 $patterns{'datefmt d b'} = "(?:$patterns{'datefmt feb d b'}|$patterns{'datefmt 30_day d b'}|$patterns{'datefmt 31_day d b'}";
 
-#   IDB - interface description block
-#   EPB - enhanced packet block
-#   SPB - simple packet block
-#   NRB - name resolution block
-#   ISB - interface statistics block
-#   CB - custom block
-#      - systemd Journal Export Block
-#   DSB - Decryption Secrets Block
+
 $patterns{'feb_md'} = '(?:02-(?:0[1-9]|[12][0-9]))';
 $patterns{'iso_8601_timestamp'} = "(?:($patterns{'Y-m-d'})T($patterns{'H:M:S'})[,.]($patterns{'subseconds'})($patterns{'ts_offset'}))";
 $patterns{'iso_3339_timestamp'} = "(?:($patterns{'Y-m-d'}) ($patterns{'H:M:S'})[,.]($patterns{'subseconds'})($patterns{'ts_offset'}))";
@@ -167,10 +152,10 @@ my %config = (
 	'dst_ip' => 0x7f000001,
 	'src_port' => 30000,
 	'dst_port' => 514,
-);
 
 	'ts_adjust' => 0,
 	'ts_subsec_adjust' => 0,
+);
 my %queued_EPBs = ();
 
 sub output_earliest_EPB {
@@ -178,30 +163,19 @@ sub output_earliest_EPB {
 	my $earliest_EPB = delete $queued_EPBs{$earliest_ts};
 	print $earliest_EPB;
 }
-sub bytes_u8 { return (chr($_[0] & 0xff)); }
-sub bytes_u16 { return (chr(($_[0] >> 8) & 0xff) . chr($_[0] & 0xff)); }
-sub bytes_u32 { return (chr(($_[0] >> 24) & 0xff) . chr(($_[0] >> 16) & 0xff) .
-	chr(($_[0] >> 8) & 0xff) . chr($_[0] & 0xff)); }
-sub bytes_u64 { bytes_u32($_[0] >> 32) . bytes_u32($_[0] & 0xffffffff); }
 
 sub output_EPB {
 	my $ts = shift;
 	my $ts_subsec = shift;
 	my $EPB = shift;
-sub print_u8 {
-	my $val = shift;
 
 	if (scalar(keys %queued_EPBs) >= $config{'max_queue'}) {
 		output_earliest_EPB();
 	}
 	my $key = sprintf("%d.%0" . $config{'subsec_digits'} . "d", $ts, $ts_subsec);
-	printf("%c", $val & 0xff);
-}
-sub print_u16 {
-	my $val = shift;
 
 	$queued_EPBs{$key} = $EPB;
-	printf("%c%c", $val & 0xff, ($val >> 8) & 0xff);
+#	print $EPB;
 }
 sub flush_EPBs {
 	while (scalar(keys %queued_EPBs)) {
@@ -211,13 +185,8 @@ sub flush_EPBs {
 END {
 	printf STDERR "flushing %d queued frames\n", scalar(keys %queued_EPBs) if ($config{'debug'} >= 1 && scalar(keys %queued_EPBs));
 	flush_EPBs();
-sub print_u32 {
-	my $val = shift;
-
-	printf("%c%c%c%c",
-		$val & 0xff, ($val >> 8) & 0xff,
-		($val >> 16) & 0xff, ($val >> 24) & 0xff);
 }
+
 GetOptions(
         'debug|verbose|v+' => \$config{'debug'},
 	'tag=s' => \$config{'tag'},
@@ -237,52 +206,45 @@ GetOptions(
 	},
 );
 
+sub hexdump {
+	my $str = ref $_[0] ? ${$_[0]} : $_[0];
 
+	return unless length($str);
 
+	my @chunks = $str =~ /([\0-\377]{1,16})/g;
+	my @print;
+	for (@chunks) {
+		my $hex = unpack "H*", $_;
+		tr/ -~/./c;
+		$hex =~ s/(..)(?!$)/$1 /g;
+		$hex .= ' ' x ( length($hex) < 48 ? 48 - length($hex) : 0);
+		push @print, "$hex $_\n";
 	}
+	print STDERR @print;
 }
 
-sub queue_u8 {
-	$queued_bytes .= chr(int($_[0]) & 0xff);
-	$queued_len++;
-	printf STDERR "queued 1 byte\n" if ($DEBUG >= 1);
-}
-sub queue_u16 {
-	my $val = shift;
 
-	$queued_bytes .= sprintf("%c%c", $val & 0xff, ($val >> 8) & 0xff);
-	$queued_len += 2;
-	printf STDERR "queued 2 bytes\n" if ($DEBUG >= 1);
+sub dump_backtrace {
+	my $trace = Devel::StackTrace->new;
+	printf STDERR "\n";
+	print STDERR $trace->as_string;
+	printf STDERR "\n";
 }
-sub queue_u32 {
-	my $val = shift;
 
-	$queued_bytes .= sprintf("%c%c%c%c",
-		$val & 0xff, ($val >> 8) & 0xff,
-		($val >> 16) & 0xff, ($val >> 24) & 0xff);
-	$queued_len += 4;
-	printf STDERR "queued 4 bytes\n" if ($DEBUG >= 1);
+sub trim {
+	my $s = shift;
+	$s =~ s/^\s+|\s+$//g;
+	return $s
 }
-sub queue_u64 {
-	my $val = shift;
 
 my $time_parser = DateTime::Format::Strptime->new( 'pattern' => '%Y-%m-%d %T %z' ); # iso3339 or iso8601 format
-	queue_u32($val & 0xffffffff);
-	queue_u32(($val >> 32) & 0xffffffff);
-	printf STDERR "queued 8 bytes\n" if ($DEBUG > 1);
-}
-sub output_block {
-	my $val = shift;
-	my $len = length($val);
+sub htons { return (($_[0] >> 8) & 0xff) + (($_[0] << 8) & 0xff00); }
+sub ntohs { return htons($_[0]); }
 
-	printf("%s", $val);
-}
 sub output_block { print $_[0]; }
 
 sub calc_pad_bytes { ($_[0] % 4 == 0) ? 0 : 4 - ($_[0] % 4); }
 sub pad_bytes { "\0"x($_[0]); }
-
-
 
 # SECTION (pcapng file) HEADER BLOCK
 #
@@ -572,17 +534,8 @@ sub construct_IDB {
 	);
 
 	return encapsulate_block_data(IDB, $block_data);
-sub htons {
-	return (($_[0] >> 8) & 0xff) + (($_[0] << 8) & 0xff00);
 }
-sub ntohs { return htons($_[0]); }
 
-sub u16_endian { (($_[0] >> 8) & 0xff) + (($_[0] & 0xff) << 8); }
-sub u32_endian {
-	(($_[0] >> 24) & 0x000000ff) + (($_[0] >> 8) & 0x0000ff00) +
-	(($_[0] << 8) & 0x00ff0000) + (($_[0] <<24) & 0xff000000); }
-sub endian_u16 { u16_endian($_[0]); }
-sub endian_u32 { u32_endian($_[0]); }
 sub ts_to_sec {
 	my $ts = shift;
 
@@ -627,6 +580,7 @@ sub calc_udp_chksum {
 }
 sub construct_EPB_opts {
 	my $epb_opts = '';
+
 	# add epb options
 	# bits 16-31 - LL depenent errors
 	# bits 9-15 - reserved - must be 0
@@ -725,7 +679,6 @@ sub construct_udp {
 		$dstport,
 		length($payload) + 8,
 		0); # checksum currently zero
-
 
 	$chksum = calc_udp_chksum($srcip, $dstip, $udp_hdr . $payload);
 	printf STDERR "udp checksum: 0x%04x\n", $chksum & 0xffff if ($config{'debug'} >= 2);
