@@ -5,6 +5,11 @@ use strict;
 
 no warnings 'portable';
 
+STDOUT->autoflush(1);
+
+my $program_name = 'syslog-pcap'; # for lack of a better name
+my $program_version = '0.1'; # version number of this thing
+
 
 use constant {
 	false => 0,
@@ -161,7 +166,6 @@ my %config = (
 	'src_port' => 30000,
 	'dst_port' => 514,
 );
-my $trace_is_test_program = false;
 
 	'ts_adjust' => 0,
 	'ts_subsec_adjust' => 0,
@@ -254,6 +258,7 @@ sub queue_u32 {
 sub queue_u64 {
 	my $val = shift;
 
+my $time_parser = DateTime::Format::Strptime->new( 'pattern' => '%Y-%m-%d %T %z' ); # iso3339 or iso8601 format
 	queue_u32($val & 0xffffffff);
 	queue_u32(($val >> 32) & 0xffffffff);
 	printf STDERR "queued 8 bytes\n" if ($DEBUG > 1);
@@ -774,31 +779,20 @@ sub output_udp_syslog_frame {
 	printf "%s", $EPB_data;
 }
 
-die("must give strace filename") if (!defined($ARGV[0]));
-die("must give command name") if (!defined($ARGV[1]));
+die("must give input filename") if (!defined($ARGV[0]));
 
-if ($ARGV[1] eq "test_program") {
-	$trace_is_test_program = true;
-}
-
-my $strace;
+my $input;
 if ($ARGV[0] eq "-") {
-	$strace = \*STDIN;
+	$input = \*STDIN;
 } else {
-	open($strace, '<', $ARGV[0]) or die("could not open file: $!");
+	open($input, '<', $ARGV[0]) or die("could not open file '" . $ARGV[0] . "': $!");
 }
 
 output_SHB();
 # header is complete...  now start creating syslog frames containing strace lines
 
-my $syscall_string = "[^\(]+";
-my $digits_string = "[0-9]+";
-my $re = qr/^($digits_string)\s+($digits_string)\.($digits_string) ($syscall_string)\((.*?)\)\s+= (.*?) <($digits_string)\.($digits_string)>$/;
 
-my $line_tag_re = qr/^([0-9]+[^,]*), "([^"]+)"(.+)/;
 
-my $reader_pid = 0;
-my $writer_pid = 0;
 
 my $line_num = 0;
 while (<$input>) {
