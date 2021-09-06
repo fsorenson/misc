@@ -603,24 +603,28 @@ sub sec_to_ts {
 
 	return sprintf("%02d:%02d:%02d.%06d", $h, $m, $s, $us);
 }
-sub ip_chksum_add {
-	my $ip_chksum = shift;
-	my $add = shift;
+sub calc_udp_chksum {
+	my $srcip = shift;
+	my $dstip = shift;
+	my $payload = shift;
+	my $chksum = 0;
 
-	$ip_chksum += $add;
+	my $pseudo = pack('N N n n n',
+		$srcip,
+		$dstip,
+		0,
+		17,
+		length($payload));
 
-	$ip_chksum = (($ip_chksum & 0xffff) + (($ip_chksum >> 16) & 0xffff)) & 0xffff;
-	return $ip_chksum;
+        foreach my $add (unpack('n*', $pseudo . $payload . "\0")) {
+		printf STDERR " adding 0x%04x to chksum\n", $add & 0xffff if ($config{'debug'} >= 2);
+		$chksum += $add;
+	}
+	while ($chksum >> 16) {
+		$chksum = ($chksum & 0xffff) + ($chksum >> 16);
+	}
+	return (~$chksum) & 0xffff;
 }
-sub ip_chksum_get { $_[0] ^ 0xffff; }
-my $udp_chksum;
-sub udp_chksum_init { $udp_chksum = 0; }
-sub udp_chksum_add {
-	$udp_chksum += $_[0];
-	$udp_chksum = (($udp_chksum & 0xffff) + (($udp_chksum >> 16) & 0xffff)) & 0xffff;
-}
-sub udp_chksum_get { $udp_chksum ^ 0xffff; }
-
 sub construct_EPB_opts {
 	my $epb_opts = '';
 	# add epb options
@@ -711,53 +715,30 @@ sub construct_ipv4 {
 	return $ip_hdr . $payload;
 }
 sub construct_udp {
-	my $src_ip = shift;
-	my $dst_ip = shift;
-	my $src_port = shift;
-	my $dst_port = shift;
-	my $data = shift;
-	my $ret = "";
+	my $srcip = shift;
+	my $dstip = shift;
+	my $srcport = shift;
+	my $dstport = shift;
+	my $payload = shift;
+	my $chksum = 0;
 
-	my $len = length($data);
-	my $udp_len = $len + UDP_HEADER_LEN;
+	my $udp_hdr = pack('n n n n',
+		$srcport,
+		$dstport,
+		length($payload) + 8,
+		0); # checksum currently zero
 
-	$ret .= chr(($src_port >> 8) & 0xff) . chr($src_port & 0xff);
-	$ret .= chr(($dst_port >> 8) & 0xff) . chr($dst_port & 0xff);
-	$ret .= chr(($udp_len >> 8) & 0xff) . chr($udp_len & 0xff);
 
-	$ret .= chr(0) . chr(0); # checksum
+	$chksum = calc_udp_chksum($srcip, $dstip, $udp_hdr . $payload);
+	printf STDERR "udp checksum: 0x%04x\n", $chksum & 0xffff if ($config{'debug'} >= 2);
 
-	for (my $i = 0 ; $i < $len ; $i++) {
-		$ret .= chr(ord(substr($data, $i, 1)));
-	}
-	return $ret;
-}
+	$udp_hdr = pack('n n n n', # rebuild the header, now that we have the checksum
+		$srcport,
+		$dstport,
+		length($payload) + 8,
+		$chksum);
 
-sub output_udp {
-	my $src_ip = shift;
-	my $dst_ip = shift;
-	my $src_port = shift;
-	my $dst_port = shift;
-	my $data = shift;
-
-	my $len = length($data);
-	my $pad_bytes = calc_pad_bytes($len);
-
-	print_u16(u16_endian($src_port));	# 2 bytes
-	print_u16(u16_endian($dst_port));	# 2 bytes
-
-	if ($len % 2) {
-		$data .= sprintf("%c", 0);
-	}
-
-	print_u16(u16_endian($len + 8));	# 2 bytes
-#	print_u16(u16_endian(udp_chksum_get()));
-	print_u16(0);				# 2 bytes - checksum - fudge with '0'
-
-	for (my $i = 0 ; $i < $len ; $i++) {
-		print_u8(ord(substr($data, $i, 1)));
-	}
-	print_pad_bytes($len % 4);
+	return $udp_hdr . $payload;
 }
 
 sub output_udp_syslog_frame {
@@ -765,8 +746,14 @@ sub output_udp_syslog_frame {
 	my $ts_subsec = shift;
 	my $payload = shift;
 
-	$payload = construct_udp($config{'src_ip'}, $config{'dst_ip'}, 30000, 514, $payload);
-	$payload = construct_ipv4_header($config{'src_ip'}, $config{'dst_ip'}, length($payload)) . $payload;
+	if (!defined($payload)) {
+		printf STDERR "payload isn't defined?\n";
+		dump_backtrace();
+		exit;
+	}
+
+	$payload = construct_udp($config{'src_ip'}, $config{'dst_ip'}, $config{'src_port'}, $config{'dst_port'}, $payload);
+	$payload = construct_ipv4($config{'src_ip'}, $config{'dst_ip'}, $payload);
 
 	if ($config{'linktype'} eq LINKTYPE_ETH) {
 		$payload = construct_eth(0x0800) . $payload;
