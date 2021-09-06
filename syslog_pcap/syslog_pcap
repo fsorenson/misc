@@ -829,76 +829,44 @@ my $reader_pid = 0;
 my $writer_pid = 0;
 
 my $line_num = 0;
-while (<$strace>) {
+while (<$input>) {
 	my $line = $_;
-	my $rw = "";
+	my $ts;
+	my $ts_subsec;
+	my $message;
 
 	$line = trim($line);
 	$line_num++;
+	my ($date, $time, $tz);
 
-	if (my ($pid, $ts, $ts_subsec, $op, $args, $ret, $elapsed, $elapsed_subsec) = $line =~ $re) {
-		my $line_tag = '';
+	if (($ts, $ts_subsec, $message) = $line =~ $regexes{'epoch_line'}) {
+		# nothing more to do
+		printf STDERR "parsed timestamp into %d.%06d - %s\n", $ts, $ts_subsec, $line if ($config{'debug'} >= 1);
+	} elsif (($date, $time, $ts_subsec, $tz, $message) = $line =~ $regexes{'iso_3339_line'}) {
+		my $tmpstr = sprintf("%s %s %s\n", $date, $time, $tz);
 
-		if ($trace_is_test_program) { # specific to a particular use-case; TODO: separate this out
+		$ts = $time_parser->parse_datetime($tmpstr)->epoch;
+	} elsif (($date, $time, $ts_subsec, $tz, $message) = $line =~ $regexes{'iso_8601_line'}) {
+		my $tmpstr = sprintf("%s %s %s\n", $date, $time, $tz);
 
-			if ($reader_pid == 0) {
-				$reader_pid = $pid;
-				$line_tag = "reader";
-			} elsif ($reader_pid == $pid) {
-				$line_tag = "reader";
-			} elsif ($writer_pid == 0) {
-				$writer_pid = $pid;
-				$line_tag = "writer";
-			} elsif ($writer_pid = $pid) {
-				$line_tag = "writer";
-			} else {
-				next;
-			}
-			printf STDERR "packet is from %s\n", $line_tag if ($DEBUG >= 1);
-			if ($op eq "open" || $op eq "openat" || $op eq "close") {
-			} elsif ($op eq "pread64" || $op eq "pwrite64") {
-				if (my ($fh_info, $buf, $rem) = $args =~ $line_tag_re) {
-					$buf = '"' . substr($buf, 0, 10) . '"';
-					$args = $fh_info . ", " . $buf . $rem;
-				}
-			} else {
-				next;
-			}
-		} else {
-			$line_tag = $ARGV[1];
-		}
-		$ts_subsec *= 10**($config{'subsec_digits'} - length($ts_subsec));
-		my $elapsed_string = sprintf("%s.%s", $elapsed, $elapsed_subsec);
-
-		if (index($ts, ':') >= 0) {
-			$ts = ts_to_sec($ts);
-			$ts += 1629435600; # 2021-08-20
-		} else {
-		}
-
-		$elapsed_subsec *= 10**($config{'subsec_digits'} - length($elapsed_subsec));
-
-		my $end_ts = $ts + $elapsed;
-		my $end_ts_subsec = $ts_subsec + $elapsed_subsec;
-		if ($end_ts_subsec >= 10**$config{'subsec_digits'}) {
-			$end_ts_subsec -= 10**$config{'subsec_digits'};
-			$end_ts++;
-		}
-
-		my $output_string = sprintf("%s(%s) = %s <%s>", $op, $args, $ret, $elapsed_string);
-
-		$line_tag .= " " if (length($line_tag) > 0);
-
-		printf STDERR "line %d: %s\n", $line_num, $output_string if ($DEBUG >= 1);
-
-		output_udp_syslog_frame($ts, $ts_subsec,
-			$line_tag . "call:  " . $output_string);
-		output_udp_syslog_frame($end_ts, $end_ts_subsec,
-			$line_tag . "return:  " . $output_string);
-	} else {
-		printf STDERR "did not match: '%s'\n", $line;
+		$ts = $time_parser->parse_datetime($tmpstr)->epoch;
+	} else { # I guess this is just a raw message that is occurring _right_now_
+		$message = $line;
+		($ts, $ts_subsec) = gettimeofday; # subsec is in microseconds
+		$ts_subsec *= 10**($config{'subsec_digits'} - 6);
 	}
+
+	$ts += $config{'ts_adjust'};
+	$ts_subsec += $config{'ts_subsec_adjust'};
+
+	while ($ts_subsec > 10**$config{'subsec_digits'}) {
+		$ts_subsec -= 10**$config{'subsec_digits'};
+		$ts ++;
+	}
+
+	output_udp_syslog_frame($ts, $ts_subsec, $message);
 }
+
 if ($ARGV[0] ne "-") {
-	close($strace);
+	close($input);
 }
