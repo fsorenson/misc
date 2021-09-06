@@ -9,24 +9,19 @@ no warnings 'portable';
 use constant {
 	false => 0,
 	true => 1,
-};
 
-use constant {
 	EPB_HEADER_LEN => 9*4, # 9*4 + any options size
 	ETH_HEADER_LEN => 14, # 2x eth addrs + 4-byte type
 	IP_HEADER_LEN => 20,
 	UDP_HEADER_LEN => 8,
-};
 
-# linktypes
-use constant {
-	LINKTYPE_ETH => 1,
-	LINKTYPE_DLT_RAW => 101,
-};
-
+	# linktypes
+	LINKTYPE_ETH => 1, # https://www.ietf.org/id/draft-tuexen-opsawg-pcapng-03.html#LINKTYPES
+	LINKTYPE_DLT_RAW => 101, # https://www.ietf.org/id/draft-tuexen-opsawg-pcapng-03.html#LINKTYPES
 my $queued_bytes = '';
 my $queued_len = 0;
 
+	BYTE_ORDER_MAGIC => 0x1a2b3c4d,
 my $DEBUG = 0;
 
 sub trim {
@@ -35,7 +30,6 @@ sub trim {
 	return $s
 }
 
-use constant {
 	SHB => 0x0a0d0d0a,
 	IDB => 0x00000001,
 #	PB => 0x00000002, # obsolete
@@ -47,6 +41,24 @@ use constant {
 #	DSB => 0x0000000a, # also 'ZigBee NWK Key Data', 'ZigBee APS Key Data'
 	CB => 0x00000bad,
 	CB2 => 0x40000bad,
+
+
+
+	# option-related
+	EPB_FLAG_DIRECTION_UNKNOWN => 0,
+	EPB_FLAG_INBOUND => 0x0001,
+	EPB_FLAG_OUTBOUND => 0x0002,
+
+	EPB_FLAG_RECEPTION_TYPE_UNKNOWN => 0,
+	EPB_FLAG_UNICAST => (1 << 2),
+	EPB_FLAG_MULTICAST => (2 << 2),
+	EPB_FLAG_BROADCAST => (3 << 2),
+	EPB_FLAG_PROMISC => (4 << 2),
+
+	END_OF_OPTIONS => 0,
+
+        IPPROTO_TCP => 6,
+        IPPROTO_UDP => 17,
 };
 #   IDB - interface description block
 #   EPB - enhanced packet block
