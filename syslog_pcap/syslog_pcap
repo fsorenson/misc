@@ -196,6 +196,24 @@ sub print_u32 {
 		$val & 0xff, ($val >> 8) & 0xff,
 		($val >> 16) & 0xff, ($val >> 24) & 0xff);
 }
+GetOptions(
+        'debug|verbose|v+' => \$config{'debug'},
+	'tag=s' => \$config{'tag'},
+	'adjust_ts=s' => sub {
+		shift;
+		my $adjustment = shift;
+		printf STDERR "adjustment of %s seconds\n", $adjustment;
+		if (my ($adjust_s, $adjust_subsec) = $adjustment =~ $regexes{'adjustment_time'}) {
+			$config{'ts_adjust'} = $adjust_s if (defined($adjust_s));
+			if (defined($adjust_subsec)) {
+				$adjust_subsec *= 10**($config{'subsec_digits'} - length($adjust_subsec));
+				$config{'ts_subsec_adjust'} = $adjust_subsec;
+			}
+		} else {
+			printf STDERR "adjustment %s didn't match\n", $adjustment;
+		}
+	},
+);
 
 sub output_queued {
 	printf STDERR "queued len: %d (%x) - writing %d (%x), count of queued bytes: %d (%x)\n",
