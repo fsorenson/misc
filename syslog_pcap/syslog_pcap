@@ -5,6 +5,12 @@ use strict;
 
 no warnings 'portable';
 
+use Time::HiRes qw(gettimeofday);
+use POSIX qw(strftime);
+use DateTime::Format::Strptime;
+use Getopt::Long;
+use Socket;
+
 STDOUT->autoflush(1);
 
 my $program_name = 'syslog-pcap'; # for lack of a better name
@@ -23,12 +29,8 @@ use constant {
 	# linktypes
 	LINKTYPE_ETH => 1, # https://www.ietf.org/id/draft-tuexen-opsawg-pcapng-03.html#LINKTYPES
 	LINKTYPE_DLT_RAW => 101, # https://www.ietf.org/id/draft-tuexen-opsawg-pcapng-03.html#LINKTYPES
-my $queued_bytes = '';
-my $queued_len = 0;
 
 	BYTE_ORDER_MAGIC => 0x1a2b3c4d,
-my $DEBUG = 0;
-
 sub trim {
 	my $s = shift;
 	$s =~ s/^\s+|\s+$//g;
@@ -169,12 +171,12 @@ my %config = (
 
 	'ts_adjust' => 0,
 	'ts_subsec_adjust' => 0,
+my %queued_EPBs = ();
 
-sub print_pad_bytes {
-	my $len = shift;
-	for (my $i = 0 ; $i < $len ; $i++) {
-		printf("%c", 0);
-	}
+sub output_earliest_EPB {
+	my $earliest_ts = (sort keys %queued_EPBs)[0];
+	my $earliest_EPB = delete $queued_EPBs{$earliest_ts};
+	print $earliest_EPB;
 }
 sub bytes_u8 { return (chr($_[0] & 0xff)); }
 sub bytes_u16 { return (chr(($_[0] >> 8) & 0xff) . chr($_[0] & 0xff)); }
@@ -182,16 +184,33 @@ sub bytes_u32 { return (chr(($_[0] >> 24) & 0xff) . chr(($_[0] >> 16) & 0xff) .
 	chr(($_[0] >> 8) & 0xff) . chr($_[0] & 0xff)); }
 sub bytes_u64 { bytes_u32($_[0] >> 32) . bytes_u32($_[0] & 0xffffffff); }
 
+sub output_EPB {
+	my $ts = shift;
+	my $ts_subsec = shift;
+	my $EPB = shift;
 sub print_u8 {
 	my $val = shift;
 
+	if (scalar(keys %queued_EPBs) >= $config{'max_queue'}) {
+		output_earliest_EPB();
+	}
+	my $key = sprintf("%d.%0" . $config{'subsec_digits'} . "d", $ts, $ts_subsec);
 	printf("%c", $val & 0xff);
 }
 sub print_u16 {
 	my $val = shift;
 
+	$queued_EPBs{$key} = $EPB;
 	printf("%c%c", $val & 0xff, ($val >> 8) & 0xff);
 }
+sub flush_EPBs {
+	while (scalar(keys %queued_EPBs)) {
+		output_earliest_EPB();
+	}
+}
+END {
+	printf STDERR "flushing %d queued frames\n", scalar(keys %queued_EPBs) if ($config{'debug'} >= 1 && scalar(keys %queued_EPBs));
+	flush_EPBs();
 sub print_u32 {
 	my $val = shift;
 
@@ -218,20 +237,9 @@ GetOptions(
 	},
 );
 
-sub output_queued {
-	printf STDERR "queued len: %d (%x) - writing %d (%x), count of queued bytes: %d (%x)\n",
-	$queued_len, $queued_len,
-	$queued_len + 12, $queued_len + 12,
-	length($queued_bytes), length($queued_bytes) if ($DEBUG >= 1);
 
-	print_u32($queued_len + 12);
-	for (my $i = 0 ; $i < $queued_len ; $i++) {
-		printf("%c", ord(substr($queued_bytes, $i, 1)) & 0xff);
+
 	}
-	print_pad_bytes(calc_pad_bytes($queued_len));
-	print_u32($queued_len + 12);
-	$queued_bytes = '';
-	$queued_len = 0;
 }
 
 sub queue_u8 {
@@ -263,47 +271,16 @@ my $time_parser = DateTime::Format::Strptime->new( 'pattern' => '%Y-%m-%d %T %z'
 	queue_u32(($val >> 32) & 0xffffffff);
 	printf STDERR "queued 8 bytes\n" if ($DEBUG > 1);
 }
-sub queue_bytes {
+sub output_block {
 	my $val = shift;
 	my $len = length($val);
 
-	for (my $i = 0 ; $i < $len ; $i++) {
-		$queued_bytes .= sprintf("%c", ord(substr($val, $i, 1)) & 0xff);
-		$queued_len++;
-	}
-	printf STDERR "queued %d bytes\n", $len if ($DEBUG >= 1);
+	printf("%s", $val);
 }
-sub queue_pad_bytes {
-	my $len = shift;
-	for (my $i = 0 ; $i < $len ; $i++) {
-		$queued_bytes .= sprintf("%c", 0);
-		$queued_len++;
-	}
-	printf STDERR "queued %d pad bytes\n", $len if ($DEBUG >= 1);
-}
-sub queue_end_of_options {
-	queue_u16(0); # opt_endofopt = 0
-	queue_u16(0); # option length = 0
-}
+sub output_block { print $_[0]; }
 
 sub calc_pad_bytes { ($_[0] % 4 == 0) ? 0 : 4 - ($_[0] % 4); }
-# magic (32 bits)
-sub print_magic { print_u32(SHB); }
-# byte order magic (32 bits)
-# 0x1a2b3c4d by endian
-sub queue_byte_order_magic {
-	$queued_bytes .= sprintf("%c%c%c%c", 0x4d, 0x3c, 0x2b, 0x1a);
-	$queued_len += 4;
-}
-# major version (16 bits)
-# minor version (16 bits)
-sub queue_version {
-	my $maj = shift;
-	my $min = shift;
-
-	queue_u16($maj);
-	queue_u16($min);
-}
+sub pad_bytes { "\0"x($_[0]); }
 
 
 
@@ -484,59 +461,73 @@ sub queue_version {
 # ns_dnsIP4addr	3	4	no
 # ns_dnsIP6addr	4	16	no
 
-sub queue_option_varlen {
-	my $id = shift;
-	my $val = shift;
-	my $len = length($val);
-
-	queue_u16($id); # option num
-	queue_u16($len);
-	queue_bytes($val);
-	queue_pad_bytes(calc_pad_bytes($len));
+sub option_bytes_var { # option with variable number of bytes
+	return pack('v v a*', $_[0], length($_[1]), $_[1]);
 }
 
-sub queue_option {
-	my $name = shift;
-	my $val = shift;
+my %option_constructors = (
+	'opt_comment' => sub { option_bytes_var(1, $_[0]); },
 
-	if ($name eq "opt_comment") { queue_option_varlen(1, $val);
-	##### Section Header Block options
-	} elsif ($name eq "shb_hardware") { queue_option_varlen(2, $val)
-	} elsif ($name eq "shb_os") { queue_option_varlen(3, $val);
-	} elsif ($name eq "shb_userappl") { queue_option_varlen(4, $val);
+	'shb_hardware' => sub { option_bytes_var(2, $_[0]); },
+	'shb_os' => sub { option_bytes_var(3, $_[0]); },
+	'shb_userappl' => sub { option_bytes_var(4, $_[0]); },
 
-	} elsif ($name eq "if_name") { queue_option_varlen(2, $val);
-	} elsif ($name eq "if_tsresol") {
-		queue_u16(9); # option #
-		queue_u16(1); # length
-		queue_u8($val);
-		queue_pad_bytes(3);
-	} elsif ($name eq "if_filter") { queue_option_varlen(11, $val);
-	} elsif ($name eq "if_os") { queue_option_varlen(12, $val);
+	#	3 - if_description (variable)
+	#	4 - if_IPv4addr (8 bytes)
+	#	5 - if_IPv6addr (17 bytes)
+	#	6 - if_MACaddr (8 bytes)
+	#	7 - if_EUIaddr (8 bytes)
+	#	8 - if_speed (8 bytes)
+	#	9 - if_tsresol (1 byte)
+	#	10 - if_tzone (4 bytes)
+	#	11 - if_filter (variable, minimum 1)
+	#	12 - if_os (variable)
+	#	13 - if_fcslen (1 byte)
+	#	14 - if_tsoffset (8 bytes)
+	#	15 - if_hardware (variable)
+	#	16 - if_txspeed (8 bytes)
+	#	17 - if_rxspeed (8 bytes)
+	'if_name' => sub { option_bytes_var(2, $_[0]); }, # variable len
+	'if_description' => sub { option_bytes_var(3, $_[0]); },
+	'if_IPv4addr' => sub {
+		my $str = shift;
+		if (my ($addr, $mask) = $str =~ /^$patterns{'ipv4_addr'}\/$patterns{'ipv4_addr'}$/) {
+			return pack('v v V V',
+				4, 8, $addr, $mask);
+		}
+		return '';
+	},
+#	'if_IPv6addr' ...
+#	'if_MACADDR' => sub { ...
+	'if_speed' => sub { pack('v v Q', 8, 8, $_[0]); },
+	'if_tsresol' => sub { pack('v v C x3', 9, 1, $_[0]); },
+	'if_filter' => sub { option_bytes_var(11, $_[0]); },
+	'if_os' => sub { option_bytes_var(12, $_[0]); },
+	'if_filter' => sub { option_bytes_var(11, $_[0]); },
+	'if_txspeed' => sub { pack('v v Q', 16, 8, $_[0]); },
+	'if_rxspeed' => sub { pack('v v Q', 17, 8, $_[0]); },
 
+	'epb_flags' => sub { pack('v v V', 2, 4, $_[0]); },
+
+	'end_of_options' => sub { pack('x2 x2'); },
+);
+
+sub construct_option {
+	my $option_name = shift;
+
+	if (defined($option_constructors{$option_name})) {
+#		return $option_constructors{$option_name}(@_);
+		my $ret = $option_constructors{$option_name}(@_);
+		my $pad_count = calc_pad_bytes(length($ret));
+		printf STDERR "generated %d bytes for option '%s' (input string was %d bytes) -- adding %d pad bytes\n", length($ret), $option_name,
+			defined($_[0]) ? length($_[0]) : -1, $pad_count if ($config{'debug'} >= 1);
+		$ret .= pad_bytes(calc_pad_bytes(length($ret)));
+		return $ret;
 	}
+
+	return '';
 }
 
-sub output_SHB {
-	print_magic();
-
-	queue_byte_order_magic();
-	queue_version(1, 0);
-	queue_u64(0xffffffffffffffff); # section length - use -1 for 'figure it out'
-	# block total length (32 bits) -- same as above
-
-	# OS option
-	queue_option('opt_comment', "syslog-to-pcap");
-	#queue_option("opt_comment", "Generated from input file Standard input.");
-	#queue_option("shb_userappl", "Text2pcap (Wireshark) 3.4.7 (Git commit e42cbf6a415f)");
-
-	#queue_option(3, "Linux 3.10.0-1160.11.1.el7.x86_64");
-	#queue_option(4, "Dumpcap 1.10.14 (Git Rev Unknown from unknown)");
-	queue_end_of_options();
-	output_queued();
-
-
-	#########################################
 sub encapsulate_block_data {
 	my $block_type = shift;
 	my $block_data = shift;
@@ -545,33 +536,42 @@ sub encapsulate_block_data {
 		$block_type, length($block_data) + 12,
 		$block_data, length($block_data) + 12);
 }
-	# block type (32 bits)
-	# block total length (32 bits)
-	# linktype (16 bits)
-	# reserved (16 bits) -- must be 0
-	# snaplen (32 bits) -- 0 means no limit
 
-	# build an idb
-	print_u32(1); # block type IDB
-	# queue_u16(1); # linktype - ethernet - https://www.ietf.org/id/draft-tuexen-opsawg-pcapng-03.html#LINKTYPES
-	# queue_u16(101); # linktype - DLT_RAW raw ip - https://www.ietf.org/id/draft-tuexen-opsawg-pcapng-03.html#LINKTYPES
-	queue_u16($config{'linktype'});
-	queue_u16(0); # reserved - must be 0
-	queue_u32(256*1024); # snaplen - 0 = no limit
+sub construct_SHB {
+	# need to build the remainder of the block before we can output the size as well
+	my $block_data = pack('V v v q a* a* a*',
+		BYTE_ORDER_MAGIC,
+		1, 0, # version 1.0
+		-1, # length of section; -1 to 'figure it out'
+		construct_option('opt_comment', 'generated by ' . $program_name),
 
-	queue_option("if_name", "syslog");
+#		construct_option('opt_comment', 'generated from standard input'),
+#		construct_option('opt_comment', 'generated from input file <name>'),
 
-	# tsresol
-	queue_option("if_tsresol", 6);
+		construct_option('shb_userappl', $program_name . 'version ' . $program_version),
 
-	#queue_option(11, "\0tcp port 2049 or udp port 514"); # prefixed by an octet designating the type of filter
-	#queue_option(12, "Linux 3.10.0-1160.11.1.el7.x86_64");
+		# could add: construct_option('shb_os', 'Linux 3.10.0-1160.11.1.el7.x86_64'),
+		# could add: construct_option('shb_hardware', ' uhm...  not sure really'),
 
-	queue_end_of_options();
-	output_queued();
+		construct_option('end_of_options'),,
+	);
 
+	return encapsulate_block_data(SHB, $block_data);
 }
 
+sub construct_IDB {
+	my $block_data = pack('v v V a* a* a* a* a*',
+		$config{'linktype'},
+		0,
+		256 * 1024,
+		(defined($config{'tag'}) && length($config{'tag'})) ? construct_option('if_name', $config{'tag'}) : '',
+		(defined($config{'subsec_digits'}) && $config{'subsec_digits'}) ? construct_option('if_tsresol', $config{'subsec_digits'}) : '',
+		(defined($config{'filter'}) && length($config{'filter'})) ? construct_option('if_filter', $config{'filter'}) : '',
+		(defined($config{'if_os'}) && length($config{'if_os'})) ? construct_option('if_os', $config{'if_os'}) : '',
+		construct_option('end_of_options')
+	);
+
+	return encapsulate_block_data(IDB, $block_data);
 sub htons {
 	return (($_[0] >> 8) & 0xff) + (($_[0] << 8) & 0xff00);
 }
@@ -628,8 +628,6 @@ sub calc_udp_chksum {
 sub construct_EPB_opts {
 	my $epb_opts = '';
 	# add epb options
-	$epb_opts .= bytes_u16(0x0002); # epb_flags
-	$epb_opts .= bytes_u8(0x04); # length of epb_flags
 	# bits 16-31 - LL depenent errors
 	# bits 9-15 - reserved - must be 0
 	# bits 5-8 - fcs length, in octets (0000 if not available)
@@ -639,10 +637,10 @@ sub construct_EPB_opts {
 	#     010 - multicast
 	#     011 - broadcast
 	#     100 - promisc
-	$epb_opts .= bytes_u16(0x0002); # multicast
-	$epb_opts .= bytes_u8(0); # pad to 32-bit
-	$epb_opts .= bytes_u8(0); # pad to 32-bit
-	$epb_opts .= bytes_u8(0); # pad to 32-bit
+
+	$epb_opts = construct_option('epb_flags', EPB_FLAG_OUTBOUND | EPB_FLAG_MULTICAST);
+	$epb_opts .= construct_option('end_of_options');
+
 	return $epb_opts;
 }
 sub construct_EPB {
@@ -761,9 +759,7 @@ sub output_udp_syslog_frame {
 		# nothing to do
 	}
 
-	my $EPB_data = construct_EPB($ts, $ts_subsec, $payload);
-
-	printf "%s", $EPB_data;
+	output_EPB($ts, $ts_subsec, construct_EPB($ts, $ts_subsec, $payload));
 }
 
 die("must give input filename") if (!defined($ARGV[0]));
@@ -775,11 +771,8 @@ if ($ARGV[0] eq "-") {
 	open($input, '<', $ARGV[0]) or die("could not open file '" . $ARGV[0] . "': $!");
 }
 
-output_SHB();
-# header is complete...  now start creating syslog frames containing strace lines
-
-
-
+output_block(construct_SHB());
+output_block(construct_IDB());
 
 my $line_num = 0;
 while (<$input>) {
