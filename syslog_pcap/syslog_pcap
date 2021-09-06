@@ -165,7 +165,6 @@ my $trace_is_test_program = false;
 
 	'ts_adjust' => 0,
 	'ts_subsec_adjust' => 0,
-sub calc_pad_bytes { ($_[0] % 4 == 0) ? 0 : 4 - ($_[0] % 4); }
 
 sub print_pad_bytes {
 	my $len = shift;
@@ -282,6 +281,7 @@ sub queue_end_of_options {
 	queue_u16(0); # option length = 0
 }
 
+sub calc_pad_bytes { ($_[0] % 4 == 0) ? 0 : 4 - ($_[0] % 4); }
 # magic (32 bits)
 sub print_magic { print_u32(SHB); }
 # byte order magic (32 bits)
@@ -532,8 +532,14 @@ sub output_SHB {
 
 
 	#########################################
+sub encapsulate_block_data {
+	my $block_type = shift;
+	my $block_data = shift;
 
-
+	pack('V V a* V',
+		$block_type, length($block_data) + 12,
+		$block_data, length($block_data) + 12);
+}
 	# block type (32 bits)
 	# block total length (32 bits)
 	# linktype (16 bits)
@@ -636,102 +642,68 @@ sub construct_EPB {
 	my $payload = shift;
 	my $payload_len = length($payload);
 
-
-	my $payload_pad_len = calc_pad_bytes($payload_len);
-
-	my $EPB_opts = construct_EPB_opts();
-	my $EPB_opts_len = length($EPB_opts);
-
-	my $EPB_len = EPB_HEADER_LEN + $payload_len +
-		$payload_pad_len + $EPB_opts_len;
-
-	my $ret = '';
-
-	$ret .= bytes_u32(endian_u32(EPB));
-
-	$ret .= bytes_u32(endian_u32($EPB_len));
-
-	$ret .= bytes_u32(0); # interface id
-
 	# frame
 	$ts *= (10**$config{'subsec_digits'});
 	$ts += $ts_subsec;
 
-	my $ts_high = $ts >> 32;
-	my $ts_low = $ts & 0xffffffff;
+	my $ret = pack('V V V V V a* a*',
+		0, # interface id
+		($ts >> 32) & 0xffffffff,
+		$ts & 0xffffffff,
+		length($payload),
+		length($payload),
+		$payload . pad_bytes(calc_pad_bytes(length($payload))),
+		construct_EPB_opts(),
+	);
 
-	$ret .= bytes_u32(endian_u32($ts_high));
-	$ret .= bytes_u32(endian_u32($ts_low));
-
-	$ret .= bytes_u32(endian_u32($payload_len)); # captured len         # 4 bytes
-	$ret .= bytes_u32(endian_u32($payload_len)); # frame length         # 4 bytes
-
-	$ret .= $payload;
-	while (length($ret) % 4) { $ret .= chr(0); } # pad to 32-bit
-
-	$ret .= $EPB_opts;
-	$ret .= bytes_u32(0); # end of options
-
-	$ret .= bytes_u32(endian_u32($EPB_len));
-	return $ret;
+	return encapsulate_block_data(EPB, $ret);
 }
 
-sub construct_eth { # irrelevant if frames are not encapsulated in eth
-	my $type = shift;
-	my $ret = '';
-
-	$ret .= chr(0x0a) . chr(0x02) . chr(0x02) . chr(0x02) . chr(0x02) . chr(0x01); # dst eth
-	$ret .= chr(0x0a) . chr(0x02) . chr(0x02) . chr(0x02) . chr(0x02) . chr(0x02); # src eth
-	$ret .= chr(($type >> 8) & 0xff) . chr($type & 0xff);
-	return $ret;
+sub construct_eth { # irrelevant if encapsulated directly as IP
+	return pack('H* H* n',
+		'0a0202020201',  # dst eth
+		'0a0202020202',  # src eth
+		$_[0] # type
+	);
 }
-sub construct_ipv4_header {
-	my $src_ip = shift;
-	my $dst_ip = shift;
-	my $len = shift;
 
-	my $ip_chksum = 0;
-	my $ret = "";
+sub construct_ipv4 {
+	my $srcip = shift;
+	my $dstip = shift;
+	my $payload = shift;
 
-	my $ip_len = IP_HEADER_LEN + $len;
+	my $chksum = 0;
 
+	my $ip_hdr = pack('H2 B8 n2 B16 C2 n N2',
+		'45',
+		'000000' . '00', # 6 bits dscp, 2 bits ecn
+		length($payload) + IP_HEADER_LEN,
+		$config{'ip_id'},
+		'0' . '0' . '0' . '0000000000000', # reserved: 0, DF: 0, more frags: 0, frag_offset: 0
+		$config{'ip_ttl'},
+		IPPROTO_UDP,
+		0, # ip chksum
+		$srcip, $dstip);
 
-	# ip version (4 bits)
-	# ip header len (4 bits): 20 bytes
-	$ret .= chr(0x45); # 0x40 (ipv4) | header: 20 bytes/4 (4-byte words)
-	$ret .= chr(0); # ecn
-	$ip_chksum = ip_chksum_add($ip_chksum, 0x4500);
+	foreach my $add (unpack('n*', $ip_hdr)) {
+		$chksum += $add;
+		$chksum = (($chksum & 0xffff) + (($chksum >> 16) & 0xffff)) & 0xffff;
+		printf STDERR "adding 0x%04x to ip chksum\n", $add & 0xffff if ($config{'debug'} >= 2);
+	}
+	$chksum = $chksum ^ 0xffff;
 
-	#total length
-	$ret .= chr(($ip_len >> 8) & 0xff) . chr($ip_len & 0xff);
-	$ip_chksum = ip_chksum_add($ip_chksum, $ip_len);
+	$ip_hdr = pack('H2 B8 n2 B16 C2 n N2',
+		'45',
+		'000000' . '00', # 6 bits dscp, 2 bits ecn
+		length($payload) + IP_HEADER_LEN,
+		$config{'ip_id'},
+		'0' . '0' . '0' . '0000000000000', # reserved: 0, DF: 0, more frags: 0, frag_offset: 0
+		$config{'ip_ttl'},
+		IPPROTO_UDP,
+		$chksum, # ip chksum
+		$srcip, $dstip);
 
-	# id
-	$ret .= chr(0x12) . chr(0x34); # id: 0x1234
-	$ip_chksum = ip_chksum_add($ip_chksum, 0x1234);
-
-	$ret .= chr(0) . chr(0); # 3 bits of flags + 13 bits of fragment offset
-	$ip_chksum = ip_chksum_add($ip_chksum, 0);
-
-	$ret .= chr(255); # ttl = 255
-	$ret .= chr(17); # UDP
-	$ip_chksum = ip_chksum_add($ip_chksum, 0xff11);
-
-	# calc checksum of the rest, then output checksum, then remaining bytes
-	$ip_chksum = ip_chksum_add($ip_chksum, ($src_ip >> 16) & 0xffff);
-	$ip_chksum = ip_chksum_add($ip_chksum, $src_ip & 0xffff);
-	$ip_chksum = ip_chksum_add($ip_chksum, ($dst_ip >> 16) & 0xffff);
-	$ip_chksum = ip_chksum_add($ip_chksum, $dst_ip & 0xffff);
-
-	$ip_chksum = ip_chksum_get($ip_chksum);
-	$ret .= chr(($ip_chksum >> 8) & 0xff) . chr($ip_chksum & 0xff);
-
-	$ret .= chr(($src_ip >> 24) & 0xff) . chr(($src_ip >> 16) & 0xff) .
-		chr(($src_ip >> 8) & 0xff) . chr($src_ip & 0xff);
-	$ret .= chr(($dst_ip >> 24) & 0xff) . chr(($dst_ip >> 16) & 0xff) .
-		chr(($dst_ip >> 8) & 0xff) . chr($dst_ip & 0xff);
-
-	return $ret;
+	return $ip_hdr . $payload;
 }
 sub construct_udp {
 	my $src_ip = shift;
