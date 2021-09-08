@@ -1,0 +1,412 @@
+#!/usr/bin/perl -w
+
+use strict;
+use warnings;
+
+use File::Basename;
+use Data::Dumper;
+use Cwd 'abs_path';
+use POSIX 'strerror';
+
+
+my %xprt_info = ();
+
+my %rpc_xprt_states = (
+	0 => "XPRT_LOCKED",
+	1 => "XPRT_CONNECTED",
+	2 => "XPRT_CONNECTING",
+	3 => "XPRT_CLOSE_WAIT",
+	4 => "XPRT_BOUND",
+	5 => "XPRT_BINDING",
+	6 => "XPRT_CLOSING",
+	9 => "XPRT_CONGESTED",
+);
+my %rpc_task_flags = (
+	0x0001 => "RPC_TASK_ASYNC",
+	0x0002 => "RPC_TASK_SWAPPER",
+	0x0020 => "RPC_CALL_MAJORSEEN",
+	0x0040 => "RPC_TASK_ROOTCREDS",
+	0x0080 => "RPC_TASK_DYNAMIC",
+	0x0100 => "RPC_TASK_KILLED",
+	0x0200 => "RPC_TASK_SOFT",
+	0x0400 => "RPC_TASK_SOFTCONN",
+	0x0800 => "RPC_TASK_SENT",
+	0x1000 => "RPC_TASK_TIMEOUT",
+	0x2000 => "RPC_TASK_NOCONNECT",
+	0x4000 => "RPC_TASK_NO_RETRANS_TIMEOUT",
+);
+sub indent_str {
+	my $count = shift;
+	return "  " x $count;
+}
+
+sub xprt_states_str {
+	my @ret = ();
+	my $val = int(shift);
+
+	foreach my $bit (sort {$a <=> $b} keys(%rpc_xprt_states)) {
+		my $name = $rpc_xprt_states{$bit};
+		if ($val & (1 << $bit)) {
+			push(@ret, substr($name, 5));
+		}
+	}
+	return join(" | ",@ret);
+};
+sub print_xprt {
+#	my $xprt_num = shift;
+	my $xprt = shift;
+
+	our %xprt_info;
+
+#	printf("looking for xprt info for '%s'\n", $xprt_num);
+
+#if (! defined($xprt_info{$xprt_num})) {
+#	printf("no xprt '%s' defined:\n", $xprt_num);
+if (! defined($xprt_info{$xprt})) {
+	printf("no xprt '%s' defined:\n", $xprt);
+#if (! %{$xprt_info{$xprt_num}}) {
+	print Dumper(\%xprt_info);
+	return;
+}
+#	my %rpc_xprt = %{$xprt_info{$xprt_num}};
+	my %rpc_xprt = %{$xprt_info{$xprt}};
+
+#if (! defined($xprt_info{$xprt})) {
+#	printf("rpc_xprt for '%s' not defined?\n", $xprt);
+
+#} else {
+#	printf("rpc_xprt for '%s' defined\n", $xprt);
+
+#	print Dumper(\%rpc_xprt);
+
+#}
+
+#printf("looking for xprt_info for '%s'\n", $xprt);
+#print Dumper(\%xprt_info);
+
+#printf("xprt_info{'%s'}:\n", $xprt);
+#print Dumper(\%rpc_xprt);
+
+
+
+	if ($rpc_xprt{'netid'} eq "local") {
+#		printf("%x: %s - ", $xprt_num, $rpc_xprt{'addr'});
+		printf("%s: %s - ", $xprt, $rpc_xprt{'addr'});
+	} elsif ($rpc_xprt{'netid'} eq "tcp") {
+#		printf("%x: %s:%d - ", $xprt_num, $rpc_xprt{'addr'}, $rpc_xprt{'port'});
+		printf("%s: %s:%d - ", $xprt, $rpc_xprt{'addr'}, $rpc_xprt{'port'});
+	} else {
+#		printf("%x: netid: %s, addr: %s, port: %s - ", $xprt_num, $rpc_xprt{'netid'}, $rpc_xprt{'addr'}, $rpc_xprt{'port'});
+		printf("%s: netid: %s, addr: %s, port: %s - ", $xprt, $rpc_xprt{'netid'}, $rpc_xprt{'addr'}, $rpc_xprt{'port'});
+	}
+	printf("%s\n", xprt_states_str($rpc_xprt{'state'}));
+}
+sub rpc_task_flags_str {
+	my $val = hex(shift);
+	my @ret = ();
+
+	foreach my $key (sort {$a<=>$b} keys(%rpc_task_flags)) {
+		my $name = $rpc_task_flags{$key};
+		if ($val & hex($key)) {
+			push(@ret, substr($name, 9));
+		}
+	}
+	return join(" | ",@ret);
+};
+
+sub barf {
+	my $msg = shift;
+	printf("%s\n", $msg);
+	return -1;
+}
+sub print_task {
+	my $task = shift;
+
+	my %rpc_task = %{ $task };
+
+#	printf("\n") if ($xprt_task_count++ != 0);
+
+	printf("%spid %d:  %s %s", indent_str(1), $rpc_task{'pid'}, $rpc_task{'prog'}, $rpc_task{'proc'});
+	if ($rpc_task{'xid'} != 0)  {
+		printf(" - xid: 0x%08x", $rpc_task{'xid'});
+	} else {
+		printf("%17s", "");
+	}
+	printf(" - status: %d (%s)", $rpc_task{'status'}, strerror(-$rpc_task{'status'})) if ($rpc_task{'status'} != 0);
+	printf("\n");
+
+	my $task_flags_str = rpc_task_flags_str($rpc_task{'flags'});
+	printf("%sflags: %s\n", indent_str(2), $task_flags_str);
+
+	printf("%s%s, %s\n", indent_str(2), $rpc_task{'queue'}, $rpc_task{'action'});
+}
+
+
+sub gather_xprt_info {
+	my $path = shift;
+
+	our %xprt_info;
+
+#	my $rpc_xprt_dir = $dir . "/rpc_xprt";
+#	opendir DIR, $rpc_xprt_dir or return barf("Unable to open $rpc_xprt_dir");
+	my $rpc_xprt_dir = $path . "/rpc_xprt";
+	opendir DIR, $rpc_xprt_dir or return barf("Unable to open $rpc_xprt_dir");
+	my @xprt_contents = readdir DIR;
+	closedir DIR;
+
+	foreach my $xprt (@xprt_contents) {
+		next if ($xprt eq "." || $xprt eq "..");
+		my $info_file = $rpc_xprt_dir . "/" . $xprt . "/info";
+#		my $xprt_num = hex($xprt);
+
+#printf("reading xprt info file '%s'\n", $info_file);
+
+		$xprt_info{$xprt}{'xprt_num'} = hex($xprt);
+		$xprt_info{$xprt}{'num'} = hex($xprt);
+		open (my $fh, $info_file) or return barf("unable to open $info_file");
+		while (my $line = <$fh>) {
+			chomp $line;
+			if ($line =~ /^state: (.+)/) {
+#				$xprt_info{$xprt_num}{'state'} = hex($1);
+				$xprt_info{$xprt}{'state'} = hex($1);
+			} elsif ($line =~ /^netid: (.+)/) {
+#				$xprt_info{$xprt_num}{'netid'} = $1;
+				$xprt_info{$xprt}{'netid'} = $1;
+			} elsif ($line =~ /^addr: (.+)/) {
+#				$xprt_info{$xprt_num}{'addr'} = $1;
+				$xprt_info{$xprt}{'addr'} = $1;
+			} elsif ($line =~ /^port: (.+)/) {
+#				$xprt_info{$xprt_num}{'port'} = $1;
+				$xprt_info{$xprt}{'port'} = $1;
+			}
+		}
+		close $fh;
+#		$xprt_info{$xprt_num}{'tasks'} = [];
+#		$xprt_info{$xprt_num}{'clnts'} = [];
+	}
+}
+
+sub dump_rpcs {
+#	my $root = shift;
+	my $rpc_clnt_dir = shift;
+
+	my %clnt_info = ();
+
+	opendir DIR, $rpc_clnt_dir or return barf("Unable to open $rpc_clnt_dir");
+	my @clnt_contents = readdir DIR;
+	closedir DIR;
+
+
+	my $rpc_clnt_count = 0;
+	foreach my $clnt (@clnt_contents) {
+		next if ($clnt eq "." || $clnt eq "..");
+		my $clnt_num = hex($clnt);
+
+		$clnt_info{$clnt}{'clnt'} = $clnt;
+#		$clnt_info{$clnt}{'clnt_num'} = $clnt_num;
+		$clnt_info{$clnt}{'clnt_num'} = hex($clnt);
+
+		@{$clnt_info{$clnt}{'xprts'}} = ();
+		@{$clnt_info{$clnt}{'tasks'}} = ();
+
+#	foreach my $rpc_clnt (sort {$a<=>$b} keys(%clnt_info)) 
+#		my %clnt = %{$clnt_info{$rpc_clnt}};
+
+		printf("\n") if ($rpc_clnt_count++ != 0);
+		printf("%d:  clnt %s\n", $rpc_clnt_count, $clnt);
+
+
+#		my @clnt_xprts = ();
+#		my $this_clnt_dir = $rpc_clnt_dir . "/" . $clnt;
+		opendir DIR, $rpc_clnt_dir . "/" . $clnt or return barf("Unable to open $rpc_clnt_dir/$clnt");
+		my @tmp_contents = readdir DIR;
+		closedir DIR;
+
+		foreach my $tmp_entry (@tmp_contents) {
+#			push @clnt_xprts, $tmp_entry if (substr($tmp_entry, 1, 4) eq "xprt");
+#			push @clnt_xprts, basename(readlink $rpc_clnt_dir . "/" . $clnt . "/" . $tmp_entry);
+			next if ($tmp_entry eq "." || $tmp_entry eq "..");
+			my $p = $rpc_clnt_dir . "/" . $clnt . "/" . $tmp_entry;
+
+next if (substr($tmp_entry, 0, 4) ne "xprt");
+
+next if (!defined(readlink $p));
+#printf("readlink(%s): %s\n", $p, readlink $p) if (defined(readlink $p));
+#printf("basename(readlink(%s)): %s\n", $p, basename readlink $p);
+			push @{$clnt_info{$clnt}{'xprts'}}, basename(readlink $rpc_clnt_dir . "/" . $clnt . "/" . $tmp_entry);
+
+		}
+		undef @tmp_contents;
+
+		my $tasks_file = $rpc_clnt_dir . "/" . $clnt . "/tasks";
+		open (my $fh, $tasks_file) or return barf("unable to open $tasks_file");
+		my $task_count = 0;
+
+		while (my $line = <$fh>) {
+			chomp $line;
+
+			my $task_xprt = 'none';
+
+			if (my @matches = $line =~ /(.+)\sxprt:([^ ]+)(.*)/) {
+				$task_xprt = $2;
+#				chomp $task_xprt;
+#				printf("have an xprt: *%s*\n", $task_xprt);
+				$line = $1.$3;
+			}
+
+#			if (my @matches = $line =~ /^\s*([0-9]+) ([0-9a-f]+) \s*([-0-9]+) (0x[0-9a-f]+) (0x[0-9a-f]+) \s*([0-9]+) ([^ ]+ [^ ]+) ([^ ]+v[^ ]+) ([^ ]+) (a:[^ ]+ \[[^ ]+\]) (q:.+)/) {
+			if (my @matches = $line =~ /^\s*([0-9]+) ([0-9a-f]+) \s*([-0-9]+) (0x[0-9a-f]+) (0x[0-9a-f]+) \s*([0-9]+) ([^ ]+ [^ ]+) ([^ ]+v[^ ]+) ([^ ]+)\s+(a:[^ ]+(?: \[[^ ]+\])?) (q:.+)/) {
+#			if (my @matches = $line =~ /^\s*([0-9]+) ([0-9a-f]+) \s*([-0-9]+) (0x[0-9a-f]+) (0x[0-9a-f]+) \s*([0-9]+) ([^ ]+ [^ ]+) ([^ ]+v[^ ]+) ([^ ]+)\s+(q:.+)/) {
+
+				#}
+
+				my $task_action = $10;
+				$task_action = 'a:none' if ($task_action eq 'a:0x0');
+
+				my %new_task = (
+					'pid' => $1,
+					'flags' => $2,
+					'status' => $3,
+					'clientid' => hex($4),
+					'xid' => hex($5),
+					'timeout' => $6,
+					'ops' => $7,
+					'prog' => $8,
+					'proc' => $9,
+					'action' => $task_action,
+					'queue' => $11,
+					'xprt' => $task_xprt,
+				);
+#				push @{$xprt_info{$xprt_num}{'tasks'}}, \%new_task;
+				push @{$clnt_info{$clnt}{'tasks'}}, \%new_task;
+
+
+
+				#$clnt
+
+
+			} else {
+				printf("non-matching string: '%s'\n", $line);
+			}
+		}
+#		my $rpc_clnt_xprt_dir = $rpc_clnt_dir . "/" . $clnt . "/xprt";
+
+#		my $xprt_num = hex(basename(readlink($rpc_clnt_xprt_dir)));
+#		push @{$xprt_info{$xprt_num}{'clnts'}}, $clnt_num;
+
+
+
+
+
+		printf("\t%d tasks\n", scalar @{$clnt_info{$clnt}{'tasks'}});
+		printf("\t%d rpc_xprts\n", scalar @{$clnt_info{$clnt}{'xprts'}});
+		my $rpc_xprt_count = 0;
+
+		my $xprt_task_count = 0;
+		foreach my $task (@{$clnt_info{$clnt}{'tasks'}} ) {
+			my %rpct = %{ $task };
+#			if (${%{$task}}{'xprt'} == "none") {
+			if ($rpct{'xprt'} eq "none") {
+				printf("tasks not associated with an rpc_xprt:\n") if ($xprt_task_count == 0);
+				printf("\n") if ($xprt_task_count++ != 0);
+				print_task($task);
+#        my %rpc_task = %{ $task };
+
+
+#			printf("\n") if ($xprt_task_count++ != 0);
+#			print_task($task);
+			} else {
+#				printf("task with xprt ' %s\n", $rpct{'xprt'});
+			}
+		}
+
+
+		foreach my $xprt (@{$clnt_info{$clnt}{'xprts'}}) {
+			printf("\t");
+			print_xprt($xprt);
+		}
+		$xprt_task_count = 0;
+		foreach my $task (@{$clnt_info{$clnt}{'tasks'}} ) {
+			printf("\n") if ($xprt_task_count++ != 0);
+			print_task($task);
+
+#		my @tasks = @{ $rpc_xprt{'tasks'} };
+#		my $xprt_task_count = 0;
+#		foreach my $task (@tasks) {
+
+
+		}
+	}
+
+
+
+if (0) {
+	my $rpc_xprt_count = 0;
+	foreach my $rpc_xprt_num (sort {$a<=>$b} keys(%xprt_info)) {
+		my %rpc_xprt = %{$xprt_info{$rpc_xprt_num}};
+
+		printf("\n") if ($rpc_xprt_count++ != 0);
+		if ($rpc_xprt{'netid'} eq "local") {
+			printf("%x: %s - ", $rpc_xprt_num, $rpc_xprt{'addr'});
+		} elsif ($rpc_xprt{'netid'} eq "tcp") {
+			printf("%x: %s:%d - ", $rpc_xprt_num, $rpc_xprt{'addr'}, $rpc_xprt{'port'});
+		} else {
+			printf("%x: netid: %s, addr: %s, port: %s - ", $rpc_xprt_num, $rpc_xprt{'netid'}, $rpc_xprt{'addr'}, $rpc_xprt{'port'});
+		}
+		printf("%s\n", xprt_states_str($rpc_xprt{'state'}));
+
+		my @tasks = @{ $rpc_xprt{'tasks'} };
+		my $xprt_task_count = 0;
+		foreach my $task (@tasks) {
+
+			my %rpc_task = %{ $task };
+
+			printf("\n") if ($xprt_task_count++ != 0);
+
+			printf("%spid %d:  %s %s", indent_str(1), $rpc_task{'pid'}, $rpc_task{'prog'}, $rpc_task{'proc'});
+			if ($rpc_task{'xid'} != 0)  {
+				printf(" - xid: 0x%08x", $rpc_task{'xid'});
+			} else {
+				printf("%17s", "");
+			}
+			printf(" - status: %d (%s)", $rpc_task{'status'}, strerror(-$rpc_task{'status'})) if ($rpc_task{'status'} != 0);
+			printf("\n");
+
+			my $task_flags_str = rpc_task_flags_str($rpc_task{'flags'});
+			printf("%sflags: %s\n", indent_str(2), $task_flags_str);
+
+			printf("%s%s, %s\n", indent_str(2), $rpc_task{'queue'}, $rpc_task{'action'});
+		}
+	}
+
+}
+
+
+	return 0;
+}
+
+push(@ARGV, "/") if (scalar(@ARGV) == 0);
+
+foreach my $root_dir (@ARGV) {
+
+	if (! -d $root_dir) {
+		printf("no directory: %s\n", $root_dir);
+		next;
+	}
+
+	my $sunrpc_dir = $root_dir . "/sys/kernel/debug/sunrpc";
+#	my $rpc_xprt_dir = $root_dir . "/rpc_xprt";
+#	return barf("no debug directory: $sunrpc_dir") if (! -d $sunrpc_dir);
+	if (! -d $sunrpc_dir) {
+		printf("no debug directory: %s\n", $sunrpc_dir);
+		next;
+	}
+
+	%xprt_info = ();
+
+	gather_xprt_info($sunrpc_dir);
+
+	my $rpc_clnt_dir = $sunrpc_dir . "/rpc_clnt";
+	dump_rpcs($rpc_clnt_dir);
+
+}
