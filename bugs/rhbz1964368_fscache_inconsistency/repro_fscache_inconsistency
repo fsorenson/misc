@@ -1,0 +1,115 @@
+#!/bin/bash
+
+# Prerequisites :
+#
+# - SERVER: passwordless ssh with CLIENT
+# - CLIENT: share mounted with filesystem cache and cachefilesd up
+
+#CLIENT_IP="172.23.1.193"
+CLIENT_IP="127.0.0.1"
+SHARE_PATH="/exports"
+EXPORT="$SHARE_PATH"
+MOUNT_PATH="/mnt/tmp"
+
+BS=$(basename $0)
+TMP1="/tmp/$BS.tmp1"
+TMP2="/tmp/$BS.tmp2"
+RESULT="PASS"
+
+rm -f /tmp/fscache_stats-*
+
+file_list=""
+
+copy_and_check()
+{
+	local f
+#cp /proc/fs/fscache/stats /tmp/fscache_stats-$(date +%s.%09N)
+
+	cp $EXPORT/$1 $EXPORT/$TARGET
+	echo ; echo "$(date +%s.%09N) => SERVER MD5 :"
+	for f in $file_list ; do 
+		md5sum $EXPORT/$f | awk -vf=$f '{print f" - "$1}'
+	done | tee $TMP1
+
+	echo "$(date +%s.%09N) => CLIENT MD5 :"
+#cp /proc/fs/fscache/stats /tmp/fscache_stats-$(date +%s.%09N)
+
+#cat $MOUNT_PATH/*tst >/dev/null
+
+	for f in $file_list ; do 
+		md5sum $MOUNT_PATH/$f | awk -vf=$f '{print f" - "$1}'
+	done | tee $TMP2
+
+	diff -q $TMP1 $TMP2 || {
+		echo "$(date +%s.%09N) !!!! Different CHECKSUM !!!!"
+		RESULT="FAILED"
+	}
+}
+
+echo "[$BS]: $(date +%s.%09N) ## Creating testfiles and setup..."
+#rm -rf /share/*tst
+rm -rf $EXPORT/*tst
+rm -f $MOUNT_PATH/*tst
+rm -rf $TMP1 $TMP2
+
+
+#F1=$(date +%s.%09N)
+#F2=$(date +%s.%09N)
+#F3=$(date +%s.%09N)
+
+F1=$(date +%s.%09N).tst
+F2=$(date +%s.%09N).tst
+#F3=$(date +%s.%09N)
+TARGET=$(date +%s.%09N).tst
+
+#F1=$SHARE_PATH/$(date +%s.%09N).tst
+#F2=$SHARE_PATH/$(date +%s.%09N).tst
+#TARGET=$SHARE_PATH/$(date +%s.%09N).tst
+
+#S1=$(($RANDOM % 10))
+#S2=$(($RANDOM % 10))
+
+file_list="$F1 $F2 $TARGET"
+
+#dd if=/dev/urandom of=$EXPORT/$F1 bs=1M count=2
+#dd if=/dev/urandom of=$EXPORT/$F2 bs=1M count=5
+
+perl -e 'printf("A"x(2*1024*1024));' > $EXPORT/$F1
+perl -e 'printf("B"x(5*1024*1024));' > $EXPORT/$F2
+
+cp $EXPORT/$F1 $EXPORT/$TARGET
+diff -q $EXPORT/$TARGET $MOUNT_PATH/$TARGET || { echo "copy of first file not consistent" ; }
+cp $EXPORT/$F2 $EXPORT/$TARGET
+diff -q $EXPORT/$TARGET $MOUNT_PATH/$TARGET || { echo "copy of second file not consistent" ; }
+
+echo "touching second file"
+touch $MOUNT_PATH/$TARGET
+diff -q $EXPORT/$TARGET $MOUNT_PATH/$TARGET || { echo "copy of second file not consistent" ; }
+
+
+
+#echo "checking copy over nfs"
+#cp $MOUNT_PATH/$F1 $MOUNT_PATH/$TARGET
+#diff -q $EXPORT/$TARGET $MOUNT_PATH/$TARGET || { echo "copy of first file not consistent" ; }
+#cp $MOUNT_PATH/$F2 $MOUNT_PATH/$TARGET
+#diff -q $EXPORT/$TARGET $MOUNT_PATH/$TARGET || { echo "copy of second file not consistent" ; }
+
+
+
+
+
+exit
+
+echo "[$BS]: $(date +%s.%09N) ## TEST :"
+copy_and_check $F1
+copy_and_check $F2
+#copy_and_check $F1
+#copy_and_check $F2
+ 
+echo "[$BS]: $(date +%s.%09N) ## RESULT : [ $RESULT ]"
+
+if [ $RESULT == "PASS" ] ; then
+	exit 0  
+else 
+	exit 1 
+fi
