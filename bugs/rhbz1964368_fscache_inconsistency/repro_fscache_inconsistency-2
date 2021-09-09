@@ -1,0 +1,64 @@
+#!/bin/bash
+
+EXPORT=/exports
+MOUNT=/mnt/tmp
+
+# in MiB
+SIZE1=2
+SIZE2=5
+
+mountpoint -q $MOUNT || {
+	mount 127.0.0.1:$EXPORT $MOUNT -overs=4.2,sec=sys,fsc
+}
+mountpoint -q $MOUNT || {
+	echo "unable to mount '127.0.0.1:$EXPORT' on '$MOUNT'"
+	exit 1
+}
+
+rm -f $EXPORT/testfile
+
+
+perl -e "printf('A'x($SIZE1*1024*1024));" > $EXPORT/testfile
+sum1=$(md5sum $EXPORT/testfile | awk '{print $1}')
+echo "created file with all 'A'):  $sum1"
+hexdump -C $EXPORT/testfile
+check1=$(md5sum $MOUNT/testfile | awk '{print $1}')
+echo
+
+[[ $sum1 == $check1 ]] && echo "checksum matches" || echo "checksum does not match"
+
+echo
+echo
+
+sleep 1
+perl -e "printf('B'x($SIZE2*1024*1024));" > $EXPORT/testfile
+sum2=$(md5sum $EXPORT/testfile | awk '{print $1}')
+echo "overwritten with all 'B':  $sum2"
+hexdump -C $EXPORT/testfile
+
+echo
+echo
+
+sleep 1
+check2=$(md5sum $MOUNT/testfile | awk '{print $1}')
+echo "checksum of overwritten file: $check2"
+#echo -n "check 2: $check2  "
+if [[ $sum2 == $check2 ]] ; then
+	echo "overwrite matches expected contents"
+elif [[ $sum2 == $check1 ]] ; then
+	echo "overwrite matches ORIGINAL contents, not overwritten data"
+else
+	echo "overwrite does not match either new or original file"
+fi
+
+echo "actual overwritten file (should be all 'B'):"
+hexdump -C $MOUNT/testfile
+
+
+exit
+
+sleep 1
+sysctl vm.drop_caches=3
+
+echo "hexdump after drop_caches:"
+hexdump -C $MOUNT/testfile

@@ -1,0 +1,68 @@
+function tstamp:string(epochsecs:long, nsec:long) %{ /* pure */
+	const time_t epochsecs = STAP_ARG_epochsecs;
+	unsigned long nsec = STAP_ARG_nsec;
+	struct tm gmt;
+
+	time_to_tm(epochsecs, -tz_gmtoff, &gmt);
+	snprintf(STAP_RETVALUE, MAXSTRINGLEN, "%04ld-%02d-%02d %02d:%02d:%02d.%06lu",
+		gmt.tm_year + 1900, gmt.tm_mon + 1, gmt.tm_mday,
+		gmt.tm_hour, gmt.tm_min, gmt.tm_sec, nsec / 1000);
+%}
+function tstamp_now() {
+	s = gettimeofday_ns()
+	ns = s % 1000000000
+	s = s / 1000000000
+	return tstamp(s, ns)
+}
+
+function tstamp() {
+	return sprintf("%s", tz_ctime(gettimeofday_s()))
+}
+
+
+function tstamp_2:string(epochsecs:long) %{ /* pure */
+	const time_t epochsecs = STAP_ARG_epochsecs;
+	struct tm gmt;
+
+	time_to_tm(epochsecs, -tz_gmtoff, &gmt);
+		snprintf(STAP_RETVALUE, MAXSTRINGLEN, "%04ld-%02d-%02d %02d:%02d:%02d",
+		gmt.tm_year + 1900, gmt.tm_mon + 1, gmt.tm_mday,
+		gmt.tm_hour, gmt.tm_min, gmt.tm_sec);
+%}
+function tstamp_now_2:string() {
+	return tstamp_2(gettimeofday_s())
+}
+
+
+# stap -L 'module("nfs").function("nfs_readpage_from_fscache_complete")'
+# module("nfs").function("nfs_readpage_from_fscache_complete@fs/nfs/fscache.c:375") $page:struct page* $context:void* $error:int
+
+probe module("nfs").function("nfs_readpage_from_fscache_complete") {
+	printf("%s - %s (%d) - %s(page index %d, error: %d)\n",
+		tstamp_now(), execname(), tid(), ppfunc(), $page->index, $error)
+	print_backtrace()
+}
+
+# stap -L 'module("fscache").function("__fscache_read_or_alloc_pages")'
+# module("fscache").function("__fscache_read_or_alloc_pages@fs/fscache/page.c:562")
+# 	$cookie:struct fscache_cookie*
+# 	$mapping:struct address_space*
+# 	$pages:struct list_head*
+# 	$nr_pages:unsigned int*
+# 	$end_io_func:fscache_rw_complete_t
+# 	$context:void*
+# 	$gfp:gfp_t
+# 	$wake_cookie:bool
+probe module("fscache").function("__fscache_read_or_alloc_pages") {
+	printf("%s - %s (%d) - %s(mapping->nrpages: %d, nr_pages: %d)\n",
+		tstamp_now(), execname(), tid(), ppfunc(), $mapping->nrpages, kernel_int($nr_pages))
+	print_backtrace()
+}
+probe module("fscache").function("__fscache_read_or_alloc_pages").return {
+	printf("%s - %s (%d) - %s(mapping->nrpages: %d, nr_pages: %d) - returns %d\n",
+		tstamp_now(), execname(), tid(), ppfunc(), @entry($mapping->nrpages), @entry(kernel_int($nr_pages)), $return)
+}
+
+probe begin {
+	printf("%s - starting trace\n", tstamp_now())
+}

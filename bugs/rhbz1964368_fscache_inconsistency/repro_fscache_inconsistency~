@@ -1,0 +1,60 @@
+#!/bin/bash
+
+# Prerequisites :
+#
+# - SERVER: passwordless ssh with CLIENT
+# - CLIENT: share mounted with filesystem cache and cachefilesd up
+
+#CLIENT_IP="172.23.1.193"
+CLIENT_IP="127.0.0.1"
+SHARE_PATH="/exports"
+MOUNT_PATH="/mnt/tmp"
+
+#SH_MD5_CLIENT='ssh root@$CLIENT_IP "md5sum $MOUNT_PATH/*tst"'
+SH_MD5_CLIENT='md5sum $MOUNT_PATH/*tst'
+
+BS=$(basename $0)
+TMP="/tmp/$BS.tmp"
+RESULT="PASS"
+
+copy_and_check()
+{
+  cp $1 $TARGET
+  echo ; echo "=> SERVER MD5 :"
+  md5sum $SHARE_PATH/*tst
+  echo "=> CLIENT MD5 :"
+#  eval $SH_MD5_CLIENT | tee $TMP
+  md5sum $MOUNT_PATH/*tst | tee $TMP
+  LINES=$(awk '{print $1}' $TMP | sort | uniq -c | wc -l)
+  if [ $LINES -gt 2 ] ; then
+  	echo "!!!! Different CHECKSUM !!!!"
+	RESULT="FAILED"
+  fi
+}
+
+echo "[$BS]: ## Creating testfiles and setup..."
+rm -rf /share/*tst
+rm -rf $TMP
+
+F1=$SHARE_PATH/$(date +%N).tst
+F2=$SHARE_PATH/$(date +%N).tst
+TARGET=$SHARE_PATH/$(date +%N).tst
+
+S1=$(($RANDOM % 10))
+S2=$(($RANDOM % 10))
+
+dd if=/dev/urandom of=$F1 bs=1M count=2
+dd if=/dev/urandom of=$F2 bs=1M count=5
+
+echo "[$BS]: ## TEST :"
+copy_and_check $F1
+copy_and_check $F2
+copy_and_check $F1
+ 
+echo "[$BS]: ## RESULT : [ $RESULT ]"
+
+if [ $RESULT == "PASS" ] ; then
+	exit 0  
+else 
+	exit 1 
+fi

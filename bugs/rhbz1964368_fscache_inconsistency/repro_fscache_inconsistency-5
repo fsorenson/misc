@@ -1,0 +1,246 @@
+#!/bin/bash
+
+# configurable by environment variable:
+
+# EXPORT - directory on local filesystem
+DEFAULT_EXPORT="/exports"
+# MOUNT - directory on nfs mount
+DEFAULT_MOUNT="/mnt/tmp"
+
+# SIZE1 - original size of file
+DEFAULT_SIZE1=$((1*1024*1024))
+
+# SIZE2 - size of file after overwriting or appending
+#    (appending extends _to_ SIZE2, not _by_ SIZE2)
+DEFAULT_SIZE2=$((2*1024*1024))
+
+# TEST_COUNT - number of iterations of the test
+DEFAULT_TEST_COUNT=20
+
+# READ_SIZES - string containing list of read sizes used when reading from the file over nfs
+DEFAULT_READ_SIZES="32K"
+
+# READAHEAD_SIZE - string containing list of sizes to use while testing readahead for the nfs mount
+#    (defaults to '-1' to indicate no change to the current readahead setting)
+DEFAULT_READAHEAD_SIZES="-1" # no changes
+
+#    potentially interesting readahead size lists:
+#DEFAULT_READAHEAD_SIZES='0 4 32 256 1024 $((2*1024)) $((3*1024)) $((4*1024)) $((5*1024)) $((6*1024)) $((7*1024)) $((8*1024)) 16384 $((64*1024)) $((128*1024)) $((256*1024)) $((512*1024)) $((15*$rsize/1024))'
+#DEFAULT_READAHEAD_SIZES='0 128 $(($rsize*15/1024))'
+
+
+# VERBOSE - output more verbose debugging information about the testing
+#	^$ - $DEFAULT_VERBOSE (probably 0)
+#	^[0]+$ - verbose = 0
+#	^[0]*([1-9]+[0-9]*).*$ - extracted value
+#	^[^0-9]+.+$ - verbose = 1
+DEFAULT_VERBOSE=0
+
+#####################################
+
+tmp=( $(echo "$VERBOSE" | sed 's/^\([0]*\)\(\|[1-9]\+[0-9]*\)\(\|.\+\)$/#\1 #\2 #\3/g') )
+if [[ ${tmp[1]} != "#" ]] ; then
+	VERBOSE=${tmp[1]:1}
+elif [[ ${tmp[0]} != "#" ]] ; then
+	VERBOSE=0
+elif [[ ${tmp[2]} != "#" ]] ; then
+	VERBOSE=1
+else
+	VERBOSE=$DEFAULT_VERBOSE
+fi
+
+EXPORT=${EXPORT:-$DEFAULT_EXPORT}
+MOUNT=${MOUNT:-$DEFAULT_MOUNT}
+
+# mount 127.0.0.1:$EXPORT $MOUNT -ofsc
+#mount 127.0.0.1:$EXPORT $MOUNT -ofsc
+
+SIZE1=${SIZE1:-$DEFAULT_SIZE1}
+SIZE2=${SIZE2:-$DEFAULT_SIZE2}
+
+TEST_COUNT=${TEST_COUNT:-$DEFAULT_TEST_COUNT}
+
+#DEFAULT_READ_SIZES="1K 4K 16K 32K 64K 128K 512K 1M 2M 4M 8M"
+READ_SIZES=${READ_SIZES:-$DEFAULT_READ_SIZES}
+
+dev_num=$(stat -c %d $MOUNT)
+dev_str="$(($dev_num/256)):$(($dev_num%256))"
+ra_file="/sys/class/bdi/$dev_str/read_ahead_kb"
+start_ra=$(cat $ra_file)
+rsize=$(awk -vdev_str=$dev_str '($3==dev_str && match($NF, /.+rsize=([0-9]+)/, m)) {print m[1]}' /proc/self/mountinfo)
+
+#READAHEAD_SIZES=${READAHEAD_SIZES:-$DEFAULT_READAHEAD_SIZES}
+READAHEAD_SIZES=$(eval echo ${READAHEAD_SIZES:-$DEFAULT_READAHEAD_SIZES})
+[[ -z $READAHEAD_SIZES ]] && READAHEAD_SIZES="-1"
+
+#####################################################
+
+cachefilesd_status=$(systemctl is-active cachefilesd.service 2>&1)
+ret=$?
+# inactive returns 3
+[[ $ret -eq 0 ]] || {
+	echo "cachefilesd does not appear to be running"
+	exit
+}
+
+echo "current readahead for device $dev_str: $start_ra"
+
+
+file_sizes=( $(echo "$@" | tr ',: ' '\n' | awk '
+BEGIN{IGNORECASE = 1}
+function printpower(n,b,p) {printf "%u\n", n*b^p; next}
+#function exp_of(s) { return index("KMGTPEZY", substr(toupper(s), length(s)))}
+function exp_of(s) { return index("KMGTPEZY", toupper(s))}
+
+/^[0-9]+[KMGTPEZY]iB?$/ { $1 = substr($1, 1, length($1) - 2) }
+/^[0-9]+([KMGTPEZY])?$/{
+        ex = exp_of(substr($1, length($1)))
+        printf("%d\n", $1 * 2^(ex * 10))
+        next
+}
+/^[0-9]+[KMGTPEZY]B$/{
+        ex = exp_of(substr($1, length($1) - 1, 1))
+        printf("%d\n", $1 * 10^(ex * 3))
+        next
+}' | sort -nk1 ) )
+
+echo "file sizes: ${file_sizes[@]}"
+
+expected_sums_overwrite=( $(perl -e '
+use Digest::MD5 qw(md5_hex);
+
+my $ch = ord('A');
+foreach my $size (@ARGV) {
+        my $s = chr($ch)x($size);
+	printf("%s ", md5_hex($s));
+
+        $ch = $ch + 1;
+}' "${file_sizes[@]}") )
+
+expected_sums_append=( $(perl -e '
+use Digest::MD5 qw(md5_hex);
+
+my $s = "";
+my $last_size = 0;
+my $ch = ord('A');
+foreach my $size (@ARGV) {
+	$s .= chr($ch)x($size - $last_size);
+
+	printf("%s ", md5_hex($s));
+	$last_size = $size;
+	$ch = $ch + 1;
+}' "${file_sizes[@]}") )
+
+echo "expected sums overwrite: ${expected_sums_overwrite[@]}"
+echo "expected sums append: ${expected_sums_append[@]}"
+
+#exit
+
+expected_sums_overwrite=(
+	$(
+		for s in ${file_sizes[@]} ; do
+			perl -e "printf('B'x($s));" | md5sum | awk '{print $1}'
+		done
+	)
+)
+
+
+
+#expected_sum1=$(perl -e "printf('A'x($SIZE1));" | md5sum | awk '{print $1}')
+#expected_sum2=$(perl -e "printf('B'x($SIZE2));" | md5sum | awk '{print $1}')
+expected_sum_original=$(perl -e "printf('A'x($SIZE1));" | md5sum | awk '{print $1}')
+expected_sum_overwrite=$(perl -e "printf('B'x($SIZE2));" | md5sum | awk '{print $1}')
+expected_sum_append=$(perl -e "printf('%s%s', 'A'x$SIZE1, 'B'x($(($SIZE2-$SIZE1))));" | md5sum | awk '{print $1}')
+
+chars="ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+do_one_test() {
+	local err=0
+	RESULT_ORIGINALS="PASS"
+
+
+	RESULT_ORIGINAL1="PASS"
+	RESULT_ORIGINAL2="PASS"
+	RESULT_OVERWRITE="PASS"
+	RESULT_APPEND="PASS"
+
+	# test overwrite
+	for i in $(seq 0 $((${#file_sizes[@]} - 1)) ) ; do
+		rm -f $EXPORT/testfile
+		this_char=${chars:$i:1}
+		this_size=${file_sizes[$i]}
+#		echo "this size: $this_size"
+		perl -e "printf('$this_char'x($this_size));" >$EXPORT/testfile
+#		this_expected_sum=${
+
+
+		perl -e "printf('$thischar'x(5*1024*1024));" >>$EXPORT/testfile
+
+		perl -e "printf('A'x($SIZE1));" > $EXPORT/testfile
+
+	done
+
+
+
+	perl -e "printf('A'x($SIZE1));" > $EXPORT/testfile
+	check_original1=$(dd if=$MOUNT/testfile bs=$read_size 2>/dev/null | md5sum | awk '{print $1}')
+	[[ $expected_sum_original == $check_original1 ]] || { RESULT_ORIGINAL1="FAIL" ; err=$(($err+1)) ; }
+
+	perl -e "printf('B'x($SIZE2));" > $EXPORT/testfile
+	check_overwrite=$(dd if=$MOUNT/testfile bs=$read_size 2>/dev/null | md5sum | awk '{print $1}')
+	[[ $expected_sum_overwrite == $check_overwrite ]] || {
+		RESULT_OVERWRITE="FAIL" ; err=$(($err+1))
+		[[ $VERBOSE -gt 1 ]] && hexdump -C $MOUNT/testfile
+	}
+
+
+	# test append
+	rm -f $EXPORT/testfile
+	perl -e "printf('A'x($SIZE1));" > $EXPORT/testfile
+	check_original2=$(dd if=$MOUNT/testfile bs=$read_size 2>/dev/null | md5sum | awk '{print $1}')
+	[[ $expected_sum_original == $check_original2 ]] || { RESULT_ORIGINAL2="FAIL" ; err=$(($err+1)) ; }
+
+	perl -e "printf('B'x($(($SIZE2-$SIZE1))));" >> $EXPORT/testfile
+	check_append=$(dd if=$MOUNT/testfile bs=$read_size 2>/dev/null | md5sum | awk '{print $1}')
+	[[ $expected_sum_append == $check_append ]] || {
+		RESULT_APPEND="FAIL" ; err=$(($err+1))
+		[[ $VERBOSE -gt 1 ]] && hexdump -C $MOUNT/testfile
+	}
+
+	echo "original contents: $RESULT_ORIGINAL1/$RESULT_ORIGINAL2; overwrite: $RESULT_OVERWRITE; append: $RESULT_APPEND"
+
+
+#[[ $expected_sum_append == $check_append ]] || hexdump -C $MOUNT/testfile
+
+	[[ $err -eq 0 ]]
+}
+
+echo "rsize: $rsize"
+
+for read_size in $READ_SIZES ; do
+	# verify it's a valid size
+	dd if=/dev/zero of=/dev/null bs=$read_size count=0 >/dev/null 2>&1 || {\
+		echo "could not recognize read size '$read_size'"
+		continue
+	}
+
+	for readahead in $READAHEAD_SIZES ; do
+		echo "testing: read block size: $read_size; readahead: $readahead KiB"
+
+		if [[ $readahead -ge 0 ]] ; then
+			echo $readahead > $ra_file
+		else # don't change anything if it's negative
+			readahead=$(cat $ra_file)
+		fi
+
+		success_count=0
+		for i in $(seq 1 $TEST_COUNT) ; do
+			out=$(do_one_test 2>&1) && success_count=$(($success_count + 1))
+			[[ "X${VERBOSE}X" == "X0X" ]] || echo "$out"
+		done
+
+		echo "read block size: $read_size; readahead $readahead KiB - $TEST_COUNT tests; success: $success_count, failure: $(($TEST_COUNT - $success_count))"
+	done
+done
+
+end_ra=$(cat $ra_file)
+[[ $start_ra -ne $end_ra ]] && echo $start_ra > $ra_file # reset readahead to original

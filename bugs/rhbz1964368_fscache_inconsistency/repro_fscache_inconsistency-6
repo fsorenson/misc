@@ -1,0 +1,86 @@
+#!/bin/bash
+
+EXPORT=/exports
+MOUNT=/mnt/tmp
+
+# mount 127.0.0.1:$EXPORT $MOUNT -ofsc
+
+SIZE1=$((2*1024*1024))
+SIZE2=$((3*1024*1024))
+
+test_count=${test_count:-10}
+readahead=${readahead:--1}
+
+read_size="5M"
+
+dev_num=$(stat -c %d $MOUNT)
+dev_str="$(($dev_num/256)):$(($dev_num%256))"
+ra_file="/sys/class/bdi/$dev_str/read_ahead_kb"
+#rsize=$(awk -vdev_str=$dev_str '($3==dev_str){print $NF}' /proc/self/mountinfo)
+#rsize=$(awk -vdev_str=$dev_str '($3==dev_str){print $NF}' /proc/self/mountinfo | egrep -o 'rsize=[0-9]+' | cut -f2 -d=)
+rsize=$(awk -vdev_str=$dev_str '($3==dev_str && match($NF, /.+rsize=([0-9]+)/, m)) {print m[1]}' /proc/self/mountinfo)
+
+
+
+set_ra() {
+	echo $1 > $ra_file
+}
+
+expected_sum1=$(perl -e "printf('A'x($SIZE1));" | md5sum | awk '{print $1}')
+expected_sum2=$(perl -e "printf('B'x($SIZE2));" | md5sum | awk '{print $1}')
+
+do_one_test() {
+	rm -f $EXPORT/testfile
+	sysctl vm.drop_caches=3 >/dev/null
+#	rm -f $MOUNT/testfile
+
+	perl -e "printf('A'x($SIZE1));" > $EXPORT/testfile
+	check1=$expected_sum1
+#	check1=$(md5sum $MOUNT/testfile | awk '{print $1}')
+#	check1=$(dd if=$MOUNT/testfile bs=$read_size 2>/dev/null | md5sum | awk '{print $1}')
+#	if [[ $expected_sum1 == $check1 ]] ; then
+#		echo -n "original contents: PASS;"
+#	else
+#		echo -n "original contents: FAIL;"
+#	fi
+
+#	cat $MOUNT/testfile >/dev/null
+	dd if=$MOUNT/testfile bs=4K count=1 >/dev/null 2>&1
+
+#	sleep 1
+
+	perl -e "printf('B'x($SIZE2));" > $EXPORT/testfile
+#	check2=$(md5sum $MOUNT/testfile | awk '{print $1}')
+	check2=$(dd if=$MOUNT/testfile bs=$read_size 2>/dev/null | md5sum | awk '{print $1}')
+	if [[ $expected_sum2 == $check2 ]] ; then
+		echo " overwrite contents: PASS"
+	elif [[ $expected_sum2 == $check1 ]] ; then
+		echo " overwrite contents: FAIL (match original contents)"
+	else
+		echo " overwrite contents: FAIL (match neither original nor new contents)"
+#		hexdump -C $MOUNT/testfile
+	fi
+	[[ $expected_sum1 == $check1 && $expected_sum2 == $check2 ]]
+}
+
+echo "rsize: $rsize"
+
+
+#for block_size in 1K 4K 16K 32K 64K 128K 512K 1M 2M 4M 8M ; do
+for block_size in 4K 16K 32K 64K 128K 512K 1M 2M 4M 8M ; do
+	read_size=$block_size
+#	for readahead in 0 4 32 256 1024 $((2*1024)) $((3*1024)) $((4*1024)) $((5*1024)) $((6*1024)) $((7*1024)) $((8*1024)) 16384 $((64*1024)) $((128*1024)) $((256*1024)) $((512*1024)) ; do
+#	for readahead in 0 128 $(($rsize*15/1024)) ; do
+	for readahead in 128 $(($rsize*15/1024)) $((128*1024*1024)) ; do
+		set_ra $readahead
+
+echo "testing file sizes $SIZE1 -> $SIZE2 - block size: $block_size; readahead: $readahead"
+#sysctl vm.drop_caches=3 >/dev/null 2>&1
+		success_count=0
+		for i in $(seq 1 $test_count) ; do
+			do_one_test && success_count=$(($success_count + 1))
+		done >/dev/null
+
+		echo "result:  read block size: $block_size; readahead $readahead KiB - $test_count tests; success: $success_count, failure: $(($test_count - $success_count))"
+	done
+done
