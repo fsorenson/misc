@@ -16,6 +16,32 @@ our $max_field_len = 0;
 our $no_value_field_format;
 our $field_format;
 
+# built-in constructor for adding to the hashes
+if (defined($ARGV[0]) && $ARGV[0] eq "--field-values") {
+	shift;
+	my $last_field = "";
+	while (<>) {
+		my $line = $_;
+		$line =~ s/\n$//g;
+
+		my @fields = split(/\s+/, $line);
+		next if ($fields[0] ne "V");
+
+		if ($last_field ne $fields[1]) {
+			printf "},\n" if ($last_field ne ""); # close any already-open
+			printf "\"%s\" => {\n", $fields[1];
+			$last_field = $fields[1]
+		}
+		printf "%s => \"%s", $fields[2], $fields[3];
+		for (my $i = 4 ; $i < scalar @fields ; $i++) {
+			printf " %s", $fields[$i];
+		}
+		printf "\",\n";
+	}
+	printf "},\n" if ($last_field ne "");
+	exit;
+}
+
 sub check_field_maxlen {
 	my $this_field = shift;
 	my $this_field_len = length($this_field);
