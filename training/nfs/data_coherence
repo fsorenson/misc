@@ -1,0 +1,40 @@
+vm6:
+# perl -e 'print "A"x4000' >/mnt/tmp/testfile
+
+vm7:
+# hexdump -C /mnt/tmp/testfile
+00000000  41 41 41 41 41 41 41 41  41 41 41 41 41 41 41 41  |AAAAAAAAAAAAAAAA|
+*
+00000fa0
+
+# exec 3<>/mnt/tmp/testfile
+
+
+vm6:
+
+# perl -e 'print "B"x192' >>/mnt/tmp/testfile
+
+
+vm7:
+
+# hexdump -C /mnt/tmp/testfile
+00000000  41 41 41 41 41 41 41 41  41 41 41 41 41 41 41 41  |AAAAAAAAAAAAAAAA|
+*
+00000fa0  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+*
+00001000  42 42 42 42 42 42 42 42  42 42 42 42 42 42 42 42  |BBBBBBBBBBBBBBBB|
+*
+00001060
+
+(note that the rest of the 4096-byte page is zeros, but since the next page was not already cached, its contents are read from the server)
+
+
+*** pagecache contents are invalidated by file locking:
+# flock -s /mnt/tmp/testfile -c /bin/true
+
+# hexdump -C /mnt/tmp/testfile
+00000000  41 41 41 41 41 41 41 41  41 41 41 41 41 41 41 41  |AAAAAAAAAAAAAAAA|
+*
+00000fa0  42 42 42 42 42 42 42 42  42 42 42 42 42 42 42 42  |BBBBBBBBBBBBBBBB|
+*
+00001060
