@@ -741,9 +741,14 @@ my %sig_names = (
 #printf("generic_function_fd pattern is '^$patterns{'fd_with_possible_path'}, $patterns{'everything_else'}\$'\n");
 #printf("generic_function_dfd_path pattern is '^$patterns{'fd_or_atfdcwd_with_possible_path'}, $patterns{'quoted_string'}, $patterns{'everything_else'}\$'\n");
 
+sub pid_string_is_alt {
+        return 1 if ($_[0] =~ $regexes{'alt_pid'});
+	return 0
+}
+
 while (<>) {
-	my ($pid, $timestamp, $op, $args, $ret, $elapsed);
-	my ($dfd, $dfd_path, $other_args);
+	my ($pid, $relative_time, $timestamp, $op, $args, $ret, $elapsed);
+	my ($dfd, $dfd_path, $other_args, $this_line_execname);
 
 	chomp;
 	my $line = $_;
@@ -754,31 +759,40 @@ while (<>) {
 
 	if ($config{'normalize_pids'}) {
 		# normalize the alternate pid string: '[pid #####]'
-		if (my ($pid_str, $pid_match, $line_remainder) = $line =~ $regexes{'alternate_pid'}) {
-			printf("normalizing pid string: '%s' => %d\n", $pid_str, $pid_match) if ($config{'debug'} >= 1);
-			$line = "" . $pid_match . " " . $line_remainder;
+		if ( (my $raw_pid_str, $pid, my $line_remainder) = $line =~ $regexes{'extract_alt_pid'}) {
+			printf("normalizing pid string: '%s' => %d\n", $raw_pid_str, $pid) if ($config{'debug'} >= 1);
+			$line = "" . $pid . " " . $line_remainder;
 		}
 	}
-#	qr/^$patterns{'possible_pid_string'}$patterns{'possible_timestamp_string'}$patterns{'op_string'}\($patterns{'op_args_string'} <unfinished ...>$/,
-#	if (@matches = $line =~ $regexes{'unfinished'}) {
-#	if (($pid, $timestamp, $op, my $op_args) = $line =~ $regexes{'unfinished'}) {
-	if (($pid, $timestamp, $op, my $op_args) = $line =~ $regexes{'unfinished'}) {
+
+	if (($pid, $timestamp, $relative_time, $op) = $line =~ $regexes{'resuming_unfinished'}) {
+		my $save_line = retrieve_unfinished($pid);
+
+		$save_line = sprintf("%s %s%s%s(UNKNOWN",
+			$pid, defined($timestamp) ? $timestamp . " " : "",
+			defined($relative_time) ? $relative_time . " " : "",
+			$op) if ($save_line eq "");
+
+		store_unfinished($pid, $save_line);
+		next;
+	} elsif (($pid, $timestamp, $relative_time, $op, my $op_args) = $line =~ $regexes{'unfinished'}) {
+		my $save_line = retrieve_unfinished($pid);
 		if ($config{'debug'} >= 2) {
 			printf("syscall unfinished: %s\n", $line);
 
-			printf("pid: %d\n", get_match_val($pid));
+			printf("pid: %s\n", get_match_val($pid));
 			printf("timestamp: %s\n", get_match_val($timestamp));
 			printf("op: %s\n", $op);
 			printf("op args: %s\n", get_match_val($op_args));
 		}
-		my $save_line = sprintf("%s %s%s(%s",
+		$save_line = sprintf("%s %s%s%s(%s",
 			$pid, defined($timestamp) ? $timestamp . " " : "",
+			defined($relative_time) ? $relative_time . " " : "",
 			$op, defined($op_args) ? $op_args : "");
 
 		store_unfinished($pid, $save_line);
 		next;
-#	} elsif (@matches = $line =~ $regexes{'resumed'}) {
-	} elsif (($pid, $timestamp, $op, my $remainder) = $line =~ $regexes{'resumed'}) {
+	} elsif (($pid, $timestamp, $relative_time, $op, my $remainder) = $line =~ $regexes{'resumed'}) {
 		if ($config{'debug'} >= 2) {
 			printf("resumed syscall line: %s\n", $line);
 
@@ -801,7 +815,6 @@ printf("\n") if ($config{'debug'} >= 1);
 printf("parsing %s\n", $line) if ($config{'debug'} >= 1);
 my $orig_line = $line;
 
-# qr/^$patterns{'possible_pid_string'}$patterns{'possible_timestamp_string'}$patterns{'op_string'}\($patterns{'op_args_string'}\)$patterns{'ret_string'}$patterns{'possible_elapsed_string'}$/
 
 
 	if ((my $pid, $this_line_execname, my $timestamp, my $rest) = $line =~ $regexes{'line_with_execname'}) {
@@ -820,7 +833,8 @@ my $orig_line = $line;
 			$rest);
 	} else { $this_line_execname = ""; }
 
-	if ( ($pid, $timestamp, $op, $args, $ret, $elapsed) = $line =~ $regexes{'op'}) {
+	if ( (my $raw_pid_str, $pid, $timestamp, $relative_time, $op, $args, $ret, $elapsed) = $line =~ $regexes{'op'}) {
+
 		my $rebuild_line = false;
 
 		$args = trim($args);
@@ -828,6 +842,7 @@ my $orig_line = $line;
 		if ($config{'debug'} >= 1) {
 			printf("%12s - %s\n", "pid", get_match_val($pid));
 			printf("%12s - %s\n", "timestamp", get_match_val($timestamp));
+			printf("%12s - %s\n", "relative_ts", get_match_val($relative_time));
 			printf("%12s - %s\n", "op", get_match_val($op));
 			printf("%12s - %s\n", "args", get_match_val($args));
 			printf("%12s - %s\n", "ret", get_match_val($ret));
@@ -1264,7 +1279,7 @@ if (0) { # TODO - fix parsing the socket strings
 				set_execname($proc_pid, basename($link_target)) if ($current_execname eq "");
 			}
 		} elsif ($op eq "clone") {
-			# if CLONE_FILES is set, the two processes SHARE fd table -- not sure how to implement that
+			# if CLONE_FILES is set, the two processes SHARE fd table
 			# if execve is later called, the fd table is duplicated, and no longer shared
 #printf("clone args *%s*\n", $args);
 			if (my ($flags) = $args =~ $regexes{'clone'}) {
@@ -1288,8 +1303,6 @@ if (0) { # TODO - fix parsing the socket strings
 			} else { }
 		} elsif ($op eq "execve") {
 			if (my ($execve_path, $execve_argv, $execve_envp) = $args =~ $regexes{'execve'}) {
-#				my $execve_name = basename($execve_path);
-
 				$this_line_execname = get_execname($pid) if ($config{'show_execnames'} && $this_line_execname eq "");
 
 				set_execname($pid, basename($execve_path));
@@ -1357,38 +1370,47 @@ if (0) { # TODO - fix parsing the socket strings
 			printf(" full string: %s\n", $line);
 		}
 
-		my $execname = $config{'show_execnames'} ? get_execname($pid) : "";
-		$rebuild_line = true if (defined($execname) && $execname ne "");
+		if ($config{'show_execnames'}) {
+			$this_line_execname = get_execname($pid) if (!defined($this_line_execname) || $this_line_execname eq "");
+		} else { $this_line_execname = ""; }
 
-		$line = sprintf("%s%s%s%s(%s) = %s%s",
+		$rebuild_line = true if (defined($this_line_execname) && $this_line_execname ne "");
+
+		$line = sprintf("%s%s%s%s%s(%s) = %s%s",
 			(defined($pid) ? $pid . " " : ""),
-			((defined($execname) && $execname ne "") ? "(" . $execname . ") " : ""),
+			((defined($this_line_execname) && $this_line_execname ne "") ? "(" . $this_line_execname . ") " : ""),
 			(defined($timestamp) ? $timestamp . " " : ""),
+			(defined($relative_time) ? $relative_time . " " : ""),
 			$op, $args, $ret,
 			(defined($elapsed) ? " <" . $elapsed . ">" : "")
 		) if ($rebuild_line);
-	} elsif (my ($pid, $timestamp, $ret) = $line =~ $regexes{'process_exited'}) {
+	} elsif (my ($pid, $timestamp, $relative_time, $ret) = $line =~ $regexes{'process_exited'}) {
 		if (defined($pid) && $config{'show_execnames'}) {
-			my $execname = get_execname($pid);
-			$line = sprintf("%d (%s) %s +++ exited with %d +++",
-				$pid, $execname,
+			$this_line_execname = get_execname($pid) if ($this_line_execname eq "");
+
+			$line = sprintf("%d (%s) %s%s +++ exited with %d +++",
+				$pid, $this_line_execname,
 				(defined($timestamp) ? $timestamp . " " : ""),
+				(defined($relative_time) ? $relative_time . " " : ""),
 				$ret);
 		}
-	} elsif (($pid, $timestamp, my $signal, my $siginfo) = $line =~ $regexes{'process_signal'}) {
+	} elsif (($pid, $timestamp, $relative_time, my $signal, my $siginfo) = $line =~ $regexes{'process_signal'}) {
 		if (defined($pid) && $config{'show_execnames'}) {
-			my $execname = get_execname($pid);
-			$line = sprintf("%d (%s) %s --- %s %s ---",
-				$pid, $execname,
+			$this_line_execname = get_execname($pid) if ($this_line_execname eq "");
+			$line = sprintf("%d (%s) %s%s --- %s %s ---",
+				$pid, $this_line_execname,
 				(defined($timestamp) ? $timestamp . " " : ""),
+				(defined($relative_time) ? $relative_time . " " : ""),
 				$signal, $siginfo);
 		}
-	} elsif (($pid, $timestamp, my $partial_line) = $line =~ $regexes{'strace_partial_line'}) {
+	} elsif (($pid, $timestamp, $relative_time, my $partial_line) = $line =~ $regexes{'strace_partial_line'}) {
+		printf("line is a partial strace line, perhaps the trace was truncated\n") if ($config{'debug'} >= 1);
 		if (defined($pid) && $config{'show_execnames'}) {
-			my $execname = get_execname($pid);
-			$line = sprintf("%d (%s) %s%s",
-				$pid, $execname,
+			$this_line_execname = get_execname($pid) if ($this_line_execname eq "");
+			$line = sprintf("%d (%s) %s%s%s",
+				$pid, $this_line_execname,
 				(defined($timestamp) ? $timestamp . " " : ""),
+				(defined($relative_time) ? $relative_time . " " : ""),
 				$partial_line);
 		}
 	} else {
