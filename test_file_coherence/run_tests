@@ -1,0 +1,79 @@
+#!/bin/bash
+
+#hosts="vm12 vm15 vm2 vm3 vm22 vm6 vm7 vm10 vm9 vm23 vm1 vm8"
+hosts="vm12 vm15 vm2 vm3 vm22 vm7 vm10 vm9 vm23 vm1 vm8"
+#hosts="vm12 vm15 vm2 vm3"
+#hosts="vm22 vm7 vm10 vm9 vm23 vm1 vm8"
+#hosts="vm7 vm10"
+#hosts="vm12 vm15 vm2 vm3 vm22 vm7"
+#hosts="vm2 vm3 vm22 vm7"
+#hosts="vm10 vm9 vm23"
+hosts="vm10 vm9 vm23 vm1 vm8"
+#hosts="vm1 vm8"
+#hosts="vm12 vm8"
+#hosts="vm12"
+#hosts="vm15"
+#hosts="vm2 vm3"
+#hosts="vm22 vm7 vm10 vm9 vm23 vm1 vm8"
+#hosts="vm10 vm9 vm23 vm1 vm8"
+hosts="vm8"
+
+#vers=4.2
+vers=3
+
+exp=vm1:/
+
+[[ $vers == "3" ]] && exp="${exp}exports"
+
+
+mp=/mnt/tmp
+#opts="vers=3,sec=sys,nolock,noac"
+#opts="vers=3,sec=sys,local_lock=all,actimeo=2"
+#opts="vers=3,sec=sys,actimeo=2"
+#opts="vers=3,sec=sys"
+opts="sec=sys,actimeo=2,local_lock=all,nocto"
+test_exe=/var/tmp/test_file_coherence
+testfile=$mp/testfile
+
+echo "export is $exp"
+
+
+for h in $hosts ; do
+#	echo "$h - $(ssh root@$h uname -r 2>/dev/null)"
+#	scp test_file_coherence root@$h:$test_exe >/dev/null 2>&1
+	scp test_file_coherence.c root@$h:$test_exe.c >/dev/null 2>&1
+	echo "
+		echo -n '$h  '
+		uname=\$(uname -r)
+		echo \"\$uname\"
+		if [[ \${uname:0:1} == \"2\" && ${vers:0:1} == \"4\" ]] ; then
+#			echo setting nfs version to 4
+			nfsvers=4
+		else
+#			echo not changing nfs version: $vers
+			nfsvers=$vers
+		fi
+		killall test_file_coherence
+		umount $mp
+
+#		echo \"mount command: mount.nfs $exp $mp -overs=\$nfsvers,$opts\"
+		mount.nfs $exp $mp -overs=\$nfsvers,$opts
+
+#		grep '$mp' /proc/self/mountinfo
+#		ls -al $mp/testfile
+		gcc -Wall $test_exe.c -o $test_exe -g
+		timeout 15 $test_exe --mmap -S 100 --rlock $testfile
+		umount $mp
+		" | ssh -T root@$h
+
+
+#	ssh root@$h rm -f /var/tmp/test_file_corherence >/dev/null 2>&1
+#	ssh root@$h 'umount $mp ; killall test_file_coherence'
+#	ssh root@$h mount $exp $mp -o$opts
+#	timeout 10 ssh root@$h $test_exe --read $testfile 2>/dev/null
+#	ssh root@$h umount $mp
+	echo
+	echo
+done
+
+
