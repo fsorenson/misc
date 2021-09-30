@@ -358,7 +358,7 @@ int usage(int argc, char *argv[], int ret) {
 
 
 	output("\n");
-	output("\t\t--sleep_time=<milliseconds>\n");
+	output("\t\t-S <milliseconds> | --sleep_time=<milliseconds>\n");
 	output("\t\t\treader default: %lu milliseconds\n",
 		((READ_SLEEP_TIME.tv_sec) * 1000) +
 		(READ_SLEEP_TIME.tv_nsec / 1000000));
