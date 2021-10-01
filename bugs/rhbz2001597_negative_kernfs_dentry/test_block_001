@@ -1,0 +1,330 @@
+#!/bin/bash
+
+stall_report_iters=10
+stall_exit_iters=50
+
+add_host=${add_host:-1}
+num_tgts=${num_tgts:-1}
+
+[[ $add_host -lt 1 ]] && add_host=1
+[[ $num_tgts -lt 1 ]] && num_tgts=1
+
+
+: "${TIMEOUT:=60}"
+JOURNAL=${JOURNAL:-1}
+UDEVMONITOR=${UDEVMONITOR:-1}
+BPFTRACE=${BPFTRACE:-1}
+
+UDEVADM_SETTLE=${UDEVADM_SETTLE:-0}
+WAIT_FOR_REMOVAL=${WAIT_FOR_REMOVAL:-0}
+
+work_dir=/var/tmp/scsi_debug
+stop_file="$work_dir/stop"
+repro_file="$work_dir/repro"
+
+
+BPFTRACE_SCRIPT="$work_dir/trace_bpf"
+
+[[ ! -d $work_dir ]] && mkdir -p $work_dir
+
+if [[ ! -f $BPFTRACE_SCRIPT || ! -f /usr/bin/bpftrace ]] ; then
+	BPFTRACE=0
+fi
+
+find_repro_dir() {
+	# find a repro directory to use
+	local repro_num=1
+	while [[ -d $work_dir/repro${repro_num} ]] ; do
+		repro_num=$(($repro_num + 1))
+	done
+	repro_dir=$work_dir/repro$repro_num
+	mkdir -p $repro_dir
+
+	echo $repro_dir
+}
+
+
+_init_scsi_debug() {
+        if ! modprobe -r scsi_debug || ! modprobe scsi_debug "$@"; then
+                return 1
+        fi
+
+        udevadm settle >/dev/null 2>&1
+
+        local host_sysfs host target_sysfs target
+        SCSI_DEBUG_HOSTS=()
+        SCSI_DEBUG_TARGETS=()
+        SCSI_DEBUG_DEVICES=()
+        for host_sysfs in /sys/class/scsi_host/*; do
+                if [[ "$(cat "${host_sysfs}/proc_name")" = scsi_debug ]]; then
+
+echo "host_sysfs: $host_sysfs" >&2
+
+
+                        host="${host_sysfs#/sys/class/scsi_host/host}"
+                        SCSI_DEBUG_HOSTS+=("$host")
+echo "  adding $host" >&2
+                        for target_sysfs in /sys/class/scsi_device/"$host":*; do
+                                target="${target_sysfs#/sys/class/scsi_device/}"
+
+echo "    target: $target"
+
+
+                                SCSI_DEBUG_TARGETS+=("$target")
+                                SCSI_DEBUG_DEVICES+=("$(ls "$target_sysfs/device/block")")
+                        done
+                fi
+        done
+
+        if [[ ${#SCSI_DEBUG_HOSTS[@]} -eq 0 ]]; then
+                echo "Could not find scsi_debug hosts" >&2
+                _exit_scsi_debug
+                return 1
+        fi
+
+        if [[ ${#SCSI_DEBUG_TARGETS[@]} -eq 0 ]]; then
+                echo "Could not find scsi_debug targets" >&2
+                _exit_scsi_debug
+                return 1
+        fi
+
+        return 0
+}
+
+_exit_scsi_debug() {
+        unset SCSI_DEBUG_HOSTS
+        unset SCSI_DEBUG_TARGETS
+        unset SCSI_DEBUG_DEVICES
+        udevadm settle
+        modprobe -r scsi_debug
+}
+
+child_pids=""
+exit_cleanup() {
+	trap - SIGINT SIGTERM EXIT
+
+	touch $stop_file
+	sleep 0.25
+
+	wait_pids=""
+	for pid in $child_pids ; do
+		[[ -d /proc/$pid ]] && kill $pid && wait_pids="$wait_pids $pid"
+	done
+
+	[[ -n $wait_pids ]] && wait $wait_pids
+	rm -f $stop_file
+	[[ -f $repro_file ]] && echo "bug appears to have reproduced" | tee -a $log && rm -f $repro_file
+
+#	rmdir $tmpdir
+
+	symlinks -tr /sys 2>&1 | tee -a $log
+
+	exit
+}
+handle_sigchld() {
+
+	local cpid
+	local child_died=0
+	local still_alive=""
+
+	for cpid in $child_pids ; do
+		[[ ! -d /proc/$cpid ]] && child_died=$(($child_died + 1)) || still_alive="$still_alive $cpied"
+	done
+
+	if [[ $child_died -eq 0 ]] ; then
+	       return
+       else
+		echo "some child pid died"
+		echo "child pids: $child_pids"
+		echo "still alive: $still_alive"
+	fi
+
+	trap - SIGCHLD
+
+	echo "handling child exit"
+	exit_cleanup
+	exit
+}
+child_exit_cleanup() {
+	trap - SIGINT SIGTERM EXIT
+	echo "child with target $target exiting after $child_iter_count iterations"
+}
+
+
+child_worker() {
+	local child_iter_count=0
+	local target=$1
+	local host target wait_up_iters wait_down_iters
+
+	trap child_exit_cleanup SIGINT SIGTERM EXIT
+
+	local host="${target%%:*}"
+	local scan="${target#*:}"
+	scan="${scan//:/ }"
+echo "child process '$target' will do:  echo \"${scan}\" > \"/sys/class/scsi_host/host${host}/scan\""
+echo "and child process '$target' will do: echo 1 > \"/sys/class/scsi_device/${target}/device/delete\""
+
+
+#/sys/class/scsi_host/host${host}/device
+#/sys/bus/scsi/devices/target6:0:0
+
+echo "will watch for existence of /sys/class/scsi_device/${target}"
+
+scan_file="/sys/class/scsi_host/host${host}/scan"
+
+target_file=/sys/class/scsi_device/${target}
+real_target=$(readlink -f $target_file)
+echo "target_file: $target_file"
+echo "real_target: $real_target"
+
+
+the_thing=$(readlink -f /sys/class/scsi_device/${target} | cut -d/ -f -7)
+echo "watchiing for existence of $the_thing"
+
+
+
+#exit
+	echo "child worker for $target starting up"
+	while [[ ! -e $stop_file ]]; do
+		child_iter_count=$(($child_iter_count + 1))
+
+		echo "${scan}" > "/sys/class/scsi_host/host${host}/scan"
+#		sleep 0.01
+		wait_up_iters=0
+#		while [[ ! -d "/sys/class/scsi_device/${target}" ]]; do
+
+udevadm settle >/dev/null 2>&1
+
+		while [[ ! -d $the_thing ]] ; do
+[[ $wait_up_iters -eq 0 ]] && echo "waiting for the device to appear"
+#udevadm settle
+#/sys/devices/pseudo_0/adapter0/host6/target6:0:0
+
+#			[[ $wait_up_iters -gt 10 ]] && udevadm settle
+			sleep 0.01
+			wait_up_iters=$(($wait_up_iters + 1))
+			if [[ $(($wait_up_iters % $stall_report_iters)) -eq 0 ]] ; then
+				echo "target ${target} stalled for $wait_up_iters iterations waiting for creation"
+				[[ $stall_exit_iters -gt 0 ]] && [[ $wait_up_iters -ge $stall_exit_iters ]] && \
+					echo "child with target $target reproduced the bug" && touch $repro_file && exit
+			fi
+			[[ -f $stop_file ]] && echo "child worker for $target sees stop file" && exit
+		done
+		[[ $UDEVADM_SETTLE -ne 0 ]] && udevadm settle >/dev/null 2>&1
+
+		echo 1 > "/sys/class/scsi_device/${target}/device/delete"
+
+		if [[ $WAIT_FOR_REMOVAL ]] ; then
+			wait_down_iters=0
+			while [[ -d "/sys/class/scsi_device/${target}" ]] ; do
+				sleep 0.01
+				wait_down_iters=$(($iters + 1))
+				if [[ $(($wait_down_iters % $stall_report_iters)) -eq 0 ]] ; then
+					echo "target ${target} stalled for $wait_down_iters iterations waiting for removal"
+					[[ $stall_exit_iters -gt 0 ]] && [[ $wait_down_iters -ge $stall_exit_iters ]] && \
+						echo "child with target $target reproduced a different bug" && touch $repro_file && exit
+				fi
+				[[ -f $stop_file ]] && exit
+			done
+		fi
+		[[ $UDEVADM_SETTLE -ne 0 ]] && udevadm settle >/dev/null 2>&1
+	done
+	[[ -f $stop_file ]] && echo "child worker for $target sees stop file" && exit
+	exit
+}
+
+stress_scsi_debug() {
+	local devtype=$1
+	shift
+
+	sync
+	sysctl vm.drop_caches=3 >/dev/null 2>&1
+	repro_dir=$(find_repro_dir)
+	local log=$repro_dir/log
+	touch $log
+
+	echo "repro dir: $repro_dir, logging to $log" | tee -a $log
+	echo "stressing $devtype with add_host: $add_host, num_tgts: $num_tgts" | tee -a $log
+
+
+	if ! _init_scsi_debug "$@"; then
+		return
+	fi
+
+
+	journal_pid=""
+	if [[ $JOURNAL -ne 0 ]] ; then
+		journalctl -fn 0 -u systemd-udevd >$repro_dir/journal.out 2>&1 &
+		journal_pid=$!
+	fi
+
+	udevadm_monitor_pid=""
+	if [[ $UDEVMONITOR -ne 0 ]] ; then
+		udevadm monitor -puk >$repro_dir/udev_monitor.out 2>&1 &
+		udevadm_monitor_pid=$!
+	fi
+
+	bpftrace_pid=""
+	if [[ $BPFTRACE -ne 0 ]] ; then
+		$work_dir/trace_bpf >$repro_dir/bpftrace.out 2>&1 &
+		bpftrace_pid=$!
+		sleep 3
+	fi
+
+	local start_seconds=$SECONDS
+	rm -f $stop_file $repro_file
+
+	local host target wait_up_iters wait_down_iters
+	trap exit_cleanup SIGINT SIGTERM EXIT
+	unset child_pids
+	echo "starting" | tee -a $log
+	for target in "${SCSI_DEBUG_TARGETS[@]}"; do
+		child_worker "$target" 2>&1 | tee -a $log &
+		child_pids="$child_pids $!"
+	done
+	trap handle_sigchld SIGCHLD
+
+	while [[ $SECONDS -lt $(($start_seconds + $TIMEOUT)) ]] ; do
+		echo -en "time: $(($SECONDS-$start_seconds))\r"
+		sleep 1
+		[[ -f $repro_file ]] && echo "a child reproduced the bug" | tee -a $log && break
+	done
+
+	touch $stop_file
+	echo "waiting for child processes to exit" | tee -a $log 
+	wait $child_pids
+	rm -f $stop_file
+	unset child_pids
+
+	udevadm settle
+	sleep 1
+	[[ -n $udevadm_monitor_pid ]] && [[ -d /proc/$udevadm_monitor_pid ]] && kill $udevadm_monitor_pid
+	[[ -n $journal_pid ]] && [[ -d /proc/$journal_pid ]] && kill $journal_pid
+	[[ -n $bpftrace_pid ]] && [[ -d /proc/$bpftrace_pid ]] && kill $bpftrace_pid
+
+#	kill $udevadm_monitor_pid $journal_pid
+	wait $udevadm_monitor_pid $journal_pid $bpftrace_pid
+
+#	[[ -f $repro_file ]] && rm -f $repro_file && exit
+	[[ -f $repro_file ]] && exit
+
+	trap - SIGINT SIGTERM EXIT
+	_exit_scsi_debug
+}
+
+
+echo "Running ${TEST_NAME}"
+
+#echo "Stressing sd"
+#stress_scsi_debug sd add_host=$add_host num_tgts=$num_tgts ptype=0 2<&1
+#stress_scsi_debug sd add_host=$add_host num_tgts=$num_tgts ptype=0 2>&1
+
+
+
+#echo "Stressing sr"
+stress_scsi_debug sr add_host=$add_host num_tgts=$num_tgts ptype=5 2>&1
+
+rm -f $stop_file $repro_file
+#rmdir $tmpdir
+
+echo "Test complete"
