@@ -1,0 +1,199 @@
+/*
+	Frank Sorenson <sorenson@redhat.com>, 2021
+
+	systemtap for use while testing name_to_handle_at() syscall
+*/
+%{
+#include <linux/nfs.h>
+#include <linux/sunrpc/xdr.h>
+
+#ifndef NFSEXP_READONLY
+
+#define NFSEXP_READONLY         0x0001
+#define NFSEXP_INSECURE_PORT    0x0002
+#define NFSEXP_ROOTSQUASH       0x0004
+#define NFSEXP_ALLSQUASH        0x0008
+#define NFSEXP_ASYNC            0x0010
+#define NFSEXP_GATHERED_WRITES  0x0020
+#define NFSEXP_NOREADDIRPLUS    0x0040
+#define NFSEXP_SECURITY_LABEL   0x0080
+/* 0x100 currently unused */
+#define NFSEXP_NOHIDE           0x0200
+#define NFSEXP_NOSUBTREECHECK   0x0400
+#define NFSEXP_NOAUTHNLM        0x0800          /* Don't authenticate NLM requests - just trust */
+#define NFSEXP_MSNFS            0x1000  /* do silly things that MS clients expect; no longer supported */
+#define NFSEXP_FSID             0x2000
+#define NFSEXP_CROSSMOUNT       0x4000
+#define NFSEXP_NOACL            0x8000  /* reserved for possible ACL related use */
+/*
+ * The NFSEXP_V4ROOT flag causes the kernel to give access only to NFSv4
+ * clients, and only to the single directory that is the root of the
+ * export; further lookup and readdir operations are treated as if every
+ * subdirectory was a mountpoint, and ignored if they are not themselves
+ * exported.  This is used by nfsd and mountd to construct the NFSv4
+ * pseudofilesystem, which provides access only to paths leading to each
+ * exported filesystem.
+ */
+#define NFSEXP_V4ROOT           0x10000
+#define NFSEXP_PNFS             0x20000
+#endif
+
+#ifndef EMBED_FH_OFF
+#define EMBED_FH_OFF 3
+#endif
+%}
+
+@define NFS_I(inode) %( @module_container_of(@inode, "nfs", "struct nfs_inode", vfs_inode) %)
+@define NFS_FH(inode) %( &@NFS_I(@inode)->fh %)
+@define NF_FILEID(inode) %( @NFS_I(@inode)->fileid %)
+@define nfs_exp_embedfh(p) %( &@cast(@p + %{ EMBED_FH_OFF %}, "struct nfs_fh", "nfs") %)
+
+function XDR_QUADLEN(l) %{ /* pure */
+	STAP_RETVALUE = XDR_QUADLEN((long)STAP_ARG_l);
+%}
+function IS_AUTOMOUNT(inode) %{ /* pure */
+	struct inode *inode = (struct inode *)STAP_ARG_inode;
+	STAP_RETVALUE = ((inode)->i_flags & S_AUTOMOUNT);
+%}
+
+# module("nfs").function("nfs_encode_fh@fs/nfs/export.c:35") $inode:struct inode* $p:__u32* $max_len:int* $parent:struct inode* $server_fh:struct nfs_fh* $__func__:char const[] const
+probe module("nfs").function("nfs_encode_fh") {
+	max_len = kernel_int($max_len)
+	inode = &@cast($inode, "struct inode")
+//	parent = &@cast($parent, "struct inode")
+
+	server_fh = @NFS_FH(inode)
+	server_fh_size = server_fh->size
+
+	printf("%s (%d) %s(max_len: %d)\n", execname(), tid(), ppfunc(), max_len)
+
+	printf("    size_t fh_size = offsetof(struct nfs_fh, data) + server_fh->size;\n")
+	printf("                   = %-3d                             %d\n",
+		%{ offsetof(struct nfs_fh, data) %}, server_fh_size)
+	fh_size = %{ offsetof(struct nfs_fh, data) %} + server_fh->size
+	printf("                   = %d\n", fh_size)
+
+	printf("    int len = EMBED_FH_OFF + XDR_QUADLEN(fh_size);\n")
+	printf("            = %-3d          + XDR_QUADLEN(%d)\n", %{ EMBED_FH_OFF %}, fh_size)
+	printf("            = %-3d          + %d", %{ EMBED_FH_OFF %}, XDR_QUADLEN(fh_size))
+	len = %{ EMBED_FH_OFF %} + XDR_QUADLEN(fh_size)
+	printf("            = %d\n", len)
+
+	printf("    if (*max_len < len || IS_AUTOMOUNT(inode))\n")
+	printf("        %-3d      < %-3d || %d\n",
+		max_len, len, IS_AUTOMOUNT(inode) ? 1 : 0);
+}
+
+# kernel.function("exportfs_encode_inode_fh@fs/exportfs/expfs.c:383") $inode:struct inode* $fid:struct fid* $max_len:int* $parent:struct inode*
+probe kernel.function("exportfs_encode_inode_fh") {
+	max_len = kernel_int($max_len)
+
+	printf("%s (%d) %s(max_len: %d\n", execname(), tid(), ppfunc(), max_len)
+}
+probe kernel.function("exportfs_encode_inode_fh").return {
+	max_len_addr = @entry($max_len)
+
+	printf("%s (%d) %s returns %d (max_len: %d)\n",
+		execname(), tid(), ppfunc(), $return, kernel_int(max_len_addr))
+}
+
+# int exportfs_encode_fh(struct dentry *dentry, struct fid *fid, int *max_len,
+#	int connectable)
+# kernel.function("exportfs_encode_fh@fs/exportfs/expfs.c:395") $dentry:struct dentry* $fid:struct fid* $max_len:int* $connectable:int $p:struct dentry*
+probe kernel.function("exportfs_encode_fh") {
+	max_len = kernel_int($max_len)
+	printf("%s (%d) %s(name: '%s', max_len: %d, connectable: %d; fid: %s\n",
+		execname(), tid(), ppfunc(), kernel_string($dentry->d_name->name), max_len, $connectable, ($fid)$$)
+}
+probe kernel.function("exportfs_encode_fh").return {
+	max_len_addr = @entry($max_len)
+
+	printf("%s (%d) %s returns %d (max_len: %d)\n",
+		execname(), tid(), ppfunc(), $return, kernel_int(max_len_addr))
+}
+
+# kernel.function("do_sys_name_to_handle@fs/fhandle.c:17") $ufh:struct file_handle* $mnt_id:int* $f_handle:struct file_handle $handle_dwords:int
+probe kernel.function("do_sys_name_to_handle") {
+
+	printf("file handle offset of handle_bytes: %d\n", @offsetof("struct file_handle", handle_bytes))
+	printf("file handle offset of handle_type: %d\n", @offsetof("struct file_handle", handle_type))
+	printf("file handle offset of f_handle: %d\n", @offsetof("struct file_handle", f_handle))
+
+	if ($handle_dwords)
+		handle_dwords = kernel_int($handle_dwords)
+	else
+		handle_dwords = -1
+
+	printf("%s (%d) %s(handle_dwords: %d)\n", execname(), tid(), ppfunc(), handle_dwords)
+}
+probe kernel.function("do_sys_name_to_handle").return {
+	ufh_addr = @entry($ufh)
+	handle_dwords_addr = @entry($handle_dwords)
+	mnt_id_addr = @entry($mnt_id)
+
+	if (handle_dwords_addr)
+		handle_dwords = kernel_int(handle_dwords)
+	else
+		handle_dwords = -65535
+
+	if (mnt_id_addr)
+		mnt_id = kernel_int(mnt_id_addr)
+	else
+		mnt_id = -65535
+
+	if (ufh_addr)
+		handle_bytes = user_int(ufh_addr)
+	else
+		handle_bytes = -65535
+
+	printf("%s (%d) %s returns %d (handle_dwords: %d, mnt_id: %d, file_handle->handle_bytes: %d)\n",
+		execname(), tid(), ppfunc(), $return, handle_dwords, mnt_id, handle_bytes)
+}
+
+#
+# RHEL 8 - fs/nfsd/nfsxdr.c
+# static __be32 *
+# encode_fh(__be32 *p, struct svc_fh *fhp)
+# {
+#	memcpy(p, &fhp->fh_handle.fh_base, NFS_FHSIZE);
+#	return p + (NFS_FHSIZE>> 2);
+# }
+# RHEL 8 - fs/nfsd/nfs3xdr.c
+# static __be32 *
+# encode_fh(__be32 *p, struct svc_fh *fhp)
+# {
+#	unsigned int size = fhp->fh_handle.fh_size;
+#	*p++ = htonl(size);
+#	if (size) p[XDR_QUADLEN(size)-1]=0;
+#	memcpy(p, &fhp->fh_handle.fh_base, size);
+#	return p + XDR_QUADLEN(size);
+# }
+probe module("nfsd").function("encode_fh").call {
+        fh_handle = &@cast($fhp, "struct svc_fh")->fh_handle
+        fh_size = &@cast(fh_handle, "struct knfsd_fh")->fh_size
+
+        printf("%s (%d) %s(fh_size: %d)\n", execname(), tid(), ppfunc(), kernel_int(fh_size))
+        print_backtrace()
+}
+
+probe module("nfsd").function("set_version_and_fsid_type") if (0) {
+	if ($ref_fh && $ref_fh->fh_export == $exp) { /* first if */
+	} else if ($exp->ex_flags & %{ NFSEXP_FSID %}) {
+	}
+	max_len = kernel_int($max_len)
+	printf("%s (%d) %s(max_len: %d words (%d bytes); exp->exp_flags: %04x)\n",
+		execname(), tid(), ppfunc(), max_len, max_len * 4, $exp->ex_flags)
+
+	print_backtrace()
+}
+
+probe module("nfs").function("nfs_copy_fh") {
+	printf("%s (%d) %s(size: %d)\n", execname(), tid(), ppfunc(), $source->size)
+}
+
+probe begin {
+	printf("sizeof(nfs_fh): %d\n", @cast_module_sizeof("nfs", "struct nfs_fh"))
+	printf("nfs_fh->size - offset: %d, size: %d\n", @module_offsetof("nfs", "struct nfs_fh", size), %{ (sizeof(((struct nfs_fh*)0)->size)) %})
+
+	printf("nfs_fh->data - offset: %d, size: %d\n", @module_offsetof("nfs", "struct nfs_fh", data), %{ (sizeof(((struct nfs_fh*)0)->data)) %})
+}
