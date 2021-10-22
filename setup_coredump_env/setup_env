@@ -1,0 +1,316 @@
+#!/bin/bash
+
+DEBUG=0
+rpms_base_dir=/mnt/RH
+pwd=$(pwd)
+tmpdir=$(mktemp -d)
+
+#rpm_pat="^(.+)-(.+)-(.+)\.(.+)$"
+#rpm_pat="^(.+)-(.+:)?(.+)-(.+)\.(.+)$"
+rpm_pat="^(.+)-(.+:)?(.+)-(.+)\.(.+)$"
+
+
+exit_cleanup() {
+	trap - SIGINT SIGTERM EXIT
+
+	rm -rf $tmpdir
+}
+trap exit_cleanup SIGINT SIGTERM EXIT
+
+uniquify() {
+	local strings=$1
+
+	for str in $strings ; do
+		echo "$str"
+	done | sort -u
+}
+
+# poor-man's rpm provides
+remap_pkg() {
+	local rpm_name=$1
+
+	case $rpm_name in
+		libattr) echo attr ;;
+		libgcc) echo gcc ;;
+		elfutils-lib*) echo elfutils ;;
+		systemd-*) echo systemd ;;
+		krb5-*) echo krb5 ;;
+		openssl-*) echo openssl ;;
+		bzip2-*) echo bzip2 ;;
+		libcom_err) echo e2fsprogs ;;
+		xz-*) echo xz ;;
+		keyutils-*) echo keyutils ;;
+		*) echo $rpm_name
+	esac
+}
+remap_debuginfo() {
+	local rpm_name=$1
+
+	case $rpm_name in
+		libattr*) echo attr libattr ;;
+		libgcc*) echo gcc gcc-base ;;
+		elfutils*) echo elfutils ;;
+		systemd*) echo systemd ;;
+		krb5*) echo krb5 ;;
+		openssl*) echo openssl ;;
+		bzip2*) echo bzip2 ;;
+		libcom_err) echo e2fsprogs ;;
+		xz*) echo xz ;;
+		keyutils*) echo keyutils ;;
+		*) echo $rpm_name
+	esac
+}
+find_debuginfo_rpms() {
+	local rpm rpm_dir rpm_filename name vra remaps
+	local rpms=$1
+	[[ $DEBUG -ge 1 ]] && echo "in find_debuginfo_rpms with: $rpms" >&2
+	for rpm in $rpms ; do
+		[[ $DEBUG -ge 1 ]] && echo "looking for debug* rpms for $rpm" >&2
+		rpm_dir=${rpm%/*}
+		rpm_filename=${rpm##*/}
+		name=${rpm_filename%-*-*.*.rpm}
+
+		vra=${rpm_filename#$name-}
+
+		remaps=$(remap_debuginfo $name)
+		echo "$name remapped to $remaps" >&2
+		for remapped_debug in $remaps ; do
+			p=${rpm_dir}/${remapped_debug}-debuginfo-${vra}
+			[[ $DEBUG -ge 1 ]] && echo "checking for $p" >&2
+			[[ -f $p ]] && echo $p && echo $p >&2
+			p=${rpm_dir}/${remapped_debug}-debugsource-${vra}
+			[[ $DEBUG -ge 1 ]] && echo "checking for $p" >&2
+			[[ -f $p ]] && echo $p && echo $p >&2
+		done
+	done
+}
+
+
+
+# skip the epoch
+split_name() {
+	local name=$1
+
+	if [[ $name =~ $rpm_pat ]] ; then
+		n=${BASH_REMATCH[1]}
+		e=${BASH_REMATCH[2]}
+		v=${BASH_REMATCH[3]}
+		r=${BASH_REMATCH[4]}
+		a=${BASH_REMATCH[5]}
+
+		local remapped_pkg=$(remap_pkg $n)
+[[ $DEBUG -ge 1 ]] && [[ $remapped_pkg != $n ]] && echo "remapped $n to $remapped_pkg" >&2
+
+
+		echo "$remapped_pkg $v $r $a $n-$v-$r.$a.rpm"
+#		echo "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" "${BASH_REMATCH[4]}" "${BASH_REMATCH[5]}"
+#		echo "n: ${BASH_REMATCH[1]}" >&2
+#		echo "e: ${BASH_REMATCH[2]}" >&2
+#		echo "v: ${BASH_REMATCH[3]}" >&2
+#		echo "r: ${BASH_REMATCH[4]}" >&2
+#		echo "a: ${BASH_REMATCH[5]}" >&2
+	else
+		:
+	fi
+}
+
+get_installed_rpm() {
+	local pat="$1"
+
+	egrep "^$pat" sos*/installed-rpms -m1 | awk '{print $1}' | head -n1
+}
+get_rhel_major() {
+	local out
+	if [[ -f os_info ]] ; then
+		out=$(eval $(grep REDHAT_SUPPORT_PRODUCT_VERSION os_info) ; echo $REDHAT_SUPPORT_PRODUCT_VERSION)
+		echo ${out:0:1}
+		return
+	fi
+	out=$(egrep '^redhat-release-[0-9]' sos*/installed-rpms -m1) && {
+		echo ${out:15:1}
+		return
+	}
+	echo "could not determine rhel major version"
+	exit
+}
+find_rpm_path() {
+	local n v r a
+	local name=$1
+	local parts=( $(split_name $name) )
+	local n=${parts[0]}
+	local v=${parts[1]}
+	local r=${parts[2]}
+	local a=${parts[3]}
+	local rpm_name=${parts[4]}
+
+	[[ -z "${parts[*]}" ]] && echo "$name not found!" >&2 && return
+#	local rpm_path=$rpms_dir/${parts[0]}/${parts[2]}/${parts[3]}/${parts[4]}/$name.rpm
+#	local rpm_path=$rpms_dir/${parts[0]}/${parts[2]}/${parts[3]}/${parts[4]}/${parts[0]}-${parts[2]}-${parts[3]}.${parts[4]}.rpm
+	local rpm_path=$rpms_dir/$n/$v/$r/$a/$rpm_name
+
+#	${parts[0]}/${parts[2]}/${parts[3]}/${parts[4]}/${parts[0]}-${parts[2]}-${parts[3]}.${parts[4]}.rpm
+
+
+	[[ -f $rpm_path ]] && echo $rpm_path && return
+#	echo "not found: $rpm_path"
+	echo "not found: $rpm_path" >&2
+}
+
+########################################33
+(cat <<EOFEOFEOF
+#define _GNU_SOURCE
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/stat.h>
+#include <dlfcn.h>
+#include <errno.h>
+
+#define get_func(_handle, _func) ({ \
+        char *error; \
+        void *_ret = dlsym(_handle,#_func); \
+        if ((error = dlerror()) != NULL) { \
+                fprintf(stderr, "%s getting %s\n", error, #_func); \
+                exit(EXIT_FAILURE); \
+        } \
+        _ret; })
+
+extern int __real_chmod(const char *pathname, mode_t mode);
+extern int __real_chown(const char *pathname, uid_t owner, gid_t group);
+
+typedef typeof(__real_chmod) chmod_t;
+static chmod_t *real_chmod_ptr = NULL;
+
+int chmod(const char *pathname, mode_t mode) {
+        struct stat st;
+
+        if (real_chmod_ptr == NULL) {
+                void *handle = RTLD_NEXT;
+                real_chmod_ptr = get_func(handle, chmod);
+        }
+
+        if ((stat(pathname, &st)) < 0)
+                return errno;
+        if (S_ISDIR(st.st_mode)) {
+                if (! (mode & 0200))
+                mode |= 0700;
+        }
+        return real_chmod_ptr(pathname, mode);
+}
+int chown(const char *pathname, uid_t owner, gid_t group) {
+	return 0;
+}
+EOFEOFEOF
+) > $tmpdir/hook_chmod.c
+gcc -Wall $tmpdir/hook_chmod.c -shared -fPIC -rdynamic -o $tmpdir/hook_chmod.o -ldl
+###########################3
+
+rhel_major=$(get_rhel_major)
+rpms_dir=$rpms_base_dir/rpms-rhel$rhel_major
+
+filesystem_rpm=$(get_installed_rpm '^filesystem')
+filesystem_rpm_path=$(find_rpm_path $filesystem_rpm)
+
+mkdir -p root
+rpm -qp --scripts $filesystem_rpm_path | awk '
+BEGIN { root="root" }
+#posix.mkdir("/usr/lib/debug/usr/lib64")
+function do_mkdir(arg) {
+        dir = substr(arg, 14, length(arg) - 15)
+
+        printf "mkdir %s%s\n", root, dir
+}
+#posix.symlink("../.dwz", "/usr/lib/debug/usr/.dwz")
+function do_symlink(arg1, arg2) {
+        tgt = substr(arg1, 16, length(arg1) - 17)
+        src = substr(arg2, 2, length(arg2) - 3)
+
+        printf "ln -s %s %s%s\n", tgt, root, src
+}
+substr($1, 1, 11) == "posix.mkdir" { do_mkdir($1) }
+substr($1, 1, 13) == "posix.symlink" { do_symlink($1, $2) }
+'
+
+mkdir -p $pwd/root/usr/bin
+cp /usr/bin/true $pwd/root/usr/bin
+cp /usr/bin/true $pwd/root/usr/bin/sh
+cp /usr/bin/true $pwd/root/usr/bin/chown
+
+#rpm_args='--macros="/usr/lib/rpm/macros:/usr/lib/rpm/macros.d/macros.*:/usr/lib/rpm/platform/%{_target}/macros:/usr/lib/rpm/fileattrs/*.attr:/usr/lib/rpm/redhat/macros:/etc/rpm/macros.*:/etc/rpm/macros:/etc/rpm/%{_target}/macros:~/.rpmmacros"'
+rpm_args='--nopost --noposttrans'
+
+[[ -z $LD_PRELOAD ]] && LD_PRELOAD_TMP="$tmpdir/hook_chmod.o" || LD_PRELOAD_TMP="$tmpdir/hook_chmod.o:$LD_PRELOAD"
+export LD_PRELOAD_TMP
+LD_PRELOAD="$LD_PRELOAD_TMP" rpm -Uvh $rpm_args --nodeps --root=$pwd/root $filesystem_rpm_path
+
+#rpm -Uvh --root=$(pwd)/root /mnt/RH/rpms-rhel7/filesystem/3.2/25.el7/x86_64/filesystem-3.2-25.el7.x86_64.rpm --nodeps
+
+
+echo "determining needed rpms"
+[[ -f dso_list ]] || {
+	echo "dso_list file not found"
+	exit
+}
+needed_rpms=$(while read path rpm_name other ; do
+	echo $rpm_name
+done <dso_list | sort -u)
+
+echo "looking for rpms"
+rpm_paths=$(for rpm_name in $needed_rpms ; do
+	rpm_path=$(find_rpm_path $rpm_name)
+	if [[ -n $rpm_path ]] ; then
+		[[ $DEBUG -ge 1 ]] && echo "path for $rpm_name is $rpm_path" >&2
+		echo $rpm_path
+	else
+		echo "could not locate path for $rpm_name" >&2
+	fi
+done)
+
+echo "looking for debuginfo rpms"
+debuginfo_rpm_paths=$(find_debuginfo_rpms "$rpm_paths")
+
+rpm_count=$(echo $rpm_paths | wc -w)
+debuginfo_rpm_count=$(echo $debuginfo_rpm_paths | wc -w)
+
+echo "installing $rpm_count rpms and $debuginfo_rpm_count debuginfo rpms"
+for rpm in $rpm_paths $debuginfo_rpm_paths ; do
+	LD_PRELOAD="$LD_PRELOAD_TMP" rpm -ivh --noscripts --nodeps --root=$pwd/root $rpm
+done
+#LD_PRELOAD="$LD_PRELOAD_TMP" rpm -ivh --noscripts --nodeps --root=$pwd/root $rpm_paths $debuginfo_rpm_paths
+
+echo "creating gdb startup script"
+# setup run_gdb script
+exe=$(cat executable)
+
+(cat <<EOM
+#!/bin/bash
+
+base_dir=$(dirname $(readlink $0))
+cd $base_dir
+
+debug_root=\$base_dir/root
+corefile=coredump
+
+exe=\$debug_root$exe
+
+(cat <<GDBINIT
+set debug symtab-create 0
+set sysroot \$debug_root
+set debug-file-directory \$debug_root/usr/lib/debug
+set substitute-path /usr/src/debug \$debug_root/usr/src/debug
+set substitute-path /usr/lib/debug \$debug_root/usr/lib/debug
+set solib-search-path \$debug_root
+noshared
+shared
+GDBINIT
+) > gdb_init
+
+exec gdb -ix gdb_init \$exe \$corefile
+EOM
+) >run_gdb
+chmod +x run_gdb
+
+echo "complete; execute $pwd/run_gdb to start debugger"
+
+
+
