@@ -23,6 +23,20 @@
 
 #define BUF_SIZE 4096
 
+#define output(args...) do { \
+	printf(args); \
+	fflush(stdout); \
+} while (0)
+
+#define path_have(p)		(p)
+#define path_empty(p)		(p && p[0] == '\0')
+#define path_null_or_empty(p)	(!p || p[0] == '\0')
+#define path_dot(p)		(p && p[0] == '.' && p[1] == '\0')
+#define path_empty_or_dot(p)	((!p) || (p && (p[0] == '\0' || (p[0] == '.' && p[1] == '\0'))))
+#define path_null_or_empty_or_dot(p)	(!p || p[0] == '\0' || (p[0] == '.' && p[1] == '\0'))
+#define path_relative(p)	(p && p[0] != '\0' && p[0] != '/')
+#define path_absolute(p)	(p && p[0] == '/')
+
 void do_try_name_to_handle_at(const char *path, const char *subdir, int flags) {
 	struct file_handle *fhp = malloc(4096);
 	unsigned int fhsize = MAX_HANDLE_SZ;
