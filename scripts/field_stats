@@ -1,0 +1,20 @@
+#!/bin/bash
+
+field_num=${1:-1}
+awk -vfield=$field_num '
+BEGIN {
+	min=999999999999
+}
+{
+	count++
+	total+=$field
+	if ($field > max) {max = $field}
+	else if ($field < min) {min = $field}
+}
+END{
+	if (count) {
+		printf "count: %d; min: %.6f; mean: %.6f; max: %.6f; total time: %.6f\n", count, min, (total / count), max, total
+	} else {
+		printf "no data\n"
+	}
+}'
