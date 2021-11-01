@@ -9,6 +9,9 @@ no warnings 'portable';
 use constant {
 	false => 0,
 	true => 1,
+
+	CALL => 1,
+	COMPLETION => 2,
 };
 
 use constant {
@@ -63,6 +66,8 @@ my %config = (
 	'linktype' => LINKTYPE_DLT_RAW,
 	'src_ip' => 0x7f000001,
 	'dst_ip' => 0x7f000001,
+	'dst_ip_call' => 0x7f000001,
+	'dst_ip_completion' => 0x7f000002,
 );
 
 sub calc_pad_bytes { ($_[0] % 4 == 0) ? 0 : 4 - ($_[0] % 4); }
@@ -668,10 +673,13 @@ sub output_udp {
 sub output_udp_syslog_frame {
 	my $ts = shift;
 	my $ts_subsec = shift;
+	my $call_completion = shift;
 	my $payload = shift;
 
-	$payload = construct_udp($config{'src_ip'}, $config{'dst_ip'}, 30000, 514, $payload);
-	$payload = construct_ipv4_header($config{'src_ip'}, $config{'dst_ip'}, length($payload)) . $payload;
+	my $dst_ip = ($call_completion == CALL) ? $config{'dst_ip_call'} : $config{'dst_ip_completion'};
+
+	$payload = construct_udp($config{'src_ip'}, $dst_ip, 30000, 514, $payload);
+	$payload = construct_ipv4_header($config{'src_ip'}, $dst_ip, length($payload)) . $payload;
 
 	if ($config{'linktype'} eq LINKTYPE_ETH) {
 		$payload = construct_eth(0x0800) . $payload;
@@ -700,7 +708,9 @@ output_SHB();
 
 my $syscall_string = "[^\(]+";
 my $digits_string = "[0-9]+";
-my $re = qr/^($digits_string)\s+($digits_string)\.($digits_string) ($syscall_string)\((.*?)\)\s+= (.*?) <($digits_string)\.($digits_string)>$/;
+my $timestamp_string = "[0-9:]+";
+my $subsec_string = "[0-9]{6}";
+my $re = qr/^($digits_string)\s+($timestamp_string)\.($subsec_string) ($syscall_string)\((.*?)\)\s+= (.*?) <($digits_string)\.($digits_string)>$/;
 
 my $line_tag_re = qr/^([0-9]+[^,]*), "([^"]+)"(.+)/;
 
@@ -725,7 +735,7 @@ while (<$strace>) {
 
 		if (index($ts, ':') >= 0) {
 			$ts = ts_to_sec($ts);
-			$ts += 1629435600; # 2021-08-20
+			$ts += 1635465600; # 2021-10-29
 		} else {
 		}
 
@@ -744,9 +754,9 @@ while (<$strace>) {
 
 		printf STDERR "line %d: %s\n", $line_num, $output_string if ($DEBUG >= 1);
 
-		output_udp_syslog_frame($ts, $ts_subsec,
+		output_udp_syslog_frame($ts, $ts_subsec, CALL,
 			$line_tag . "call:  " . $output_string);
-		output_udp_syslog_frame($end_ts, $end_ts_subsec,
+		output_udp_syslog_frame($end_ts, $end_ts_subsec, COMPLETION,
 			$line_tag . "return:  " . $output_string);
 	} else {
 		printf STDERR "did not match: '%s'\n", $line;
