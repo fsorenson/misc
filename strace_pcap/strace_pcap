@@ -58,12 +58,12 @@ use constant {
 #   DSB - Decryption Secrets Block
 
 my %config = (
+	'program_name' => "",
 	'subsec_digits' => 6,
 	'linktype' => LINKTYPE_DLT_RAW,
 	'src_ip' => 0x7f000001,
 	'dst_ip' => 0x7f000001,
 );
-my $trace_is_test_program = false;
 
 sub calc_pad_bytes { ($_[0] % 4 == 0) ? 0 : 4 - ($_[0] % 4); }
 
@@ -685,11 +685,8 @@ sub output_udp_syslog_frame {
 }
 
 die("must give strace filename") if (!defined($ARGV[0]));
-die("must give command name") if (!defined($ARGV[1]));
 
-if ($ARGV[1] eq "test_program") {
-	$trace_is_test_program = true;
-}
+$config{'program_name'} = $ARGV[1] if (defined($ARGV[1]));
 
 my $strace;
 if ($ARGV[0] eq "-") {
@@ -719,36 +716,10 @@ while (<$strace>) {
 	$line_num++;
 
 	if (my ($pid, $ts, $ts_subsec, $op, $args, $ret, $elapsed, $elapsed_subsec) = $line =~ $re) {
-		my $line_tag = '';
+		my $line_tag = "pid " . $pid;
 
-		if ($trace_is_test_program) { # specific to a particular use-case; TODO: separate this out
+		$line_tag = $config{'program_name'} . " " . $line_tag if ($config{'program_name'} ne "");
 
-			if ($reader_pid == 0) {
-				$reader_pid = $pid;
-				$line_tag = "reader";
-			} elsif ($reader_pid == $pid) {
-				$line_tag = "reader";
-			} elsif ($writer_pid == 0) {
-				$writer_pid = $pid;
-				$line_tag = "writer";
-			} elsif ($writer_pid = $pid) {
-				$line_tag = "writer";
-			} else {
-				next;
-			}
-			printf STDERR "packet is from %s\n", $line_tag if ($DEBUG >= 1);
-			if ($op eq "open" || $op eq "openat" || $op eq "close") {
-			} elsif ($op eq "pread64" || $op eq "pwrite64") {
-				if (my ($fh_info, $buf, $rem) = $args =~ $line_tag_re) {
-					$buf = '"' . substr($buf, 0, 10) . '"';
-					$args = $fh_info . ", " . $buf . $rem;
-				}
-			} else {
-				next;
-			}
-		} else {
-			$line_tag = $ARGV[1];
-		}
 		$ts_subsec *= 10**($config{'subsec_digits'} - length($ts_subsec));
 		my $elapsed_string = sprintf("%s.%s", $elapsed, $elapsed_subsec);
 
