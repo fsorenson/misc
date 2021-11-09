@@ -62,14 +62,26 @@ sub barf {
 	return -1;
 }
 
+# see if a directory appears to have the rpc_xprt subdirectory, etc.
+sub check_dir {
+	my $root = shift;
+
+	return undef if (! -d $root);
+
+	return $root . "/sys/kernel/debug/sunrpc" if (-d $root . "/sys/kernel/debug/sunrpc" . "/rpc_xprt");
+	return $root if (-d $root . "/rpc_xprt");
+	return undef;
+}
+
 sub dump_rpcs {
 	my $root = shift;
 
 	my %xprt_info = ();
-	my $sunrpc_dir = $root . "/sys/kernel/debug/sunrpc";
+	my $sunrpc_dir = check_dir($root);
+	return barf("could not find expected debug directories in $root") if (! defined($sunrpc_dir));
+
 	my $rpc_xprt_dir = $sunrpc_dir . "/rpc_xprt";
 
-	return barf("no debug directory: $sunrpc_dir") if (! -d $sunrpc_dir);
 	opendir DIR, $rpc_xprt_dir or return barf("Unable to open $rpc_xprt_dir");
 	my @xprt_contents = readdir DIR;
 	closedir DIR;
