@@ -1,0 +1,126 @@
+#!/usr/bin/stap -g
+#
+# Frank Sorenson <sorenson@redhat.com>, 2021
+#
+# tested with:
+#   RHEL 8.4 - 4.18.0-305.3.1.el8_4.x86_64
+
+global show_periodic = 1 # show stats periodically
+
+# turns out, can't set this via a variable :(
+#global periodic_ms = 10000 # show stats periodically (in ms)
+global show_end = 0 # show stats at exit time
+
+global show_nfs_time = 1 # show per-pid time spent in nfs-related functions
+global show_call_counts = 0 # show per-pid number of nfs-related functions called
+global show_proc_counts = 0 # show per-pid per-nfs-related-function counts
+
+global nfs_time
+global nfs_call_counts
+global nfs_proc_counts
+
+function tstamp:string(epochns:long) %{ /* pure */
+	u64 nsec = STAP_ARG_epochns;
+	time_t epochsec = nsec / 1000000000;
+	struct tm gmt;
+
+	nsec = nsec % 1000000000;
+
+	time_to_tm(epochsec, -tz_gmtoff, &gmt);
+	snprintf(STAP_RETVALUE, MAXSTRINGLEN, "%04ld-%02d-%02d %02d:%02d:%02d.%09llu",
+		gmt.tm_year + 1900, gmt.tm_mon + 1, gmt.tm_mday,
+		gmt.tm_hour, gmt.tm_min, gmt.tm_sec, nsec);
+%}
+
+probe nfs_ops = 
+	module("nfs").function("nfs_atomic_open").return ?,
+	module("nfs").function("nfs_check_flags").return ?,
+	module("nfs").function("nfs_create").return ?,
+	module("nfs").function("nfs_flock").return ?,
+	module("nfs").function("nfs_file_flush").return ?,
+	module("nfs").function("nfs_file_fsync").return ?,
+	module("nfs").function("nfs_fsync_dir").return ?,
+	module("nfs").function("nfs_getattr").return ?,
+	module("nfs").function("nfs_namespace_getattr").return ?,
+	module("nfs").function("nfs_get_link").return ?,
+	module("nfs").function("nfs_readdir").return ?,
+	module("nfs").function("nfs_link").return ?,
+	module("nfs").function("nfs_file_llseek").return ?,
+	module("nfs").function("nfs_llseek_dir").return ?,
+	module("nfs").function("nfs_lock").return ?,
+	module("nfs").function("nfs_lookup").return ?,
+	module("nfs").function("nfs_mkdir").return ?,
+	module("nfs").function("nfs_mknod").return ?,
+	module("nfs").function("nfs_file_mmap").return ?,
+	module("nfs").function("nfs_file_open").return ?,
+	module("nfs").function("nfs_opendir").return ?,
+	module("nfs").function("nfs_permission").return ?,
+	module("nfs").function("nfs_file_read").return ?,
+	module("nfs").function("nfs_closedir").return ?,
+	module("nfs").function("nfs_file_release").return ?,
+	module("nfs").function("nfs_rename").return ?,
+	module("nfs").function("nfs_rmdir").return ?,
+	module("nfs").function("nfs_namespace_setattr").return ?,
+	module("nfs").function("nfs_setattr").return ?,
+	module("nfs").function("nfs_symlink").return ?,
+	module("nfs").function("nfs_unlink").return ?,
+	module("nfs").function("nfs_file_write").return ?,
+
+	module("nfs").function("nfs3_get_acl").return ?,
+	module("nfs").function("nfs3_listxattr").return ?,
+	module("nfs").function("nfs3_set_acl").return ?,
+
+	module("nfs").function("nfs4_copy_file_range").return ?,
+	module("nfs").function("nfs42_fallocate").return ?,
+	module("nfs").function("nfs4_file_flush").return ?,
+	module("nfs").function("nfs4_listxattr").return ?,
+	module("nfs").function("nfs4_file_llseek").return ?,
+	module("nfs").function("nfs4_file_open").return ?,
+	module("nfs").function("nfs42_remap_file_range").return ? {
+	func = ppfunc()
+}
+
+probe nfs_ops {
+	start = @entry(gettimeofday_ns())
+	now = gettimeofday_ns()
+	diff = now - start
+
+	if (show_nfs_time)
+		nfs_time[execname(), pid()] += diff
+	if (show_call_counts)
+		nfs_call_counts[execname(), pid()]++ # per-pid function call counts
+	if (show_proc_counts)
+		nfs_proc_counts[execname(), pid(), func]++ # per-pid function names
+}
+
+function show_stats() {
+	printf("%s\n", tstamp(gettimeofday_ns()))
+
+	if (show_nfs_time) {
+		foreach ([name,pid] in nfs_time- limit 20) {
+			t = nfs_time[name, pid]
+			printf("    %s(%d) %d.%09d\n", name, pid, t / 1000000000, t % 1000000000)
+		}
+		delete nfs_time
+	}
+
+	if (show_call_counts) {
+		foreach ([name,pid] in nfs_call_counts- limit 20)
+			printf("    %s(%d) %d\n", name, pid, nfs_call_counts[name, pid])
+		delete nfs_call_counts
+	}
+
+	if (show_proc_counts) {
+		foreach ([name,pid,proc] in nfs_proc_counts- limit 20)
+			printf("    %s(%d) - %s: %d\n", name, pid, proc,  nfs_proc_counts[name, pid, proc])
+		delete nfs_proc_counts
+	}
+}
+
+#probe timer.ms(periodic_ms) if (show_periodic) {
+probe timer.ms(10000) if (show_periodic) {
+	show_stats()
+}
+probe end if (show_end) {
+	show_stats()
+}
