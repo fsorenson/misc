@@ -1,0 +1,691 @@
+#!/usr/bin/perl -w
+
+# Frank Sorenson <sorenson@redhat.com>, 2021
+
+use strict;
+use warnings;
+
+use constant { MS_BIND => 4096 };
+use constant { false => 0, true => 1 };
+
+use Getopt::Long;
+use File::Find;
+use File::stat;
+use File::Temp qw/tempdir/;
+use List::Util qw(uniq);
+use Fcntl ':mode';
+use POSIX;
+use Cwd 'realpath';
+use Data::Dumper;
+#require "unistd.ph";
+require "sys/syscall.ph";
+
+my @field_widths = ( 10, 12, 12, 0 );
+
+my $verbose = 0;
+my $do_mount = 1;
+my $max_depth = 3;
+
+
+GetOptions(
+	'quiet' => sub { $verbose--; },
+	'verbose' => sub { $verbose++; },
+);
+
+my $search_dev;
+my $tmp_mount_dir;
+
+# get rid of these
+my $found_dev = "";
+my $show_dev;
+
+my %current_tree0;
+my %current_inode_info0;
+my $base_dir0;
+
+sub handle_interrupt {
+	if ($do_mount) {
+		printf "handling interrupt\n";
+		my $ret = syscall(&SYS_umount2, $tmp_mount_dir, 0);
+		printf "umount result: $ret\n";
+
+		rmdir($tmp_mount_dir);
+	}
+	exit(0);
+}
+
+$SIG{'INT'} = 'handle_interrupt';
+$SIG{'TERM'} = 'handle_interrupt';
+
+
+sub center_str {
+	my $str = shift;
+	my $len = shift;
+
+	my $lpad = int(($len - length($str))/2 - 1) - 1;
+	my $lpadstr = ($lpad <= 0) ? "" :
+		"."x ($lpad - 1) . " ";
+	my $rpad = $len - length($str) - length($lpadstr) - 1;
+	my $rpadstr = ($rpad <= 0) ? "" :
+		" " . "."x ($rpad - 1);
+
+	$str = $lpadstr . $str . $rpadstr;
+	$len = $len - 1;
+	return sprintf("%-${len}s", $str);
+}
+sub center_str_old {
+	my $str = shift;
+	my $len = shift;
+
+	$str = " "x int(($len - length($str))/2 - 1) . $str;
+	$len = $len - 1;
+	return sprintf("%-${len}s", $str);
+}
+
+sub logn {
+	my $val = shift;
+	my $base = shift;
+	return log($val)/log($base);
+}
+my @unit_strings;
+$unit_strings[1000] = [ " bytes", "KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB" ];
+$unit_strings[1024] = [ " bytes", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB", "ZiB", "YiB" ];
+sub byte_units {
+	my $size = shift;
+	my $base = shift;
+	my $sigfigs = shift;
+
+	if (!defined($sigfigs)) { $sigfigs = 2; }
+
+	if ($size < $base || !defined($unit_strings[$base])) {
+		return sprintf("%d bytes", $size);
+	}
+	my $i = POSIX::floor(logn($size,$base));
+	my $divider = POSIX::pow($base, $i);
+	return sprintf("%.*f %s",
+		(int($size / $divider) eq ($size / $divider)) ? 0 : $sigfigs, $size / $divider, $unit_strings[$base][$i]);
+}
+
+#my @mode_bits = ('---', '--x', '-w-', '-wx', 'r--', 'r-x', 'rw-', 'rwx');
+my @mode_bits = (
+	['-', '-', '-'], ['-', '-', 'x'], ['-', 'w', '-'], ['-', 'w', 'x'],
+	['r', '-', '-'], ['r', '-', 'x'], ['r', 'w', '-'], ['r', 'w', 'x']);
+sub mode_bits_string {
+	my $mode = shift;
+
+	my $u = ($mode & S_IRWXU) >> 6;
+	my $g = ($mode & S_IRWXG) >> 3;
+	my $o = $mode & S_IRWXO;
+
+	my @usr = @{$mode_bits[($mode & S_IRWXU) >> 6]};
+	my @grp = @{$mode_bits[($mode & S_IRWXG) >> 3]};
+	my @oth = @{$mode_bits[$mode & S_IRWXO]};
+
+	if ($mode & S_ISUID) { $usr[2] = $usr[2] eq 'x' ? 's' : 'S'; }
+	if ($mode & S_ISGID) { $grp[2] = $grp[2] eq 'x' ? 's' : 'S'; }
+	if ($mode & S_ISVTX) { $oth[2] = $oth[2] eq 'x' ? 't' : 'T'; }
+	return join("", @usr, @grp, @oth);
+}
+sub mode_type_char {
+	my $mode = shift;
+	return S_ISREG($mode) ? "-" :
+		S_ISDIR($mode) ? "d" :
+		S_ISLNK($mode) ? "l" :
+		S_ISBLK($mode) ? "b" :
+		S_ISCHR($mode) ? "c" :
+		S_ISFIFO($mode) ? "p" :
+		S_ISSOCK($mode) ? "s" : "?";
+}
+sub get_extent_count {
+	my $path = shift;
+	my $extents = -1;
+	my $holes = 0;
+
+	open(EXEC, '-|', "/usr/sbin/xfs_bmap", $path) or die "Can't exec: $!\n";
+	while (my $line = <EXEC>) {
+		$line =~ s/^\s+|\s+$//g;
+		if ($line =~ /.+hole$/) { $holes++; }
+		else { $extents ++; }
+	}
+	close EXEC;
+	return ($extents, $holes);
+}
+
+sub exec_command {
+	my $out = "";
+
+	open EXEC, join(" ", @_) . " 2>&1 |";
+	while (<EXEC>) {
+		$out .= $_;
+	}
+	close EXEC;
+	return ($? >> 8, $out);
+}
+
+
+sub file_stats {
+        my ($extents, $holes, $hint);
+        my $path = $File::Find::name;
+        my $stats = lstat($path);
+        my $maj_min = $stats->dev;
+
+        if ($search_dev ne $stats->dev) {
+                $File::Find::prune = 1;
+                return;
+        }
+
+        my $mode = $stats->mode;
+        my $size = $stats->size;
+
+
+
+	# stat fields:  dev, ino, mode, nlink, uid, gid, rdev, size, atime, mtime, ctime, blksize, blocks
+	my $stat_fields ="
+             0 dev      device number of filesystem
+             1 ino      inode number
+             2 mode     file mode  (type and permissions)
+             3 nlink    number of (hard) links to the file
+             4 uid      numeric user ID of file's owner
+             5 gid      numeric group ID of file's owner
+             6 rdev     the device identifier (special files only)
+             7 size     total size of file, in bytes
+             8 atime    last access time in seconds since the epoch
+             9 mtime    last modify time in seconds since the epoch
+            10 ctime    inode change time in seconds since the epoch (*)
+            11 blksize  preferred I/O size in bytes for interacting with the
+                        file (may vary from file to file)
+            12 blocks   actual number of system-specific blocks allocated
+                        on disk (often, but not always, 512 bytes each)
+	";
+
+	my $suid = $mode & S_ISUID ? 1 : 0;
+	my $sgid = $mode & S_ISGID ? 1 : 0;
+	my $sticky = $mode & S_ISVTX ? 1 : 0;
+#	my $svtext = $mode & S_ISTXT ? 1 : 0;
+
+	my $symbolic = mode_type_char($mode) . mode_bits_string($mode);
+	my $size_str = byte_units($size, 1024);
+
+	my $alloc_size = $stats->blocks * 512;
+	my $alloc_size_str = byte_units($alloc_size, 1024);
+
+	if (S_ISLNK($mode)) {
+#		printf("${fmt_LNK}\n", $symbolic, $size_str, $alloc_size_str, $path, readlink($path)) if ($verbose);
+		return;
+	} else {
+		($extents, $holes) = get_extent_count($path);
+	}
+
+#	printf("${fmt}\n", $symbolic, $size_str, $alloc_size_str, $path);
+}
+
+sub find_blkdev {
+	if ($found_dev ne "") {
+		$File::Find::prune = 1;
+	} else {
+		my $path = $File::Find::name;
+		my $stats = lstat($path);
+
+		if (S_ISBLK($stats->mode) && $stats->rdev == $search_dev) {
+			$found_dev = $path;
+			$File::Find::prune = 1;
+		}
+	}
+}
+
+if (!defined($ARGV[0])) {
+	$ARGV[0] = ".";
+}
+
+sub print_path_header {
+	my $path = shift;
+	my $hdr_width = 75;
+
+	my $lpad = int(($hdr_width - length($path))/2 - 1) - 1;
+	my $lpadstr = ($lpad <= 0) ? "" : "*"x ($lpad - 1) . " ";
+	my $rpad = $hdr_width - length($path) - length($lpadstr) - 1;
+	my $rpadstr = ($rpad <= 0) ? "" : " " . "*"x ($rpad - 1);
+
+	my $str = $lpadstr . $path . $rpadstr;
+	$hdr_width = $hdr_width - 1;
+	return sprintf("%-${hdr_width}s", $str);
+}
+
+
+sub add_tree_element {
+	my $current_tree_ptr = shift;
+	my $inode_info = shift;
+	my $base_path = shift;
+	my $path = shift;
+	my $search_dev = shift;
+
+	my $stats = lstat($path);
+	my $maj_min = $stats->dev;
+
+	if (length($base_path) > length($path)) {
+		printf "path (%s) is a substring of base_path (%s)\n", $path, $base_path;
+		return;
+	}
+	$path =~ s#^$base_path##;
+	$path = "/" if (!defined($path) || $path eq "");
+
+	printf "add_tree_element for path '%s' (inode # %d)\n", $path, $stats->ino;
+
+	my $same_mount = ($search_dev eq $stats->dev) ? true : false;
+
+	my @p = split('/', substr($path, 1));
+	my $tmp = $current_tree_ptr;
+
+	my $tmp_path = "";
+        foreach my $ele_name (@p) {
+                my %new_ele;
+
+		$tmp_path .= "/" . $ele_name;
+
+                if (defined($tmp->{'contents'}->{$ele_name})) {
+#			$tmp->{'cumulative_size'} += $stats->size if $same_mount;
+                } else {
+			if ($tmp_path ne $path) {
+				printf "ERROR:  is the path '%s' or '%s'?", $tmp_path, $path;
+			}
+			%new_ele = (
+				'name' => $ele_name,
+				'type' => S_IFMT($stats->mode),
+				'is_dir' => (S_ISDIR($stats->mode) ? 1 : 0),
+				'path' => $tmp_path,
+			);
+			if ($same_mount) {
+				$new_ele{'size'} = $stats->size;
+			}
+			$new_ele{'same_mount'} = $same_mount;
+			$inode_info->{$stats->ino} = \%new_ele if $same_mount;
+			$tmp->{'contents'}->{$ele_name} = \%new_ele;
+		}
+		$tmp->{'cumulative_size'} += $stats->size if $same_mount;
+		$tmp = \%{$tmp->{'contents'}->{$ele_name}};
+        }
+
+	if (
+		(scalar @p > $max_depth) ||
+		($search_dev ne $stats->dev) ) {
+		$File::Find::prune = 1;
+		return;
+	}
+}
+
+sub find_wanted {
+	my $path = $File::Find::name;
+	# stat fields:  dev, ino, mode, nlink, uid, gid, rdev, size, atime, mtime, ctime, blksize, blocks
+	my $stats = lstat($path);
+	my $maj_min = $stats->dev;
+
+	if (length($base_dir0) > length($path)) {
+		printf "path (%s) is a substring of base_dir (%s)\n", $path, $base_dir0;
+		return;
+	}
+	$path =~ s#^$base_dir0##;
+	$path = "/" if (!defined($path) || $path eq "");
+
+	printf "add_tree_element for path '%s'\n", $path;
+
+	my $same_mount = ($search_dev eq $stats->dev) ? true : false;
+
+	my @p = split('/', substr($path, 1));
+	my $tmp = \%current_tree0;
+
+        foreach my $ele_name (@p) {
+                my %new_ele;
+
+                if (defined($tmp->{'contents'}->{$ele_name})) {
+#			$tmp->{'cumulative_size'} += $stats->size if $same_mount;
+                } else {
+			%new_ele = (
+				'name' => $ele_name,
+#				'size' => $stats->size,
+#				'cumulative_size' => $same_mount ? $stats->size :
+				'type' => S_IFMT($stats->mode),
+				'is_dir' => (S_ISDIR($stats->mode) ? 1 : 0),
+			);
+			if ($same_mount) {
+#				$current_tree0'} += $stats->size;
+				$new_ele{'size'} = $stats->size;
+#				$new_ele{'cumulative_size'} = $stats->size;
+			}
+			$new_ele{'same_mount'} = $same_mount;
+
+			$current_inode_info0{$stats->ino} = \%new_ele;
+
+			$tmp->{'contents'}->{$ele_name} = \%new_ele;
+		}
+		$tmp->{'cumulative_size'} += $stats->size if $same_mount;
+
+
+
+		$tmp = \%{$tmp->{'contents'}->{$ele_name}};
+        }
+
+if (0) {
+	if (scalar @p > $max_depth) {
+		$File::Find::prune = 1;
+		return
+	}
+	if ($search_dev ne $stats->dev) {
+		printf "'%s' is a different filesystem\n", $path;
+		$File::Find::prune = 1;
+		return;
+	}
+}
+	if (
+		(scalar @p > $max_depth) ||
+		($search_dev ne $stats->dev) ) {
+		$File::Find::prune = 1;
+		return;
+	}
+
+}
+
+
+sub build_tree {
+	my $base_dir = shift;
+	my $dir_stats = lstat($base_dir);
+
+	$search_dev = $dir_stats->dev;
+
+#	my %current_tree = ();
+	my %inode_info = ();
+
+	my %current_tree = (
+		'name' => "/",
+		'path' => "/",
+		'type' => S_IFMT($dir_stats->mode),
+		'is_dir' => (S_ISDIR($dir_stats->mode) ? true : false), # it had better be
+		'same_mount' => true,
+		'inum' => $dir_stats->ino,
+		'size' => $dir_stats->size
+	);
+
+	$inode_info{$dir_stats->ino} = \%current_tree;
+	find( {
+		wanted => sub {
+			add_tree_element(\%current_tree, \%inode_info, $base_dir, $File::Find::name, $search_dev);
+		},
+		no_chdir => 1
+	}, $base_dir);
+
+	return \%current_tree, \%inode_info;
+}
+
+sub check_inodes {
+	my $l = shift;
+	my $r = shift;
+	my %l = %{$l};
+	my %r = %{$r};
+
+
+	return false if ($l{'name'} ne $r{'name'});
+	return false if ($l{'type'} != $r{'type'});
+	return false if ($l{'is_dir'} != $r{'is_dir'});
+	return false if ($l{'path'} ne $r{'path'});
+
+	return true;
+#				'name' => $ele_name,
+#				'type' => S_IFMT($stats->mode),
+#				'is_dir' => (S_ISDIR($stats->mode) ? 1 : 0),
+#				'path' => $tmp_path,
+#			);
+#			if ($same_mount) {
+#				$new_ele{'size'} = $stats->size;
+}
+
+
+sub compare_inode_info {
+	my $orig_inodes = shift;
+	my $bind_inodes = shift;
+
+	my (%left, %overmounts, %common, %differ, %right);
+
+	my @inums = uniq(keys %{$orig_inodes}, keys %{$bind_inodes});
+
+	printf "unique inode numbers:\n";
+	print Dumper(\@inums);
+
+	foreach my $inum (@inums) {
+		my $l = $orig_inodes->{$inum};
+		my $r = $bind_inodes->{$inum};
+
+#		if (defined($orig_inodes->{$inum}) && !defined($bind_inodes->{$inum})) { # shouldn't happen
+		if ($l && !$r) { # shouldn't happen
+#			defined($orig_inodes->{$inum}) && !defined($bind_inodes->{$inum})) { # shouldn't happen
+			printf "ERROR: left only: %d\n", $inum;
+			$left{$inum} = $orig_inodes->{$inum};
+#		} elsif (defined($orig_inodes->{$inum}) && defined($bind_inodes->{$inum})) {
+		} elsif ($l && $r) {
+			
+#			defined($orig_inodes->{$inum}) && defined($bind_inodes->{$inum})) {
+			# check sizes, names, etc
+			printf "common to both: %d\n", $inum;
+
+printf "LEFT:\n";
+printf Dumper($l);
+printf "\n\n";
+printf "RIGHT:\n";
+printf Dumper($r);
+printf "\n\n";
+
+
+
+			printf "same mount?  l: %d, r: %d\n", $l->{'same_mount'}, $r->{'same_mount'};
+			if (!$l->{'same_mount'} && $r->{'same_mount'}) {
+				printf "overmounted filesystem at %s\n", $l->{'path'};
+			} elsif ($l->{'same_mount'} && $r->{'same_mount'}) {
+				if (check_inodes($l, $r)) {
+					printf "  inode info matches";
+				} else {
+					printf "  inode info does not match for inode number %d\n", $inum;
+
+					my $namelen = length($l->{'name'});
+					$namelen = length($r->{'name'}) if (length($r->{'name'}) > $namelen);
+					my $fmt = sprintf("%ds %ds\n", $namelen, $namelen);
+
+					printf "%8s %*s %*s\n", "name", $namelen, "left", $namelen, "right";
+					printf "%8s %*s %*s\n", "", $namelen, $l->{'name'}, $namelen, $r->{'name'};
+					printf "%8s %*d %*d\n", "type", $namelen, $l->{'type'}, $namelen, $r->{'type'};
+					printf "%8s %*d %*d\n", "dir", $namelen, $l->{'is_dir'}, $namelen, $r->{'i_dir'};
+					printf "%8s %*s %*s\n", "path", $namelen, $l->{'path'}, $namelen, $r->{'path'};
+				}
+			} else {
+				printf "Not sure what this means...  subdirectory on left (%s), separate mount on right (%s)?\n", $l->{'path'}, $r->{'path'};
+			}
+
+
+
+
+#			if (%l->{
+#			if ($orig_inodes->{$inum} 
+			
+#				'name' => $ele_name,
+#				'type' => S_IFMT($stats->mode),
+#				'is_dir' => (S_ISDIR($stats->mode) ? 1 : 0),
+#				'path' => $tmp_path,
+#			);
+#			if ($same_mount) {
+#				$new_ele{'size'} = $stats->size;
+#			}
+#			$new_ele{'same_mount'} = $same_mount;
+		} elsif (!$l && $r) {
+			printf "right only: %d\n", $inum;
+		} else {
+			printf "Uhm...  whuh?  %d\n", $inum;
+		}
+	}
+}
+
+
+for my $dir (@ARGV) {
+	my ($ret, $out);
+	$dir = Cwd::realpath($dir); # resolve the real path
+	my $parent_dir = Cwd::realpath($dir . "/..");
+
+	# check that this is a mountpoint
+	my $dir_stats = lstat($dir);
+
+	if ($dir ne $parent_dir) { # if we're not already at the root
+		my $parent_dir_stats = lstat($parent_dir);
+
+		if ($dir_stats->dev == $parent_dir_stats->dev) {
+			printf "%s is not a mountpoint\n", $dir;
+			printf "parent dir is %s\n", $parent_dir;
+			printf "stats dev: %d, parent_stats dev: %d\n", $dir_stats->dev, $parent_dir_stats->dev;
+			next;
+		}
+	}
+	$search_dev = $dir_stats->dev;
+
+	if ($do_mount) {
+		# get this thing bind-mounted
+		$tmp_mount_dir = tempdir('find_missing_space.XXXXXX', TMPDIR => 1);
+		$ret = syscall(&SYS_mount, $dir, $tmp_mount_dir, my $mount_opts = "bind", MS_BIND, 0);
+		if ($ret != 0) {
+			printf "error bind-mounting '%s' on '%s': %d\n", $dir, $tmp_mount_dir, $ret;
+			exit 1;
+		}
+	}
+
+	my %tree_info;
+	my %tmp_tree_info;
+
+	#postprocess =>
+	#wanted =>
+
+	my ($tptr, $iptr);
+
+	my %orig_tree;
+	my %bind_tree;
+	my %orig_inode_info;
+	my %bind_inode_info;
+
+
+#	%orig_tree = %current_tree0;
+	($tptr, $iptr) = build_tree($dir);
+	%orig_tree = %{$tptr};
+	%orig_inode_info = %{$iptr};
+
+
+	printf "tree:\n";
+	print Dumper(\%orig_tree);
+	printf "inodes\n";
+	print Dumper(\%orig_inode_info);
+
+
+
+	if ($do_mount) {
+		($tptr, $iptr) = build_tree($tmp_mount_dir);
+		%bind_tree = %{$tptr};
+		%bind_inode_info = %{$iptr};
+
+		printf "bind tree\n";
+
+		print Dumper(\%bind_tree);
+		printf "bind inodes\n";
+		print Dumper(\%bind_inode_info);
+
+
+		compare_inode_info(\%orig_inode_info, \%bind_inode_info);
+	}
+
+
+
+
+#             0 dev      device number of filesystem
+#             1 ino      inode number
+#             2 mode     file mode  (type and permissions)
+#             3 nlink    number of (hard) links to the file
+#             4 uid      numeric user ID of file's owner
+#             5 gid      numeric group ID of file's owner
+#             6 rdev     the device identifier (special files only)
+#             7 size     total size of file, in bytes
+#             8 atime    last access time in seconds since the epoch
+#             9 mtime    last modify time in seconds since the epoch
+#            10 ctime    inode change time in seconds since the epoch (*)
+#            11 blksize  preferred I/O size in bytes for interacting with the
+#                        file (may vary from file to file)
+#            12 blocks   actual number of system-specific blocks allocated
+#                        on disk (often, but not always, 512 bytes each)
+
+	if ($do_mount) {
+#		int umount2(const char *target, int flags);
+		$ret = syscall(&SYS_umount2, $tmp_mount_dir, 0);
+
+		printf "umount result: $ret\n";
+
+		rmdir($tmp_mount_dir);
+	}
+
+	printf("parent dir of '%s' is '%s'\n", $dir, $parent_dir);
+}
+my %test_tree_info = (
+	'path' => '/',
+	'inode' => 12345,
+	'cumulative_size' => 98765,
+	'is_dir' => true,
+	'ch' => {
+		'subdir1' => {
+			'inode' => 888,
+			'cumulative_size' => 555,
+			'is_dir' => true,
+			'ch' => {
+				'file_55' => {
+					'inode' => 33333,
+					'is_dir' => false,
+					'size' => 22222,
+				},
+			},
+		},
+		'asdf3' => {
+			'inode' => 999,
+			'cumulative_size' => 333,
+			'is_dir' => true,
+			'ch' => {
+				'subdir1' => {
+					'inode' => 12345,
+					'cumulative_size' => 111,
+					'is_dir' => true,
+					'ch' => {
+					},
+				},
+			},
+		},
+	},
+	'children' => {
+		'subdir1' => {
+			'inode' => 23456,
+			'cumulative_size' => 55555,
+			'is_dir' => true,
+			'children' => {
+				'file1' => {
+					'inode' => 33333,
+					'is_dir' => false,
+					'size' => 22222,
+				},
+				'file2' => {
+					'inode' => 99,
+					'is_dir' => false,
+					'size' => 22222,
+				},
+				'subdir1.1' => {
+					'inode' => 200,
+					'is_dir' => true,
+					'cumulative_size' => 112,
+					'children' => {},
+				},
+			},
+		},
+		'subdir2' => {
+			'inode' => 300,
+			'cumulative_size' => 87,
+			'is_dir' => true,
+			'children' => {},
+		},
+	},
+);
+#print Dumper(\%test_tree_info);
