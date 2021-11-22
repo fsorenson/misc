@@ -20,44 +20,84 @@ use Data::Dumper;
 #require "unistd.ph";
 require "sys/syscall.ph";
 
-my @field_widths = ( 10, 12, 12, 0 );
+$|++;
+
+#my @field_widths = ( 10, 12, 12, 0 );
+my @field_widths = ( 10, 12, 12);
+my $fmt = "";
+my $fmt_LNK = "";
+my $skip_field_width = 0;
+for (my $i = 0 ; $i < (scalar @field_widths) ; $i++) {
+        my $w = $field_widths[$i];
+        my $tmp_s = "";
+
+        $tmp_s .= " " if ($i != 0);
+        if ($w > 0) { $tmp_s .= "%${w}s"; }
+        else { $tmp_s .= "%s"; }
+
+        $fmt .= $tmp_s;
+#        if ($i < 3 || $i > 5) {
+#                $fmt_LNK .= $tmp_s;
+#        } else {
+                $skip_field_width += $w + 1;
+
+#                if ($i == 5) {
+#                        $fmt_LNK .= " " . center_str("N/A", $skip_field_width);
+#                }
+#        }
+}
+$fmt_LNK .= " => %s";
+
 
 my $verbose = 0;
-my $do_mount = 1;
-my $max_depth = 3;
-
+my $do_mount = true;
+my $max_depth = 300;
 
 GetOptions(
 	'quiet' => sub { $verbose--; },
 	'verbose' => sub { $verbose++; },
 );
 
-my $search_dev;
-my $tmp_mount_dir;
+my $tmp_mount_dir = "";
 
 # get rid of these
 my $found_dev = "";
 my $show_dev;
 
-my %current_tree0;
-my %current_inode_info0;
-my $base_dir0;
-
-sub handle_interrupt {
-	if ($do_mount) {
-		printf "handling interrupt\n";
+sub cleanup {
+	if ($do_mount && $tmp_mount_dir ne "") {
 		my $ret = syscall(&SYS_umount2, $tmp_mount_dir, 0);
-		printf "umount result: $ret\n";
+		printf "umount result: $ret\n" if ($ret != 0);
 
 		rmdir($tmp_mount_dir);
+		$tmp_mount_dir = "";
 	}
-	exit(0);
 }
 
+sub handle_interrupt {
+	printf "handling interrupt\n";
+	cleanup();
+	exit(0);
+}
 $SIG{'INT'} = 'handle_interrupt';
 $SIG{'TERM'} = 'handle_interrupt';
+END {
+	cleanup();
+	exit;
+}
 
-
+sub max_string_len {
+	my $max_len = 0;
+	while (scalar @_) {
+		my $str = shift;
+		my $this_len = length($str);
+		$max_len = $this_len if ($this_len > $max_len);
+	}
+	return $max_len;
+}
+sub max_path_len {
+	return max_string_len(@_);
+}
 sub center_str {
 	my $str = shift;
 	my $len = shift;
@@ -136,20 +176,6 @@ sub mode_type_char {
 		S_ISFIFO($mode) ? "p" :
 		S_ISSOCK($mode) ? "s" : "?";
 }
-sub get_extent_count {
-	my $path = shift;
-	my $extents = -1;
-	my $holes = 0;
-
-	open(EXEC, '-|', "/usr/sbin/xfs_bmap", $path) or die "Can't exec: $!\n";
-	while (my $line = <EXEC>) {
-		$line =~ s/^\s+|\s+$//g;
-		if ($line =~ /.+hole$/) { $holes++; }
-		else { $extents ++; }
-	}
-	close EXEC;
-	return ($extents, $holes);
-}
 
 sub exec_command {
 	my $out = "";
@@ -162,22 +188,51 @@ sub exec_command {
 	return ($? >> 8, $out);
 }
 
+sub is_dir {
+	my $mode = shift;
 
-sub file_stats {
-        my ($extents, $holes, $hint);
-        my $path = $File::Find::name;
-        my $stats = lstat($path);
-        my $maj_min = $stats->dev;
+	return (S_ISDIR($mode) ? 1 : 0);
+}
+sub is_link {
+	my $mode = shift;
 
-        if ($search_dev ne $stats->dev) {
-                $File::Find::prune = 1;
-                return;
-        }
+	return (S_ISLNK($mode) ? 1 : 0);
+}
+sub compare_arrays {
+	my ($aref, $bref) = @_;
+	my @a = @{$aref};
+	my @b = @{$bref};
 
-        my $mode = $stats->mode;
-        my $size = $stats->size;
+	return false if (scalar @a != scalar @b);
+	for (my $i = 0 ; $i < scalar @a ; $i++) {
+		return false if $a[$i] ne $b[$i];
+	}
+	return true;
+}
 
+sub print_inode_stats {
+#	my $stats = shift;
+	my $inum = shift;
+	my $inode_ptr = shift;
+	my %inode = %{$inode_ptr};
 
+#	my $blocks = shift;
+#	my $mode = shift;
+#	my $path = shift;
+	my $mode = $inode{'mode'};
+#	my @paths = @_;
+
+	my $size = $inode{'size'};
+	my $blocks = $inode{'blocks'};
+
+	my @paths = keys %{$inode{'paths'}};
+
+#keys %{$hidden_inode->{'paths'}}
+
+#        my $maj_min = $stats->dev;
+
+#        my $mode = $stats->mode;
+#        my $size = $stats->size;
 
 	# stat fields:  dev, ino, mode, nlink, uid, gid, rdev, size, atime, mtime, ctime, blksize, blocks
 	my $stat_fields ="
@@ -198,38 +253,23 @@ sub file_stats {
                         on disk (often, but not always, 512 bytes each)
 	";
 
-	my $suid = $mode & S_ISUID ? 1 : 0;
-	my $sgid = $mode & S_ISGID ? 1 : 0;
-	my $sticky = $mode & S_ISVTX ? 1 : 0;
+#	my $suid = $mode & S_ISUID ? 1 : 0;
+#	my $sgid = $mode & S_ISGID ? 1 : 0;
+#	my $sticky = $mode & S_ISVTX ? 1 : 0;
 #	my $svtext = $mode & S_ISTXT ? 1 : 0;
 
 	my $symbolic = mode_type_char($mode) . mode_bits_string($mode);
 	my $size_str = byte_units($size, 1024);
 
-	my $alloc_size = $stats->blocks * 512;
+#	my $alloc_size = $stats->blocks * 512;
+	my $alloc_size = $blocks * 512;
 	my $alloc_size_str = byte_units($alloc_size, 1024);
 
-	if (S_ISLNK($mode)) {
-#		printf("${fmt_LNK}\n", $symbolic, $size_str, $alloc_size_str, $path, readlink($path)) if ($verbose);
-		return;
-	} else {
-		($extents, $holes) = get_extent_count($path);
-	}
+	printf "${fmt}", $symbolic, $size_str, $alloc_size_str;
 
-#	printf("${fmt}\n", $symbolic, $size_str, $alloc_size_str, $path);
-}
-
-sub find_blkdev {
-	if ($found_dev ne "") {
-		$File::Find::prune = 1;
-	} else {
-		my $path = $File::Find::name;
-		my $stats = lstat($path);
-
-		if (S_ISBLK($stats->mode) && $stats->rdev == $search_dev) {
-			$found_dev = $path;
-			$File::Find::prune = 1;
-		}
+	printf " %s%s\n", pop @paths, is_link($mode) ? " => " . $inode{'link_target'} : "";
+	while (scalar @paths) {
+		printf "%*s%s\n", $skip_field_width, "", pop @paths;
 	}
 }
 
@@ -237,27 +277,16 @@ if (!defined($ARGV[0])) {
 	$ARGV[0] = ".";
 }
 
-sub print_path_header {
-	my $path = shift;
-	my $hdr_width = 75;
-
-	my $lpad = int(($hdr_width - length($path))/2 - 1) - 1;
-	my $lpadstr = ($lpad <= 0) ? "" : "*"x ($lpad - 1) . " ";
-	my $rpad = $hdr_width - length($path) - length($lpadstr) - 1;
-	my $rpadstr = ($rpad <= 0) ? "" : " " . "*"x ($rpad - 1);
-
-	my $str = $lpadstr . $path . $rpadstr;
-	$hdr_width = $hdr_width - 1;
-	return sprintf("%-${hdr_width}s", $str);
-}
 
 
 sub add_tree_element {
 	my $current_tree_ptr = shift;
-	my $inode_info = shift;
+#	my $inode_info = shift;
 	my $base_path = shift;
-	my $path = shift;
+	my $full_path = shift;
+
 	my $search_dev = shift;
+	my $path = $full_path;
 
 	my $stats = lstat($path);
 	my $maj_min = $stats->dev;
@@ -266,10 +295,13 @@ sub add_tree_element {
 		printf "path (%s) is a substring of base_path (%s)\n", $path, $base_path;
 		return;
 	}
-	$path =~ s#^$base_path##;
+	if ($base_path ne "/") {
+		$path =~ s#^$base_path##;
+	}
 	$path = "/" if (!defined($path) || $path eq "");
+	while (substr($path, 0, 2) eq "//") { $path = substr($path, 1); }
 
-	printf "add_tree_element for path '%s' (inode # %d)\n", $path, $stats->ino;
+	printf "add_tree_element for path '%s' (inode # %d)\n", $path, $stats->ino if ($verbose >= 1);
 
 	my $same_mount = ($search_dev eq $stats->dev) ? true : false;
 
@@ -278,244 +310,384 @@ sub add_tree_element {
 
 	my $tmp_path = "";
         foreach my $ele_name (@p) {
+		my $new_inode = true;
+		my $new_entry = true;
                 my %new_ele;
+		my $link_target = "";
 
 		$tmp_path .= "/" . $ele_name;
 
-                if (defined($tmp->{'contents'}->{$ele_name})) {
-#			$tmp->{'cumulative_size'} += $stats->size if $same_mount;
-                } else {
+		if (defined($current_tree_ptr->{'inodes'}->{$stats->ino})) {
+			$new_inode = false;
+		}
+		if (defined($tmp->{'contents'}->{$ele_name})) {
+			$new_entry = false;
+		}
+
+		if ($same_mount && $new_inode) {
+#			$new_ele{'size'} = $stats->size;
+#			$new_ele{'blocks'} = $stats->blocks;
+#			$new_ele{'ino'} = $stats->ino;
+#			$new_ele{'links'} = $stats->nlink;
+			$current_tree_ptr->{'inodes'}->{$stats->ino}{'stats'} = $stats;
+			$current_tree_ptr->{'inodes'}->{$stats->ino}{'size'} = $stats->size;
+			$current_tree_ptr->{'inodes'}->{$stats->ino}{'blocks'} = $stats->blocks;
+			$current_tree_ptr->{'inodes'}->{$stats->ino}{'ino'} = $stats->ino;
+			$current_tree_ptr->{'inodes'}->{$stats->ino}{'links'} = $stats->nlink;
+			$current_tree_ptr->{'inodes'}->{$stats->ino}{'mode'} = $stats->mode;
+			$current_tree_ptr->{'inodes'}->{$stats->ino}{'link_target'} = readlink $full_path if is_link($stats->mode);
+
+# stat fields:  dev, ino, mode, nlink, uid, gid, rdev, size, atime, mtime, ctime, blksize, blocks
+
+		}
+
+		if ($new_entry) {
 			if ($tmp_path ne $path) {
-				printf "ERROR:  is the path '%s' or '%s'?", $tmp_path, $path;
+				printf "ERROR:  is the path '%s' or '%s'?\n", $tmp_path, $path;
 			}
 			%new_ele = (
 				'name' => $ele_name,
-				'type' => S_IFMT($stats->mode),
-				'is_dir' => (S_ISDIR($stats->mode) ? 1 : 0),
+#				'type' => S_IFMT($stats->mode),
+				'mode' => $stats->mode,
 				'path' => $tmp_path,
+				'same_mount' => $same_mount,
 			);
-			if ($same_mount) {
-				$new_ele{'size'} = $stats->size;
-			}
 			$new_ele{'same_mount'} = $same_mount;
-			$inode_info->{$stats->ino} = \%new_ele if $same_mount;
+			$new_ele{'ino'} = $stats->ino if $same_mount;
+			$current_tree_ptr->{'inodes'}->{$stats->ino}->{'paths'}->{$tmp_path} = \%new_ele if $same_mount;
+			$current_tree_ptr->{'paths'}->{$tmp_path} = \%new_ele;
 			$tmp->{'contents'}->{$ele_name} = \%new_ele;
 		}
-		$tmp->{'cumulative_size'} += $stats->size if $same_mount;
+		if ($same_mount && $new_inode) {
+#		if ($same_mount) {
+#printf "adding size for '%s' to cumulative size at '%s'\n", $path, $tmp_path;
+			$tmp->{'cumulative_size'} += $stats->size;
+			$tmp->{'cumulative_blocks'} += $stats->blocks;
+		}
 		$tmp = \%{$tmp->{'contents'}->{$ele_name}};
         }
 
-	if (
-		(scalar @p > $max_depth) ||
-		($search_dev ne $stats->dev) ) {
-		$File::Find::prune = 1;
-		return;
-	}
-}
 
-sub find_wanted {
-	my $path = $File::Find::name;
-	# stat fields:  dev, ino, mode, nlink, uid, gid, rdev, size, atime, mtime, ctime, blksize, blocks
-	my $stats = lstat($path);
-	my $maj_min = $stats->dev;
-
-	if (length($base_dir0) > length($path)) {
-		printf "path (%s) is a substring of base_dir (%s)\n", $path, $base_dir0;
-		return;
-	}
-	$path =~ s#^$base_dir0##;
-	$path = "/" if (!defined($path) || $path eq "");
-
-	printf "add_tree_element for path '%s'\n", $path;
-
-	my $same_mount = ($search_dev eq $stats->dev) ? true : false;
-
-	my @p = split('/', substr($path, 1));
-	my $tmp = \%current_tree0;
-
-        foreach my $ele_name (@p) {
-                my %new_ele;
-
-                if (defined($tmp->{'contents'}->{$ele_name})) {
-#			$tmp->{'cumulative_size'} += $stats->size if $same_mount;
-                } else {
-			%new_ele = (
-				'name' => $ele_name,
-#				'size' => $stats->size,
-#				'cumulative_size' => $same_mount ? $stats->size :
-				'type' => S_IFMT($stats->mode),
-				'is_dir' => (S_ISDIR($stats->mode) ? 1 : 0),
-			);
-			if ($same_mount) {
-#				$current_tree0'} += $stats->size;
-				$new_ele{'size'} = $stats->size;
-#				$new_ele{'cumulative_size'} = $stats->size;
-			}
-			$new_ele{'same_mount'} = $same_mount;
-
-			$current_inode_info0{$stats->ino} = \%new_ele;
-
-			$tmp->{'contents'}->{$ele_name} = \%new_ele;
-		}
-		$tmp->{'cumulative_size'} += $stats->size if $same_mount;
-
-
-
-		$tmp = \%{$tmp->{'contents'}->{$ele_name}};
-        }
-
-if (0) {
-	if (scalar @p > $max_depth) {
-		$File::Find::prune = 1;
-		return
-	}
+#	push(%{$current_tree_ptr->{'overmounts'}}, $path) if ($search_dev ne $stats->dev);
 	if ($search_dev ne $stats->dev) {
-		printf "'%s' is a different filesystem\n", $path;
-		$File::Find::prune = 1;
-		return;
+		my $over_ptr = $current_tree_ptr->{'overmounts'};
+		push(@{$over_ptr}, $path);
+
+		printf "adding '%s' to overmounts\n", $path if ($verbose >= 1);
 	}
-}
+
 	if (
 		(scalar @p > $max_depth) ||
 		($search_dev ne $stats->dev) ) {
+
 		$File::Find::prune = 1;
 		return;
 	}
-
 }
 
 
 sub build_tree {
 	my $base_dir = shift;
 	my $dir_stats = lstat($base_dir);
-
-	$search_dev = $dir_stats->dev;
-
-#	my %current_tree = ();
-	my %inode_info = ();
+	my $search_dev = $dir_stats->dev;
 
 	my %current_tree = (
 		'name' => "/",
 		'path' => "/",
-		'type' => S_IFMT($dir_stats->mode),
-		'is_dir' => (S_ISDIR($dir_stats->mode) ? true : false), # it had better be
-		'same_mount' => true,
-		'inum' => $dir_stats->ino,
-		'size' => $dir_stats->size
+		'mode' => $dir_stats->mode,
+		'ino' => $dir_stats->ino,
+		'size' => $dir_stats->size,
 	);
+	$current_tree{'overmounts'} = [];
+	$current_tree{'paths'} = [];
+	$current_tree{'inodes'} = ();
+	$current_tree{'inodes'}->{$dir_stats->ino} = \%current_tree;
+	$current_tree{'paths'} = ();
+	$current_tree{'paths'}->{"/"} = \%current_tree;
 
-	$inode_info{$dir_stats->ino} = \%current_tree;
+	printf "searching base dir: '%s'\n", $base_dir;
+
 	find( {
 		wanted => sub {
-			add_tree_element(\%current_tree, \%inode_info, $base_dir, $File::Find::name, $search_dev);
+			add_tree_element(\%current_tree, $base_dir, $File::Find::name, $search_dev);
 		},
 		no_chdir => 1
 	}, $base_dir);
-
-	return \%current_tree, \%inode_info;
+	return \%current_tree;
 }
 
 sub check_inodes {
-	my $l = shift;
-	my $r = shift;
-	my %l = %{$l};
-	my %r = %{$r};
+	my %l = %{$_[0]};
+	my %r = %{$_[1]};
 
+	if (0 && !defined($l{'name'})) {
+		printf "'name' is not defined?\n";
+		print Dumper(\%l);
+		exit;
+	}
 
-	return false if ($l{'name'} ne $r{'name'});
-	return false if ($l{'type'} != $r{'type'});
-	return false if ($l{'is_dir'} != $r{'is_dir'});
-	return false if ($l{'path'} ne $r{'path'});
+	return false if ($l{'mode'} != $r{'mode'});
+
+	if ($l{'size'} != $r{'size'}) {
+		printf "size differs?\n";
+		return false;
+	}
 
 	return true;
-#				'name' => $ele_name,
-#				'type' => S_IFMT($stats->mode),
-#				'is_dir' => (S_ISDIR($stats->mode) ? 1 : 0),
-#				'path' => $tmp_path,
-#			);
-#			if ($same_mount) {
-#				$new_ele{'size'} = $stats->size;
+}
+sub compare_inode_info {
+	my $orig_tree = shift;
+	my $bind_tree = shift;
+
+	my (@left, @overmounts, @common, @differ, @right);
+	my @inums = uniq(keys %{$orig_tree->{'inodes'}}, keys %{$bind_tree->{'inodes'}});
+
+	if ($verbose >= 1) {
+
+		printf "left inodes:  %d\n", scalar uniq(keys %{$orig_tree->{'inodes'}});
+		printf "right inodes: %d\n", scalar uniq(keys %{$bind_tree->{'inodes'}});
+		printf "total inodes: %d\n", scalar @inums;
+	}
+
+	if ($verbose >= 1) {
+		printf "unique inode numbers:\n";
+		print Dumper(\@inums);
+	}
+
+	foreach my $inum (@inums) {
+		my $l = $orig_tree->{'inodes'}->{$inum};
+		my $r = $bind_tree->{'inodes'}->{$inum};
+
+		if ($l && !$r) { # shouldn't happen
+			printf "ERROR: left only: %d - %s\n", $inum, $l->{'path'};
+			push @left, $inum;
+		} elsif ($l && $r) {
+			# check sizes, names, etc
+			printf "common to both: %d\n", $inum if $verbose >= 1;
+
+			if ($verbose >= 1) {
+				printf "***************\n";
+				printf "dump of inode %d\n", $inum;
+				printf "left:\n";
+				print Dumper($l);
+				printf "\n";
+				printf "right:\n";
+				print Dumper($r);
+				printf "\n";
+				printf "***************\n";
+			}
+
+			if ($verbose >= 1) {
+				my $namelen = length($l->{'name'});
+				$namelen = length($r->{'name'}) if (length($r->{'name'}) > $namelen);
+				printf "***************\n";
+				printf "%9s  %*s %*s\n", "", $namelen, "left", $namelen, "right";
+				printf "%9s  %*s %*s\n", "name", $namelen, $l->{'name'}, $namelen, $r->{'name'};
+				printf "%9s  %*d %*d\n", "type", $namelen, S_IFMT($l->{'mode'}), $namelen, S_IFMT($r->{'mode'});
+				printf "%9s  %*d %*d\n", "dir", $namelen, is_dir($l->{'mode'}), $namelen, is_dir($r->{'mode'});
+				printf "%9s  %*s %*s\n", "path", $namelen, $l->{'path'}, $namelen, $r->{'path'};
+				printf "%9s  %*s %*s\n", "same mt", $namelen, $l->{'same_mount'}, $namelen, $r->{'same_mount'};
+			}
+
+			my @left_paths = sort keys %{$l->{'paths'}};
+			my @right_paths = sort keys %{$r->{'paths'}};
+			my $paths_match = compare_arrays(\@left_paths, \@right_paths);
+			my $inodes_match = check_inodes($l, $r);
+
+			if (! $inodes_match) {
+				printf "inode %d - left and right do not match?\n";
+				printf "left:\n";
+				print Dumper($l);
+				printf "right:\n";
+				print Dumper($r);
+				printf "\n\n";
+				exit;
+			} 
+
+			if (0) {
+				if ($l->{'same_mount'} && $r->{'same_mount'}) {
+					if (check_inodes($l, $r)) {
+						printf "  inode info matches for inode %d\n", $inum if ($verbose >= 1);
+						push @common, $inum;
+					} else {
+						printf "  inode info does not match for inode number %d\n", $inum if ($verbose >= 1);
+						push @differ, $inum
+					}
+				} else {
+					printf "ERROR: left exists: %d, right exists: %d\n", $l ? 1 : 0, $r ? 1 : 0;
+					printf "ERROR: not sure what this means...  subdirectory on left (%s), separate mount on right (%s)?\n",
+						join(", ", @left_paths), join(", ", @right_paths);
+					printf "left:\n";
+					print Dumper($l);
+					printf "right:\n";
+					print Dumper($r);
+					printf "\n\n";
+					exit;
+				}
+			}
+		} elsif (!$l && $r) {
+			printf "right only: %d\n", $inum if ($verbose >= 1);
+			push @right, $inum;
+		} else {
+			printf "ERROR: inode number %d does not exist in either tree, but somehow got in here?\n", $inum;
+		}
+		printf "\n\n" if ($verbose >= 1);
+	}
+
+	if (scalar @left) { # this shouldn't happen
+		printf "left tree only: %d\n", scalar @left;
+		printf "left inodes: %d - %s\n",
+			scalar @left, join(" ", @left);
+	}
+	if (scalar @right && $verbose >= 0) {
+		printf "right inodes (hidden): %d - %s\n",
+			scalar @right, join(" ", @right);
+
+		for my $hidden_inum (@right) {
+			my $hidden_inode = $bind_tree->{'inodes'}->{$hidden_inum};
+
+			print_inode_stats($hidden_inum, $hidden_inode);
+
+			if (0) {
+				my @paths = map { $tmp_mount_dir . "/" . $_ }  sort keys %{$hidden_inode->{'paths'}};
+				my $out = exec_command("ls -ald " . join(" ", @paths));
+				printf "**\n%s\n**\n", $out;
+#				$out = exec_command("stat " . $tmp_mount_dir . "/" . $hidden_inode->{'path'});
+#				printf " ** %s **\n", $out;
+			}
+
+#			printf "\n";
+		}
+	}
+
+	printf "ERROR:  inodes in both trees, but different: %d\n", scalar @differ if (scalar @differ);
+
+	my %overmount_info;
+	foreach my $overmount_path (@{$orig_tree->{'overmounts'}}) {
+		my $tmp = $bind_tree;
+
+		foreach my $ele_name (split '/', substr($overmount_path, 1)) {
+			$tmp = \%{$tmp->{'contents'}->{$ele_name}};
+		}
+		$overmount_info{$overmount_path} = $tmp;
+
+if (0) {
+printf "for overmount path '%s', got:\n", $overmount_path;
+print Dumper($tmp);
+
+printf "\n\n";
+printf "full bind tree\n";
+print Dumper($bind_tree);
+
+exit;
+}
+
+	}
+
+
+#	my $overmount_path_len = max_string_len("overmounted path", @{$orig_tree->{'overmounts'}});
+	my $overmount_path_len = max_string_len("overmounted path", keys %overmount_info);
+
+	foreach my $overmount_path (sort keys %overmount_info) {
+		printf "overmount info for '%s'\n", $overmount_path;
+#		print Dumper($overmount_info{$overmount_path});
+	}
+#printf "bind tree:\n";
+#print Dumper($bind_tree);
+#exit;
+
+#printf "inode 128\n";
+#my $foo1 = $bind_tree->{'inodes'}->{128};
+#print Dumper($foo1);
+#exit;
+
+# this is problematic:
+#  an inode (a file) could be hidden when seen in one path (or more), but visible under a different one
+#  cumulative size could therefore vary for a directory, depending on which directory entry was located first
+if (0) {
+	my $size_len = max_string_len("hidden size",
+		map {
+			my $entry = $overmount_info{$_};
+			my $inum = $entry->{'ino'};
+			my $ino = $bind_tree->{'inodes'}->{$inum};
+
+print Dumper($entry);
+exit;
+#my $csize = %{$entry}{'cumulative_size'};
+my $csize = $entry->{'cumulative_size'};
+
+printf "in map, inum: %d\n", $inum;
+printf "ino size: %d\n", $ino->{'size'};
+#printf "ino cumulative size: %d\n", $ino->{'cumulative_size'};
+#printf "cumulative size: %d\n", $entry->{'cumulative_size'};
+printf "cumulative size: %d\n", $csize;
+print Dumper($ino);
+printf "full bind tree\n";
+print Dumper($bind_tree);
+exit;
+
+#			sprintf("%d - %s", $ino->{'cumulative_size'}, byte_units($ino->{'cumulative_size'}, 1024))
+			sprintf("%d - %s", $csize, byte_units($csize, 1024))
+		} keys %overmount_info);
+exit;
+	my $alloc_len = max_string_len("allocated size",
+		map {
+			my $entry = $overmount_info{$_};
+			my $inum = $entry->{'ino'};
+			my $ino = $bind_tree->{'inodes'}->{$inum};
+
+			sprintf("%d - %s", $ino->{'blocks'} * 512, byte_units($ino->{'blocks'} * 512, 1024))
+		} keys %overmount_info);
+
+	printf "%*s %*s %*s\n", $overmount_path_len, "overmounted path", $size_len, "hidden size", $alloc_len, "allocated size";
+	foreach my $overmount_path (sort keys %overmount_info) {
+		my $entry = $overmount_info{$overmount_path};
+		my $inum = $entry->{'ino'};
+		my $ino = $bind_tree->{'inodes'}->{$inum};
+
+printf "outputting info for inum %d\n", $inum;
+print Dumper($ino);
+
+		printf "%*s %*s %*s\n",
+			$overmount_path_len, $overmount_path,
+			$size_len, sprintf("%d - %s", $ino->{'cumulative_size'},
+				byte_units($ino->{'cumulative_size'}, 1024)),
+			$alloc_len, sprintf("%d - %s", $ino->{'cumulative_blocks'} * 512,
+				byte_units($ino->{'cumulative_blocks'} * 512, 1024));
+	}
+
 }
 
 
-sub compare_inode_info {
-	my $orig_inodes = shift;
-	my $bind_inodes = shift;
+if (0) { # ignore this... the @overmounts list is never built
+# triple-check that overmounts lists are identical... they probably are, but what the heck
+if (! compare_array(sort @{$orig_tree->{'overmountes'}}, sort @overmounts)) {
+	printf "hmm.  for some reason, the overmounts lists do not match\n";
+	printf "originally-colleced list: %s\n", join(", ", sort @{$orig_tree->{'overmounts'}});
+	printf "second-pass list:         %s\n", join(", ", sort @overmounts);
+}
+}
 
-	my (%left, %overmounts, %common, %differ, %right);
+#        my @p = split('/', substr($path, 1));
+#        my $tmp = $current_tree_ptr;
 
-	my @inums = uniq(keys %{$orig_inodes}, keys %{$bind_inodes});
+#        my $tmp_path = "";
+#        foreach my $ele_name (@p) {
+#                my $new_inode = true;
+#                my $new_entry = true;
+#                my %new_ele;
+#                my $link_target = "";
+#
+#                $tmp_path .= "/" . $ele_name;
+#	}
+#
+#
+#$orig_tree->{'overmounts'}
 
-	printf "unique inode numbers:\n";
-	print Dumper(\@inums);
-
-	foreach my $inum (@inums) {
-		my $l = $orig_inodes->{$inum};
-		my $r = $bind_inodes->{$inum};
-
-#		if (defined($orig_inodes->{$inum}) && !defined($bind_inodes->{$inum})) { # shouldn't happen
-		if ($l && !$r) { # shouldn't happen
-#			defined($orig_inodes->{$inum}) && !defined($bind_inodes->{$inum})) { # shouldn't happen
-			printf "ERROR: left only: %d\n", $inum;
-			$left{$inum} = $orig_inodes->{$inum};
-#		} elsif (defined($orig_inodes->{$inum}) && defined($bind_inodes->{$inum})) {
-		} elsif ($l && $r) {
-			
-#			defined($orig_inodes->{$inum}) && defined($bind_inodes->{$inum})) {
-			# check sizes, names, etc
-			printf "common to both: %d\n", $inum;
-
-printf "LEFT:\n";
-printf Dumper($l);
-printf "\n\n";
-printf "RIGHT:\n";
-printf Dumper($r);
-printf "\n\n";
-
-
-
-			printf "same mount?  l: %d, r: %d\n", $l->{'same_mount'}, $r->{'same_mount'};
-			if (!$l->{'same_mount'} && $r->{'same_mount'}) {
-				printf "overmounted filesystem at %s\n", $l->{'path'};
-			} elsif ($l->{'same_mount'} && $r->{'same_mount'}) {
-				if (check_inodes($l, $r)) {
-					printf "  inode info matches";
-				} else {
-					printf "  inode info does not match for inode number %d\n", $inum;
-
-					my $namelen = length($l->{'name'});
-					$namelen = length($r->{'name'}) if (length($r->{'name'}) > $namelen);
-					my $fmt = sprintf("%ds %ds\n", $namelen, $namelen);
-
-					printf "%8s %*s %*s\n", "name", $namelen, "left", $namelen, "right";
-					printf "%8s %*s %*s\n", "", $namelen, $l->{'name'}, $namelen, $r->{'name'};
-					printf "%8s %*d %*d\n", "type", $namelen, $l->{'type'}, $namelen, $r->{'type'};
-					printf "%8s %*d %*d\n", "dir", $namelen, $l->{'is_dir'}, $namelen, $r->{'i_dir'};
-					printf "%8s %*s %*s\n", "path", $namelen, $l->{'path'}, $namelen, $r->{'path'};
-				}
-			} else {
-				printf "Not sure what this means...  subdirectory on left (%s), separate mount on right (%s)?\n", $l->{'path'}, $r->{'path'};
-			}
-
-
-
-
-#			if (%l->{
-#			if ($orig_inodes->{$inum} 
-			
-#				'name' => $ele_name,
-#				'type' => S_IFMT($stats->mode),
-#				'is_dir' => (S_ISDIR($stats->mode) ? 1 : 0),
-#				'path' => $tmp_path,
-#			);
-#			if ($same_mount) {
-#				$new_ele{'size'} = $stats->size;
-#			}
-#			$new_ele{'same_mount'} = $same_mount;
-		} elsif (!$l && $r) {
-			printf "right only: %d\n", $inum;
-		} else {
-			printf "Uhm...  whuh?  %d\n", $inum;
+	if ($verbose >= 1) {
+		printf "all bind paths:\n";
+		for my $tmp_path (sort keys %{$bind_tree->{'paths'}}) {
+			printf "\t%s\n", $tmp_path;
 		}
 	}
 }
@@ -539,7 +711,6 @@ for my $dir (@ARGV) {
 			next;
 		}
 	}
-	$search_dev = $dir_stats->dev;
 
 	if ($do_mount) {
 		# get this thing bind-mounted
@@ -549,6 +720,8 @@ for my $dir (@ARGV) {
 			printf "error bind-mounting '%s' on '%s': %d\n", $dir, $tmp_mount_dir, $ret;
 			exit 1;
 		}
+		printf "tmp_mount_dir: '%s'\n", $tmp_mount_dir;
+
 	}
 
 	my %tree_info;
@@ -557,135 +730,127 @@ for my $dir (@ARGV) {
 	#postprocess =>
 	#wanted =>
 
-	my ($tptr, $iptr);
+	my $tptr;
 
 	my %orig_tree;
 	my %bind_tree;
-	my %orig_inode_info;
-	my %bind_inode_info;
 
-
-#	%orig_tree = %current_tree0;
-	($tptr, $iptr) = build_tree($dir);
+	$tptr = build_tree($dir);
 	%orig_tree = %{$tptr};
-	%orig_inode_info = %{$iptr};
 
-
-	printf "tree:\n";
-	print Dumper(\%orig_tree);
-	printf "inodes\n";
-	print Dumper(\%orig_inode_info);
-
-
+	if ($verbose >= 1) {
+		printf "tree:\n";
+		print Dumper(\%orig_tree);
+	}
 
 	if ($do_mount) {
-		($tptr, $iptr) = build_tree($tmp_mount_dir);
+		$tptr = build_tree($tmp_mount_dir);
 		%bind_tree = %{$tptr};
-		%bind_inode_info = %{$iptr};
 
-		printf "bind tree\n";
+		if ($verbose >= 1) {
+			printf "bind tree\n";
 
-		print Dumper(\%bind_tree);
-		printf "bind inodes\n";
-		print Dumper(\%bind_inode_info);
+			print Dumper(\%bind_tree);
+		}
+		compare_inode_info(\%orig_tree, \%bind_tree);
+
+		#overmounts
+		my @overmounts = @{$orig_tree{'overmounts'}};
+		printf "overmounts: %d (%s)\n", scalar @overmounts, join(", ", @overmounts);
+		foreach my $overmount_path (@overmounts) {
+			my $p = $dir . $overmount_path;
+			while (substr($p, 0, 2) eq "//") { $p = substr($p, 1); }       
+
+			printf "  overmount path: %s\n", $p;
+		}
+
+		my $label_width = max_string_len("apparent size", "allocated");
+		my $field_width = max_string_len($dir, sprintf("%d", $orig_tree{'cumulative_size'}));
+#		my $path_len = max_path_len($dir, $tmp_mount_dir);
+
+		printf "%*s  %*s %*s\n", $label_width, "", $field_width, $dir, length("actual    "), "actual";
+
+		my $diff;
+		my $diff_str;
+
+		$diff = $bind_tree{'cumulative_size'} - $orig_tree{'cumulative_size'};
+		$diff_str = ($diff > 0) ? sprintf(" (+%d - %s)", $diff, byte_units($diff, 1024)) :
+			($diff < 0) ? sprintf(" (-%d - %s)", -$diff, byte_units(-$diff, 1024)) :
+			"";
+if (0) {
+		if ($diff > 0) {
+			$diff_str = sprintf(" (+%d - %s)", $diff, byte_units($diff, 1024));
+		} elsif ($diff < 0) {
+			$diff_str = sprintf(" (-%d - %s)", -$diff, byte_units(-$diff, 1024));
+		} else {
+			$diff_str = "";
+		}
+}
+if (0) {
+		printf "%*s: %*d %*d%s%d%s\n", $label_width, "apparent size",
+			$field_width, $orig_tree{'cumulative_size'},
+			length("actual    "), $bind_tree{'cumulative_size'},
+			($diff > 0) ? " (+" : ($diff < 0) ? " (-" : "",
+			($diff > 0) ? $diff : ($diff < 0) ? -$diff : 0,
+		($diff != 0) ? ")" : "";
+}
+		printf "%*s: %*d %*d%s\n", $label_width, "apparent size",
+			$field_width, $orig_tree{'cumulative_size'},
+			length("actual    "), $bind_tree{'cumulative_size'},
+			$diff_str;
 
 
-		compare_inode_info(\%orig_inode_info, \%bind_inode_info);
+		$diff = ($bind_tree{'cumulative_blocks'} - $orig_tree{'cumulative_blocks'}) * 512;
+		$diff_str = ($diff > 0) ? sprintf(" (+%d - %s)", $diff, byte_units($diff, 1024)) :
+			($diff < 0) ? sprintf(" (-%d - %s)", -$diff, byte_units(-$diff, 1024)) :
+			"";
+		printf "%*s: %*d %*d%s\n", $label_width, "allocated",
+			$field_width, $orig_tree{'cumulative_blocks'} * 512,
+			length("actual    "), $bind_tree{'cumulative_blocks'} * 512,
+			$diff_str;
+
+		my $out;
+if (0) {
+#		my $out = exec_command("ls -ald " . join(" ", @paths));
+#		printf "**\n%s\n**\n", $out;
+		printf "du of relevant mount:\n";
+		$out = exec_command("du -sxb " . $dir . " 2>&1");
+		printf "%s", $out;
+
+		$out = exec_command("du -sx -B 4k " . $dir . " 2>&1");
+		printf "%s", $out;
+
+		printf "\n";
+
+		printf "du of bind mount:\n";
+		$out = exec_command("du -sxb " . $tmp_mount_dir . " 2>&1");
+		printf "%s", $out;
+		$out = exec_command("du -sx -B 4K " . $tmp_mount_dir . " 2>&1");
+		printf "%s", $out;
+}
+
 	}
 
 
 
+#	printf "left tree:\n";
+#	print Dumper(\%orig_tree);
+#	printf "\n\n";
+#	printf "right tree:\n";
+#	print Dumper(\%bind_tree);
 
-#             0 dev      device number of filesystem
-#             1 ino      inode number
-#             2 mode     file mode  (type and permissions)
-#             3 nlink    number of (hard) links to the file
-#             4 uid      numeric user ID of file's owner
-#             5 gid      numeric group ID of file's owner
-#             6 rdev     the device identifier (special files only)
-#             7 size     total size of file, in bytes
-#             8 atime    last access time in seconds since the epoch
-#             9 mtime    last modify time in seconds since the epoch
-#            10 ctime    inode change time in seconds since the epoch (*)
-#            11 blksize  preferred I/O size in bytes for interacting with the
-#                        file (may vary from file to file)
-#            12 blocks   actual number of system-specific blocks allocated
-#                        on disk (often, but not always, 512 bytes each)
 
-	if ($do_mount) {
+
+
+	if ($do_mount && 0) {
 #		int umount2(const char *target, int flags);
 		$ret = syscall(&SYS_umount2, $tmp_mount_dir, 0);
-
-		printf "umount result: $ret\n";
-
+		if ($ret != 0) {
+			printf "umount result: $ret\n";
+		}
 		rmdir($tmp_mount_dir);
 	}
+	cleanup() if $do_mount;
 
-	printf("parent dir of '%s' is '%s'\n", $dir, $parent_dir);
+#	printf("parent dir of '%s' is '%s'\n", $dir, $parent_dir);
 }
-my %test_tree_info = (
-	'path' => '/',
-	'inode' => 12345,
-	'cumulative_size' => 98765,
-	'is_dir' => true,
-	'ch' => {
-		'subdir1' => {
-			'inode' => 888,
-			'cumulative_size' => 555,
-			'is_dir' => true,
-			'ch' => {
-				'file_55' => {
-					'inode' => 33333,
-					'is_dir' => false,
-					'size' => 22222,
-				},
-			},
-		},
-		'asdf3' => {
-			'inode' => 999,
-			'cumulative_size' => 333,
-			'is_dir' => true,
-			'ch' => {
-				'subdir1' => {
-					'inode' => 12345,
-					'cumulative_size' => 111,
-					'is_dir' => true,
-					'ch' => {
-					},
-				},
-			},
-		},
-	},
-	'children' => {
-		'subdir1' => {
-			'inode' => 23456,
-			'cumulative_size' => 55555,
-			'is_dir' => true,
-			'children' => {
-				'file1' => {
-					'inode' => 33333,
-					'is_dir' => false,
-					'size' => 22222,
-				},
-				'file2' => {
-					'inode' => 99,
-					'is_dir' => false,
-					'size' => 22222,
-				},
-				'subdir1.1' => {
-					'inode' => 200,
-					'is_dir' => true,
-					'cumulative_size' => 112,
-					'children' => {},
-				},
-			},
-		},
-		'subdir2' => {
-			'inode' => 300,
-			'cumulative_size' => 87,
-			'is_dir' => true,
-			'children' => {},
-		},
-	},
-);
-#print Dumper(\%test_tree_info);
