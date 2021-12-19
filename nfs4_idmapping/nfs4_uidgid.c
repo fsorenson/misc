@@ -11,23 +11,29 @@
 #include <unistd.h>
 #include <sys/types.h>
 #include <pwd.h>
+#include <sys/fsuid.h>
 #include <grp.h>
 #include <limits.h>
 #include <ctype.h>
 #include <stdarg.h>
+#include <errno.h>
+#include <keyutils.h>
 
+#ifndef DEFAULT_KEYRING
+#define DEFAULT_KEYRING ".id_resolver"
+#endif
 
 static void dbg_printf_internal(const char *fmt, ...) {
-	va_list vp;
+       va_list vp;
 
-	va_start(vp, fmt);
-	printf(fmt, vp);
-	va_end(vp);
+       va_start(vp, fmt);
+       vprintf(fmt, vp);
+       va_end(vp);
 }
 
 #define dbg_printf(print_lvl, selected_lvl, args...) do { \
 	if (selected_lvl >= print_lvl) \
-		dbg_printf_internal(args); \
+		printf(args); \
 } while (0)
 
 #define min(a,b) ({ \
@@ -78,7 +84,39 @@ struct config {
 
 	bool lookup_user;
 	bool lookup_group;
+
+	bool lookup_name;
+	bool lookup_owner;
 };
+
+/*
+uid  name
+gid  name
+uid  owner
+gid  owner
+
+name uid
+name gid
+
+owner uid
+owner gid
+
+
+uid		owner
+owner		uid
+
+gid		group_owner
+group_owner	gid
+
+
+
+nfs4_name is a 'name@DOMAIN' string
+*/
+
+
+
+
+
 
 static void get_default_domain(struct config *config) {
 	char buf[max(NFS4_MAX_DOMAIN_LEN, 256)];
@@ -97,7 +135,8 @@ char *get_current_user_info(struct config *config) {
 
 	buf = malloc(config->pw_size_max);
 
-	config->current_uid = getuid();
+//	config->current_uid = getuid();
+	config->current_uid = setfsuid(-1);
 	ret = getpwuid_r(config->current_uid, &passwd, buf, config->pw_size_max, &result);
 	if (ret) {
 		printf("error occurred getting passwd info from uid %d\n", config->current_uid);
@@ -117,9 +156,9 @@ void get_current_group_info(struct config *config) {
 
 	buf = malloc(config->gr_size_max);
 
-	config->current_gid = getgid();
-	ret = getgrgid_r(config->current_gid, &group, buf, config->gr_size_max, &result);
-	if (ret) {
+//	config->current_gid = getgid();
+	config->current_gid = setfsuid(-1);
+	if ((ret = getgrgid_r(config->current_gid, &group, buf, config->gr_size_max, &result))) {
 		printf("error occurred getting group info from gid %d\n", config->current_gid);
 	} else if (!result) {
 		printf("no group matching gid %d found\n", config->current_gid);
@@ -410,10 +449,14 @@ void do_lookups(struct config *config) {
 		config->lookup_user = true;
 		config->lookup_group = true;
 	}
-	if (config->lookup_user && !config->lookup_user_string)
+	if (config->lookup_user && !config->lookup_user_string) {
 		get_current_user_info(config);
-	if (config->lookup_group && !config->lookup_group_string)
+		printf("current user: '%s', uid: %d\n", config->current_user_string, config->current_uid);
+	}
+	if (config->lookup_group && !config->lookup_group_string) {
 		get_current_group_info(config);
+		printf("current group: '%s', gid: %d\n", config->current_group_string, config->current_gid);
+	}
 
 	if (config->lookup_user)
 		do_user_lookups(config);
@@ -431,7 +474,16 @@ void setup(struct config *config) {
 		config->gr_size_max = FALLBACK_BUFSIZE;
 }
 
-void parse_opts(struct config *config, int argc, char *argv[]) {
+void usage(const char *exe) {
+	printf("usage: %s [-u [<USERNAME>]] [-g [<GROUPNAME>]] [-d <DOMAINNAME>] [-c <CONFIG_FILE>] [-v]\n", exe);
+	printf("\t-u [<USERNAME>] - do a username lookup (optionally specifying the user)\n");
+	printf("\t-u [<GROUPNAME>] - do a groupname lookup (optionally specifying the group)\n");
+	printf("\t-d <DOMAINNAME> - specify the domain name\n");
+	printf("\t-c <CONFIG_FILE> - specify a particular idmapd.conf file\n");
+	printf("\t-v - increase verbosity\n");
+}
+
+int parse_opts(struct config *config, int argc, char *argv[]) {
 	static struct option long_options[] = {
 		{ "user",	optional_argument, NULL, 'u' },
 		{ "group",	optional_argument, NULL, 'g' },
@@ -444,12 +496,16 @@ void parse_opts(struct config *config, int argc, char *argv[]) {
 	int opt;
 
 	while (1) {
-		opt = getopt_long(argc, argv, "u::g::d:c:v", long_options, &optind);
+		opt = getopt_long(argc, argv, "hu::g::d:c:v", long_options, &optind);
 		if (opt == -1)
 			break;
 		dbg_printf(2, config->verbosity, "selected '%c' (0x%hhx), optopt='%c' optind=%d, argv[optind]='%s', optarg='%s'\n",
 			opt, opt, optopt, optind, argv[optind], optarg);
 		switch (opt) {
+			case 'h':
+				usage(argv[0]);
+				return EXIT_FAILURE;
+				break;
 			case 0:
 				printf("option '%s'", long_options[optind].name);
 				if (optarg)
@@ -540,6 +596,7 @@ void parse_opts(struct config *config, int argc, char *argv[]) {
 				break;
 			default:
 				printf("unknown argument '%c'\n", opt);
+				return EXIT_FAILURE;
 				break;
 		}
 	}
@@ -564,7 +621,214 @@ void parse_opts(struct config *config, int argc, char *argv[]) {
 		}
 //		if ((optind == argc - 1) && (! config->lookup_user && ! config->lookup_group))
 	}
+	return EXIT_SUCCESS;
 }
+
+typedef struct VN_struct {
+	int val;
+	char *name;
+} VN_struct_t;
+
+
+
+#define _PASTE(a,b)		a##b
+#define _PASTE3(a,b,c)		a##b##c
+#define _PASTE4(a,b,c,d)	a##b##c##d
+#define PASTE(a,b)		_PASTE(a,b)
+#define PASTE3(a,b,c)		_PASTE3(a,b,c)
+#define PASTE4(a,b,c,d)		_PASTE4(a,b,c,d)
+
+
+//#define VN(k) { .val = k, .name = #k }
+//#define VN(k) { .val = k, .name = k }
+#define VN(v,n) { .val = v, .name = n }
+
+#define VN_PERMS_WHO_RIGHT(who, right) \
+	VN(PASTE4(KEY_, who, _, right), \
+		"KEY_" #who "_" #right)
+
+
+//	VN(PASTE4(KEY_, who, _, right))
+
+#define VN_PERMS_WHO(who) \
+	VN_PERMS_WHO_RIGHT(who, ALL), \
+	VN_PERMS_WHO_RIGHT(who, VIEW), \
+	VN_PERMS_WHO_RIGHT(who, READ), \
+	VN_PERMS_WHO_RIGHT(who, WRITE), \
+	VN_PERMS_WHO_RIGHT(who, SEARCH), \
+	VN_PERMS_WHO_RIGHT(who, LINK), \
+	VN_PERMS_WHO_RIGHT(who, SETATTR)
+
+#define VN_PERMS() \
+	VN_PERMS_WHO(POS), \
+	VN_PERMS_WHO(USR), \
+	VN_PERMS_WHO(GRP), \
+	VN_PERMS_WHO(OTH)
+
+#define ARRAY_SIZE(a)  (sizeof(a)/sizeof(a[0]))
+
+
+#define KEY_abc_ALL 1
+#define KEY_abc_VIEW 1
+#define KEY_abc_READ 1
+#define KEY_abc_WRITE 1
+#define KEY_abc_SEARCH 1
+#define KEY_abc_LINK 1
+#define KEY_abc_SETATTR 1
+
+struct VN_struct foo[] = {
+//	VN_PERMS_WHO(abc),
+	VN_PERMS_WHO_RIGHT(abc, ALL),
+};
+
+
+struct VN_struct perms_pairs[] = {
+	VN_PERMS(),
+};
+
+
+
+void show_key_perms(key_perm_t perms) {
+	key_perm_t rem = perms;
+	int i, count = 0;
+
+	for (i = 0 ; i < ARRAY_SIZE(perms_pairs) ; i++) {
+		if ((rem & perms_pairs[i].val) == perms_pairs[i].val) {
+			printf("%s%s", count++ ? " | " : "", perms_pairs[i].name);
+			rem &= ~perms_pairs[i].val;
+		}
+	}
+	if (rem)
+		printf("%s0x%x", count++ ? " | " : "", rem);
+}
+
+
+/*
+
+
+
+
+3b010000     0     0 id_resolv uid:root@sorenson.redhat.com: 2
+0b0b0000     0     0 user      invocation_id: 16
+3b010000     0     0 id_resolv gid:root@sorenson.redhat.com: 2
+
+*/
+
+
+void list_key(key_serial_t key) {
+	char *buf = NULL, *c = NULL;
+	int ret;
+
+	if ((ret = keyctl_describe_alloc(key, &buf)) < 0) {
+		switch (errno) {
+			case EKEYEXPIRED:
+				printf("key expired\n");
+//				printf("%s\n", buf);
+				break;
+			default:
+				printf("error describing key: %m\n");
+		}
+		return;
+	}
+	if (!(c = strrchr(buf, ';'))) {
+		printf("coult not print key\n");
+	} else {
+		char *p = strchr(buf, ';'); // skip the 'id_resolver' part
+		uid_t uid = strtol(p + 1, &p, 10);
+		gid_t gid = strtol(p + 1, &p, 10);
+		key_perm_t perms = strtol(p + 1, &p, 16);
+		char *type = strndup(p + 1, strchr(p + 1, ':') - (p + 1));
+		char *name = strdup(p + 1 + strlen(type) + 1);
+		char *val = NULL;
+//id_resolver;0;0;3b010000;uid:user1@sorenson.redhat.co
+
+
+		printf("  %08x - %s\n", key, buf);
+		printf("    %s\n", ++c);
+		printf("    ");
+		printf("    uid:   %d\n", uid);
+		printf("    gid:   %d\n", gid);
+		printf("    perms: %08x = ", perms);
+		show_key_perms(perms);
+		printf("\n");
+		printf("    type:  %s\n", type);
+		printf("    name:  %s\n", name);
+
+		int ret;
+
+		if ((ret = keyctl_read_alloc(key, (void **)&val)) < 0) {
+			printf("could not read key %x: %m\n", key);
+		} else {
+			printf("read key:  %s\n", val);
+
+			free(val);
+		}
+
+
+
+		free(type);
+		free(name);
+	}
+	free(buf);
+}
+
+/*
+
+“%s;%d;%d;%08x;%s”
+where the arguments are: key type name, key UID, key GID, key permissions mask and key description.
+
+  id_resolver;0;0;3b010000;uid:user1@sorenson.redhat.com
+    uid:user1@sorenson.redhat.com
+
+  id_resolver;0;0;3b010000;user:1000
+    user:1000
+
+  id_resolver;0;0;3b010000;gid:root@sorenson.redhat.com
+    gid:root@sorenson.redhat.com
+
+  id_resolver;0;0;3b010000;uid:root@sorenson.redhat.com
+    uid:root@sorenson.redhat.com
+
+*/
+
+
+
+void list_keys(const char *ring_name, key_serial_t ring_id) {
+	key_serial_t *key;
+	void *keylist;
+	int count;
+
+	if ((count = keyctl_read_alloc(ring_id, &keylist)) < 0) {
+		printf("error readig keyring '%s': %m\n", ring_name);
+		return;
+	}
+	count /= (int)sizeof(*key);
+
+	switch (count) {
+		case 0:
+			printf("no keys found\n");
+			break;
+		default:
+			printf("%d key%s found\n", count, count == 1 ? "" : "s");
+	}
+	for (key = keylist; count-- ; key++)
+		list_key(*key);
+	free(keylist);
+}
+
+
+int list_keyring(const char *keyring) {
+	key_serial_t key;
+
+	if ((key = find_key_by_type_and_desc("keyring", keyring, 0)) < 0) {
+		printf("'%s' keyring not found\n", keyring);
+		return EXIT_FAILURE;
+	}
+	list_keys(keyring, key);
+	return EXIT_SUCCESS;
+}
+
+
 
 int main(int argc, char *argv[]) {
 //	char buf[max(NFS4_MAX_DOMAIN_LEN, 256)];
@@ -577,7 +841,8 @@ int main(int argc, char *argv[]) {
 	struct config config;
 
 	memset(&config, 0, sizeof(config));
-	parse_opts(&config, argc, argv);
+	if (parse_opts(&config, argc, argv) == EXIT_FAILURE)
+		return EXIT_FAILURE;
 
 //	printf("more opts:\n");
 
@@ -595,7 +860,36 @@ int main(int argc, char *argv[]) {
 
 	setup(&config);
 
+
+	char buf2[4096];
+	char domain[4096];
+
+//	char *keyring = "keyring";
+//	       long keyctl_read_alloc(key_serial_t key, void **_buffer);
+
+	printf("listing keyring:\n");
+
+
+list_keyring(DEFAULT_KEYRING);
+
+
+
 	do_lookups(&config);
+
+/*
+       int nfs4_uid_to_name(uid_t uid, char *domain, char *name, size_t len);
+       int nfs4_uid_to_owner(uid_t uid, char *domain, char *name, size_t len);
+       int nfs4_gid_to_name(gid_t gid, char *domain, char *name, size_t len);
+       int nfs4_gid_to_owner(gid_t gid, char *domain, char *name, size_t len);
+       int nfs4_name_to_uid(char *name, uid_t *uid);
+       int nfs4_name_to_gid(char *name, gid_t *gid);
+       int nfs4_owner_to_uid(char *name, uid_t *uid);
+       int nfs4_owner_to_gid(char *name, gid_t *gid);
+*/
+
+//#include <gssapi/gssapi.h>
+//	gss_display_name(
+
 
 
 	return EXIT_SUCCESS;
