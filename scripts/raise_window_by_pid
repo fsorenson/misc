@@ -9,45 +9,136 @@
 #     ancestor pid of <PID>
 
 pid=${1:-}
+declare -a ppids
+declare -a pid_windows
+declare -a to_raise
+declare -a pids_found
+declare -a pids_not_found
+verbosity=0
+
 [[ -z $pid ]] && {
-	echo "usage: $0 <pid>"
+	echo "usage: $0 <pid>" >&2
 	exit 1
 }
 
 raise_window_id() {
 	local id=$1
-	echo "raising window id '$id'"
+	[[ $verbosity -ge 0 ]] && echo "raising window id '$id'" >&2
 	xdotool windowraise $id
 	xdotool windowactivate $id
 }
-
-raise_pid_windows() {
-	local pid=$1 window_ids="" id ppid
-
-	local current_pid=$(ps h -p $pid -o pid:1)
-	[[ -z $current_pid ]] && {
-		echo "pid $pid not found"
-		return
-	}
-	while [[ 42 ]] ; do
-		window_ids=$(wmctrl -lp | awk -vpid=$current_pid '($3==pid){print $1}')
-		[[ -n $window_ids ]] && break # found a window
-
-		ppid=$(ps h -p $current_pid -o ppid:1)
-		[[ -z $ppid ]] && break # no parent pid? maybe the process exited
-		[[ $ppid -eq 0 || $ppid -eq 1 ]] && { current_pid=0 ; break ; } # can't raise pid 0/1
-		current_pid=$ppid
+raise_window_ids() {
+	[[ $verbosity -ge 0 ]] && echo "raising $# windows" >&2
+	while [[ $# -gt 0 ]] ; do
+		raise_window_id "$1"
+		shift
 	done
-	if [[ -z $window_ids ]] ; then
-		echo "unable to locate a window id for pid $pid"
-		return
-	fi
-	for id in $window_ids ; do
-		raise_window_id $id
+}
+trim_running_pids() {
+	local pids_string=$(echo "$*" | tr ' ' ,)
+	ps h -p "$pids_string" -o pid:11
+}
+get_pid_windows() {
+	while read window_id foo1 pid foo2 ; do
+		if [[ -z ${pid_windows[$pid]} ]] ; then
+			pid_windows[$pid]=$window_id
+		else
+			pid_windows[$pid]="${pid_windows[$pid]} $window_id"
+		fi
+	done <<< "$(wmctrl -lp)"
+}
+get_ppids() {
+	while read pid ppid ; do
+		ppids[$pid]=$ppid
+	done <<< "$(ps h ax -o pid:1,ppid:1)"
+}
+
+running_pids=$(trim_running_pids "$*")
+[[ -z $running_pids ]] && {
+	[[ $verbosity -ge 0 ]] && echo "no pids found" >&2
+	exit 1
+}
+
+[[ $verbosity -ge 1 ]] && echo "pids: " $running_pids >&2
+
+get_pid_windows
+get_ppids
+
+mark_pids_found() {
+	local p
+
+	for p in $* ; do
+		pids_found[$p]=$p
+	done
+}
+mark_pids_not_found() {
+	local p
+	[[ $verbosity -ge 1 ]] && echo "marking pids $* not found" >&2
+	for p in $* ; do
+		[[ $verbosity -ge 2 ]] && echo "marking pid $p not found" >&2
+		pids_not_found[$p]=$p
+	done
+}
+mark_window_ids() {
+	local w
+
+	for w in $* ; do
+		to_raise[$w]=$w
 	done
 }
 
-while [[ $# -gt 0 ]] ; do
-	raise_pid_windows "$1"
-	shift
+find_pid_window_ids() {
+	local this_pid=$1
+	local current_pid=$this_pid
+	local parentage=""
+
+	if [[ -z ${ppids[$pid]} ]] ; then
+		[[ $verbosity -ge 1 ]] && echo "no pid: $pid" >&2
+		return
+	fi
+
+	while [[ 42 ]] ; do
+		if [[ -z $current_pid || $current_pid -eq 0 || $current_pid -eq 1 ]] ; then
+			# can't raise pid 0/1
+			[[ $verbosity -ge 0 ]] && echo "unable to locate a window id for pid $this_pid" >&2
+			[[ -n $parentage ]] && mark_pids_not_found $parentage
+			return
+		fi
+		if [[ -n ${pids_not_found[$current_pid]} ]] ; then
+			[[ $verbosity -ge 1 ]] && echo "already determined we can't find a window id for pid $current_pid" >&2
+			if [[ -n $parentage ]] ; then
+				[[ $verbosity -ge 1 ]] && echo "and children $parentage" >&2
+				mark_pids_not_found $parentage
+			fi
+			return
+		fi
+
+		if [[ -n ${pids_found[$current_pid]} ]] ; then
+			[[ $verbosity -ge 2 ]] && echo "already raising window for pid $this_pid" >&2
+			[[ -n $parentage ]] && mark_pids_found $parentage
+			return
+		fi
+
+		parentage="$parentage $current_pid"
+
+		if [[ -n ${pid_windows[$current_pid]} ]] ; then
+			[[ $verbosity -ge 2 ]] && \
+				echo "window_id(s) for pid $this_pid (currently $current_pid) is/are ${pid_windows[$current_pid]}" >&2
+			mark_pids_found $parentage
+			mark_window_ids ${pid_windows[$current_pid]}
+			return
+		fi
+		current_pid=${ppids[$current_pid]}
+	done
+	[[ $verbosity -ge 0 ]] && echo "unable to locate a window id for pid $pid" >&2
+}
+
+for pid in $running_pids ; do
+	find_pid_window_ids $pid
 done
+
+if [[ ${#to_raise[*]} -gt 0 ]] ; then
+	raise_window_ids ${to_raise[*]}
+else
+	[[ $verbosity -ge 0 ]] && echo "could not locate any windows to raise" >&2
+fi
