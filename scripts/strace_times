@@ -1,13 +1,29 @@
 #!/bin/bash
-awk 'function to_sec(t) {
-	cmd = sprintf("date +%%s.%%N -d \"%s\" 2>&1", t)
-	cmd | getline secs
-	close(cmd)
-	return secs
+
+strace_times() {
+	local filename=$1
+
+	awk -vfilename="$filename" 'function to_sec(t) {
+		cmd = sprintf("date +%%s.%%N -d \"%s\" 2>&1", t)
+		cmd | getline secs
+		close(cmd)
+		return secs
+	}
+	(NR==1){st=$2} {et=$2}
+	END{
+		sts = to_sec(st)
+		ets = to_sec(et)
+		printf "%s - %s  %f seconds\n", st, et, ets - sts
+	}' "$filename"
 }
-(NR==1){st=$2} {et=$2}
-END{
-	sts = to_sec(st)
-	ets = to_sec(et)
-	printf "%s - %s  %f seconds\n", st, et, ets - sts
-}' ${1:--}
+
+
+if [[ $# -eq 0 ]] ; then
+	strace_times "-"
+else
+	while [[ $# -gt 0 ]] ; do
+		echo -n "$1  "
+		strace_times "$1"
+		shift
+	done
+fi
