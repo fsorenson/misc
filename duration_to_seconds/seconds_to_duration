@@ -1,4 +1,167 @@
-#!/bin/bash
+#!/usr/bin/perl -w
+
+use warnings;
+use strict;
+
+use Data::Dumper;
+
+use File::Basename;
+
+my $DEBUG = 0;
+
+my $cmd = basename($0);
+
+#printf "running %s\n", $cmd;
+
+sub set_remainder {
+	my $left = shift;
+	my $right = shift;
+
+	return "" if (!defined $left || $left eq "") and (!defined $right || $right eq "");
+	return $left if (defined $left && $left ne "") and (!defined $right || $right eq "");
+	return $right if (!defined $left || $left eq "") and (defined $right || $right ne "");
+	return $left . " " . $right;
+}
+
+if ($cmd eq "duration_to_seconds") {
+	my $y = 0;
+	my $d = 0;
+	my $h = 0;
+	my $m = 0;
+	my $s = 0;
+	my $ns = undef;
+
+	my $duration = join ' ', @ARGV;
+
+	$duration =~ s/\s+/ /g;
+	my $start_duration = $duration;
+	printf "duration: *%s*\n", $duration if $DEBUG;
+
+	my $last_duration = "";
+	while ($duration ne "") {
+		last if ($duration eq $last_duration);
+		$last_duration = $duration;
+		if (my (@matches) = $duration =~ /^(.*?)([0-9]+)(?:\s*)(?:y|year|years)\b((?:\s+).*)$/) {
+			$y = $matches[1];
+			$duration = set_remainder($matches[0], $matches[2]);
+			printf "matched %d year(s); remainder: *%s*\n", $y, $duration if $DEBUG;
+			next;
+		}
+		if (my (@matches) = $duration =~ /^(.*?)([0-9]+)(?:\s*)(?:d|day|days)\b(?:(?:\s+)(.*))$/) {
+			$d = $matches[1];
+			$duration = set_remainder($matches[0], $matches[2]);
+			printf "matched %d day(s); remainder: *%s*\n", $d, $duration if $DEBUG;
+			next;
+		}
+		if (my (@matches) = $duration =~ /^(.*?)([0-9]+)(?:\s*)(?:h|hour|hours|hrs)\b(.*)$/) {
+			$h = $matches[1];
+			$duration = set_remainder($matches[0], $matches[2]);
+			printf "matched %d hours(s); remainder: %s\n", $h, $duration if $DEBUG;
+			next;
+		}
+		if (my (@matches) = $duration =~ /^(.*?)([0-9]+)(?:\s*)(?:m|min|mins|minute|minutes)\b(.*)$/) {
+			$m = $matches[1];
+			$duration = set_remainder($matches[0], $matches[2]);
+			printf "matched %d minuts(s); remainder: %s\n", $m, $duration if $DEBUG;
+			next;
+		}
+
+		# ##(.###)(\s+)?(s|sec|secs|second|seconds)?\b (not prepended by :)
+		if (my (@matches) = $duration =~ /^(.*?)\b(?!:)(?:([0-9]+)(?:\.([0-9]+)))?(?:\s*)(?:s|sec|secs|second|seconds)\b(.*)$/) {
+			$s = $matches[1];
+
+			if (defined $matches[2]) {
+				$ns = $matches[2];
+				$ns .= "0" while (length $ns < 9);
+				$ns = substr($ns, 0, 9); # truncate if it's longer than 9 digits
+			}
+			$duration = set_remainder($matches[3], $matches[3]);
+			if ($DEBUG) {
+				if (defined $ns) {
+					printf "matched %d.%09d second(s); remainder: %s\n", $s, $ns, $duration;
+				} else {
+					printf "matched %d second(s); remainder: %s\n", $s, $duration;
+				}
+			}
+			next;
+		}
+
+		if (my (@matches) = $duration =~ /^(.*?)\b(?:(?:([0-9]+):)?([0-9]+):)?(?:([0-9]+)(?:\.([0-9]+))?)(?:\s*)\b(.*)$/) {
+			$h = $matches[1] if defined $matches[1];
+			$m = $matches[2] if defined $matches[2];
+			$s = $matches[3];
+
+			if (defined $matches[4]) {
+				$ns = $matches[4];
+				$ns .= "0" while (length $ns < 9); # extend to 9 digits if it's shorter
+				$ns = substr($ns, 0, 9); # truncate if it's longer than 9 digits
+			}
+
+			$duration = set_remainder($matches[5], $matches[5]);
+			if ($DEBUG) {
+				if (defined $ns) {
+					printf "matched h:m:s.ns %02d:%02d:%02d.%09d; remainder: %s\n", $h, $m, $s, $ns, $duration;
+				} else {
+					printf "matched h:m:s.ns %02d:%02d:%02d; remainder: %s\n", $h, $m, $s, $duration;
+				}
+			}
+			next;
+		}
+
+
+	}
+	if (0) {
+		printf "year(s): %d\n", $y;
+		printf "days(s): %d\n", $d;
+		printf "hour(s): %d\n", $h;
+		printf "minute(s): %d\n", $m;
+		printf "second(s): %02d\n", $s;
+		printf "nanosecond(s): %09d\n", $ns;
+	}
+	my $seconds = ((((((($y * 365) + $d) * 24) + $h) * 60) + $m) * 60) + $s;
+
+	my $result = sprintf "%d", $seconds;
+	$result .= sprintf ".%09d", $ns if (defined $ns);
+	$result .= " second";
+	$result .= "s" if ($seconds > 1 || (defined $ns && $ns > 0));
+
+	printf "%s => %s\n", $start_duration, $result;
+} else {
+	my $start_seconds = $ARGV[0];
+	if (my (@matches) = $start_seconds =~ /([0-9]+)(?:\.([0-9]+))?$/) {
+		my $s = $matches[0];
+		my $ns = $matches[1];
+		if (defined $ns) {
+			$ns .= "0" while (length $ns < 9); # extend to 9 digits if it's shorter
+			$ns = substr($ns, 0, 9); # truncate if it's longer than 9 digits
+		}
+
+		my $m = int ($s / 60);
+		$s = $s % 60;
+		my $h = int ($m / 60);
+		$m = $m % 60;
+		my $d = int ($h / 24);
+		$h = $h % 24;
+
+		my $result = "";
+		if ($d > 1) {
+			$result = sprintf("%d days ", $d);
+		} elsif ($d == 1) {
+			$result = "1 day ";
+		}
+		$result .= sprintf("%2d:%02d:%02d", $h, $m, $s);
+		$result .= sprintf(".%09d", $ns) if defined $ns;
+
+		printf "%s => %s\n", $start_seconds, $result;
+	} else {
+		printf "unable to parse '%s' seconds\n", $start_seconds;
+	}
+}
+
+
+exit;
+
+my $foo = <<'ENDENDEND'
 
 cmd=$(basename $0)
 
@@ -47,6 +210,26 @@ elif [[ $cmd == "duration_to_seconds" ]] ; then
 	m=0
 	sec=0
 	ss=""
+
+
+
+#	if [[ $duration =~ ^([0-9]+)([ ]*d(?:ay(?:s)))?(.*)$ ]] ; then
+if [[ $duration =~ ^(([0-9]+)\ day(|s))?(.*)$ ]] ; then
+		
+		echo got a match:
+		for i in {0..10} ; do
+			[[ -n ${BASH_REMATCH[$i]} ]] && echo "\$BASH_REMATCH[$i]: ${BASH_REMATCH[$i]}" || echo "\$BASH_REMATCH[$i]: NOT SET"
+		done
+#		[[ -n ${BASH_REMATCH[3]} ]] && echo "\$BASH_REMATCHd=${BASH_REMATCH[3]} || d=0 # 1 day
+#		[[ -n ${BASH_REMATCH[4]} ]] && d=${BASH_REMATCH[4]} # # days
+
+#		[[ -n ${BASH_REMATCH[6]} ]] && h=${BASH_REMATCH[6]}
+#		[[ -n ${BASH_REMATCH[8]} ]] && m=${BASH_REMATCH[8]}
+#		[[ -n ${BASH_REMATCH[10]} ]] && s=${BASH_REMATCH[10]}
+#		[[ -n ${BASH_REMATCH[11]} ]] && ss=${BASH_REMATCH[11]}
+#
+	fi
+exit
 
 
 #	if [[ $duration =~ (((([0-9]+)?(| days?)? )?(([0-9]{1,2}):)(([0-9]+):(([0-9]{2})(.([0-9]+)?)?)))) ]] ; then
@@ -107,3 +290,4 @@ else
 	usage
 	exit 1
 fi
+ENDENDEND
