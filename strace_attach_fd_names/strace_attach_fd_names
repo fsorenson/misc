@@ -11,38 +11,105 @@ use Getopt::Long;
 use Data::Dumper;
 use Devel::StackTrace;
 use constant { true => 1, false => 0 };
+use Errno qw( :POSIX);
 
 my %config = (
 	'debug' => 0,
-	'show_execnames' => false,
-	'file_positions' => false, # TODO - open(), read(), write(), lseek()
-	'expand_getdents' => false, # like strace_getdents awk script -- not very reversible, though
-	'output_ls' => false, # gather file & directory information from getdents, *stat*, readlink* calls, and output at end as if from 'ls -alR'
-	'combined_stats' => true, # syscall stats (ala '-c')
-	'proc_stats' => true, # output per-process syscall stats (rather than combined '-c' stats)
-	'delays' => false, # output relative delay between syscall completion and next syscall start, for each pid
-	'pidtree' => true, # gather and output tree of pids
+	'file_positions|file-positions' => false, # TODO - open(), read(), write(), lseek()
+	'expand_getdents|expand-getdents' => false, # like strace_getdents awk script -- not very reversible, though
+	'output_ls|output-ls' => false, # gather file & directory information from getdents, *stat*, readlink* calls, and output at end as if from 'ls -alR'
+	'combined_stats' => false, # syscall stats (ala '-c')
+	'proc_stats' => false, # output per-process syscall stats (rather than combined '-c' stats)
+	'show_delays' => false, # output relative delay between syscall completion and next syscall start, for each pid
+	'pidtree' => false, # gather and output tree of pids
 
+	'output_lines' => true, # output syscall lines; disable if 'stats-only' specified
 	'normalize_pids' => true, # no reason not to, but making it a config option, just in case
+	'show_execnames' => false,
+	'show_elapsed' => true,
+	'show_timestamps' => true,
+	'adjust_locale' => true, # change the locale of error messages - ### currently, only looks like it converts TO English
+
+
+	'double_entry' => false, # TODO: output trace entries at both call time and completion time
+
+	'output_pcap' => false, # TODO: output strace entries as syslog entries in a packet capture (implies 'double-entry')
+	'output_file' => '', # TODO: name of the file to which output will be written
+
 );
 
 GetOptions(
 	'debug|verbose|v+' => \$config{'debug'},
-	'execnames|e' => sub { $config{'show_execnames'} = true },
+	'execnames|e|show_execnames|show-execnames' => sub { $config{'show_execnames'} = true },
 #	'file_positions|fpos' => sub { $config{'file_positions'} = true }, # TODO
 #	'expand_getdents' => sub { $config{'expand_getdents'} = true }, # TODO
 #	'output_ls' => sub { $config{'output_ls'} = true }, # TODO
-#	'proc_stats' => sub { $config{'proc_stats'} = true }, # TODO
-	'delays|deltas' => sub { $config{'delays'} = true }, # TODO
+
+	'output_lines|output-lines' => sub { $config{'output_lines'} = true; },
+	'nooutput_lines|nooutput-lines' => sub { $config{'output_lines'} = false; },
+
+	'stats' => sub { $config{'combined_stats'} = true; },
+	'proc_stats|proc-stats' => sub { $config{'proc_stats'} = true },
+
+	'stats_only|stats-only|only_stats|only-stats' => sub { $config{'output_lines'} = false; },
+	'all_stats|all-stats' => sub { $config{'proc_stats'} = true; $config{'combined_stats'} = true; },
+
+	'delay|delays|deltas' => sub { $config{'show_delays'} = true }, # TODO
+
+	'adjust_locale' => sub { $config{'adjust_locale'} = true }, # change the locale of error messages
 
 	'pidtree' => sub { $config{'pidtree'} = true },
 	'nopidtree' => sub { $config{'pidtree'} = false },
+
+	'elapsed|show_elapsed|show-elapsed' => sub { $config{'show_elapsed'} = true },
+	'noelapsed' => sub { $config{'show_elapsed'} = false },
+
+	'time|timestamp|timestamps' => sub { $config{'show_timestamps'} = true },
+	'notime|notimestamp|notimestamps' => sub { $config{'show_timestamps'} = false },
+
+	'double_entry|double-entry' => sub { $config{'double_entry'} = true },
+
+	'help|h' => sub {
+		printf "usage: %s [options] [input_file]\n", $0;
+		printf "\toptions:\n";
+		printf "\t\t--execnames|--show_execnames|--show-execnames - output names of the executable along with the pid, whenever possible (default: off)\n";
+		printf "\t\t--pidtree - output a tree of the process parentage (default: off; re-suppress with 'nopidtree')\n";
+
+		printf "\t\t--output_lines|--output-lines - output the trace lines (default: on; suppress with --nooutput_lines or --stats-only)\n";
+		printf "\t\t--stats - output combined stats for all pids (default: off)\n";
+		printf "\t\t--proc_stats - output per-process stats for each pid (default: off)\n";
+		printf "\t\t--all_stats - enable both 'stats' and 'proc_stats' (default: off)\n";
+		printf "\t\t--stats-only - only output stats, not the trace lines (default: off)\n";
+
+		printf "\t\t--elapsed|--show_elapsed|--show-elapsed - output elapsed time for syscalls, whenever possible (default: on; suppress with 'noelapsed')\n";
+		printf "\t\t--time|--timestamp - output timestamps for strace entries (default: on; suppress with 'notime' or 'notimestamp)\n";
+
+		printf "\t\t--delays|--deltas - output time between completion of a syscall and start of the next syscall when possible (default: off)\n";
+		printf "\t\t\t(requires that the input trace includes both timestamps and elapsed times)\n";
+
+		printf "\n";
+		printf "\t\t--file-positions - track and output file positions for fd operations (open, read, write, lseek, etc) - NOT IMPLEMENTED\n";
+		printf "\t\t--expand-getdents - pretty-print getdents results (irreversable) - NOT IMPLEMENTED\n";
+		printf "\t\t--output-ls - track directory contents and output directory listings at exit - NOT IMPLEMENTED\n";
+		printf "\t\t--adjust_locale - change the locale of error messages - PARTIALLY IMPLEMENTED - only changes TO English\n";
+
+		printf "\t\t--output_pcap|--output-pcap - output strace entries as syslog entries in a packet capture (implies 'double-entry') - NOT IMPLEMENTED\n";
+
+		printf "\t\t-v|--debug|--verbose - increase debugging level\n";
+		exit();
+	},
+
 );
 
 
 if ($config{'debug'} >= 1) {
 	printf("config{'debug'}: %d\n", $config{'debug'});
 	printf("config{'show_execnames'}: $config{'show_execnames'}\n");
+}
+
+
+if ($config{'output_lines'} == false) { # if suppressing normal output, make sure we output at least stats or pidtree
+	$config{'combined_stats'} = true if (!$config{'proc_stats'} && !$config{'combined_stats'} && !$config{'pidtree'});
 }
 
 STDOUT->autoflush(1);
@@ -312,6 +379,8 @@ sub store_fd_name {
 	if ($fd eq "3<UNIX:[333665315]>") { dump_backtrace(); }
 	return if ($fd < 0);
 
+	# TODO: track chroot()-relative paths
+
 	$tracking_data{$pid}{'fd_mappings'}{$fd} = $path;
 	printf("storing pid: %d fd: %d -> %s\n", $pid, $fd, $path) if ($config{'debug'} >= 1);
 }
@@ -353,6 +422,7 @@ sub get_fd_path {
 
 		$pid = get_shared_fd_table_mapping($pid);
 
+		# TODO: track chroot()-relative paths
 		return $tracking_data{$pid}{'fd_mappings'}{$fd} if (defined($tracking_data{$pid}{'fd_mappings'}{$fd}));
 		return "";
 	};
@@ -477,7 +547,7 @@ dump_backtrace() if (!looks_like_number(substr($ts, 0, 2)));
 sub format_delay {
 	my $rel = shift;
 
-	return "" if !defined($rel) || !$config{'delays'};
+	return "" if !defined($rel) || !$config{'show_delays'};
 	if (!defined($rel) || $rel eq 'undefined') {dump_backtrace(); exit;}
 	return sprintf("+%.6f", trim($rel));
 }
@@ -636,7 +706,6 @@ sub compute_overall_stats {
 #			'elapsed' => 0,
 #		};
 
-
 #		$overall_ops_stats->{$op}{'count'} += $these_stats->{'ops'}{$op}{'count'};
 		$overall_ops_stats->{$op}{'count'} += $these_stats->{'count'};
 		$overall_ops_stats->{$op}{'errors'} += $these_stats->{'errors'};
@@ -714,8 +783,6 @@ sub compute_overall_stats {
 #		printf "overall stats\n";
 #		print Dumper($tracking_data{'pid_stats'}{'overall'});
 #	}
-
-
 }
 
 sub output_stats {
@@ -831,9 +898,9 @@ sub reconstruct_line {
 
 	my $ret = sprintf("%s%s%s%s",
 		$trace_entry->{'pid'} ne '' ? $trace_entry->{'pid'} . " " : "",
-		($config{'execnames'} && $trace_entry->{'this_line_execname'} ne "") ? "(" . $trace_entry->{'this_line_execname'} . ") " : "",
-		$trace_entry->{'timestamp'} ne '' ? $trace_entry->{'timestamp'} . " " : "",
-		($config{'delays'} && $trace_entry->{'delay'} ne '') ? format_delay($trace_entry->{'delay'}) . ' ' : ''
+		($config{'show_execnames'} && $trace_entry->{'this_line_execname'} ne "") ? "(" . $trace_entry->{'this_line_execname'} . ") " : "",
+		($config{'show_timestamps'} && $trace_entry->{'timestamp'} ne '') ? $trace_entry->{'timestamp'} . " " : "",
+		($config{'show_delays'} && $trace_entry->{'delay'} ne '') ? format_delay($trace_entry->{'delay'}) . ' ' : ''
 	);
 
 	if ($trace_entry->{'syscall'} ne '') {
