@@ -1037,6 +1037,7 @@ exit;
 	'epoll_create1_flags' => '(0|(?:\\||EPOLL_CLOEXEC))',
 	'open_flags' => "(0|(?:\\||O_[A-Z0-9_]+)+)",
 	'dup3_flags' => "(0|O_CLOEXEC)",
+	'renameat2_flags' => '([0-9]+|(?:\\||RENAME_[A-Z0-9_]+)+)',
 
 	'fcntl_cmd' => '(F_[^, ]+)',
 #	'fcntl_args' => '(.+)?',
@@ -1078,6 +1079,7 @@ $patterns{'fd_or_atfdcwd_with_possible_path'} = "$patterns{'fd_or_atfdcwd_string
 
 $patterns{'pipefd_with_possible_name'} = "($patterns{'fd_string'})$patterns{'possible_pipefd_name'}";
 $patterns{'sockfd_with_possible_name'} = "($patterns{'fd_string'})$patterns{'possible_sockfd_name'}";
+$patterns{'possible_renameat2_flags'} = "(?:, $patterns{'renameat2_flags'})?",
 
 %patterns = (%patterns,
 	'syscall' => "$patterns{'possible_pid_string'}$patterns{'possible_timestamp_string'}$patterns{'possible_relative_time_string'}$patterns{'op_string'}\($patterns{'op_args_string'}\)$patterns{'ret_string'}$patterns{'possible_elapsed_string'}",
@@ -1170,6 +1172,10 @@ $patterns{'sockfd_with_possible_name'} = "($patterns{'fd_string'})$patterns{'pos
 %regexes = (%regexes,
 
 	'syscall' => qr/^$patterns{'possible_pid_string'}$patterns{'possible_timestamp_string'}$patterns{'possible_relative_time_string'}$patterns{'op_string'}\($patterns{'op_args_string'}\)$patterns{'ret_string'}$patterns{'possible_elapsed_string'}$/,
+
+	'new_syscall' => qr/^$patterns{'op_string'}\($patterns{'op_args_string'}\)$patterns{'ret_string'}$/,
+
+
 #	'syscall' => qr/^$patterns{'syscall'}$/,
 	'process_exited' => qr/^$patterns{'possible_pid_string'}$patterns{'possible_timestamp_string'}$patterns{'possible_relative_time_string'}(\+\+\+ exited with ($patterns{'digits_string'}) \+\+\+)/,
 	'process_signal' => qr/^$patterns{'possible_pid_string'}$patterns{'possible_timestamp_string'}$patterns{'possible_relative_time_string'}--- ($patterns{'signal_name'}) ($patterns{'siginfo_t'}) ---/,
@@ -1229,10 +1235,20 @@ $patterns{'sockfd_with_possible_name'} = "($patterns{'fd_string'})$patterns{'pos
 
 	'readlink' => qr/$patterns{'proc_pid_exe'}, $patterns{'quoted_string'}, $patterns{'digits_string'}$/,
 
+	'chroot' => qr/^"(.+)"$/,
+
+
 #	'clone' => qr/^child_stack=$patterns{'hex_string_or_null'}, flags=($patterns{'clone_flags'}), parent_tidptr=$patterns{'hex_string'}, tls=$patterns{'hex_string'}, child_tidptr=$patterns{'hex_string'}$/,
 	'clone' => qr/^child_stack=$patterns{'hex_string_or_null'}, flags=($patterns{'clone_flags'})(, .+)?$/,
 # clone(child_stack=0x7fc9df076fb0, flags=CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD|CLONE_SYSVSEM|CLONE_SETTLS|CLONE_PARENT_SETTID|CLONE_CHILD_CLEARTID, parent_tidptr=0x7fc9df0779d0, tls=0x7fc9df077700, child_tidptr=0x7fc9df0779d0) = 9057
 # clone(child_stack=NULL, flags=CLONE_CHILD_CLEARTID|CLONE_CHILD_SETTID|SIGCHLD, child_tidptr=0x7f21efcbba10) = 1447033
+
+
+	'clone3' => qr/^\{([^\}]+)\} => \{([^\}]+)\}, ([0-9]+)$/,
+# "([^}]+} => {parent_tid=\[[0-9]+\]}, ([0-9]+)"
+#       long syscall(SYS_clone3, struct clone_args *cl_args, size_t size);
+#clone3({flags=CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD|CLONE_SYSVSEM|CLONE_SETTLS|CLONE_PARENT_SETTID|CLONE_CHILD_CLEARTID, child_tid=0x7f075c670910, parent_tid=0x7f075c670910, exit_signal=0, stack=0x7f075be70000, stack_size=0x7ffec0, tls=0x7f075c670640} => {parent_tid=[4137880]}, 88) = 4137880
+#4137042 14:47:13.080710 clone3({flags=CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD|CLONE_SYSVSEM|CLONE_SETTLS|CLONE_PARENT_SETTID|CLONE_CHILD_CLEARTID, child_tid=0x7f075ce71910, parent_tid=0x7f075ce71910, exit_signal=0, stack=0x7f075c671000, stack_size=0x7ffec0, tls=0x7f075ce71640} => {parent_tid=[4137881]}, 88) = 4137881 <0.000080>
 
 	'kill' => qr/^($patterns{'digits_or_negative_digits'})(?: $patterns{'execname_string'})?, ($patterns{'signal_name_or_val'})$/,
 
@@ -1240,6 +1256,7 @@ $patterns{'sockfd_with_possible_name'} = "($patterns{'fd_string'})$patterns{'pos
 	'generic_function_fd' => qr/^$patterns{'fd_or_negative_one_with_possible_path'}$patterns{'possible_other_args'}$/,
 	'generic_function_dfd_path' => qr/^$patterns{'fd_or_atfdcwd_with_possible_path'}, $patterns{'quoted_string'}, $patterns{'everything_else'}$/,
 
+	'renameat' => qr/^$patterns{'fd_or_atfdcwd_with_possible_path'}, $patterns{'quoted_string'}, $patterns{'fd_or_atfdcwd_with_possible_path'}, $patterns{'quoted_string'}$patterns{'possible_renameat2_flags'}$/,
 
 	'execve' => qr/^$patterns{'execve_path_string'}, $patterns{'execve_argv_string'}, $patterns{'execve_envp_string'}$/,
 	'execve_pwd_path' => qr/^(.*?)(?:"PWD=([^"]+)")(.*?)$/,
@@ -1282,7 +1299,7 @@ $patterns{'sockfd_with_possible_name'} = "($patterns{'fd_string'})$patterns{'pos
 	"name_to_handle_at",
 );
 
-# newfstatat fstatat fsstat64 creat open close fchdir dup dup2 dup3 fcntl unlinkat symlinkat renameat
+# creat open close fchdir dup dup2 dup3 fcntl unlinkat symlinkat
 # fsync ioctl select
 #       int symlinkat(const char *target, int newdirfd, const char *linkpath);
 @no_parsing_functions = (
@@ -1364,8 +1381,11 @@ $patterns{'sockfd_with_possible_name'} = "($patterns{'fd_string'})$patterns{'pos
 	"shmget",
 	"sigaltstack",
 	"sysinfo",
+	'times',
 	"tgkill",
 	"umask",
+
+	'timer_delete',
 
 	'set_thread_area',
 );
@@ -1795,6 +1815,39 @@ sub syscall_fcntl {
 		}
 	}
 }
+sub syscall_renameat {
+	my ($trace_entry) = @_;
+
+	if (my ($dfd0, $dfd0_path, $path0, $dfd1, $dfd1_path, $path1, $flags) = $trace_entry->{'args'} =~ $regexes{'renameat'}) {
+		my $rebuild_args = false;
+
+		if (!defined($dfd0_path)) {
+			$dfd0_path = get_fd_path($trace_entry->{'pid'}, $dfd0);
+			$rebuild_args = true if ($dfd0_path ne "");
+		}
+		if (!defined($dfd1_path)) {
+			$dfd1_path = get_fd_path($trace_entry->{'pid'}, $dfd1);
+			$rebuild_args = true if ($dfd1_path ne "");
+		}
+
+		if ($rebuild_args) {
+#			$trace_entry->{'args'} = sprintf("%s%s, \"%s\"%s, %s%s, \"%s\"%s%s",
+			# AT_FDCWD, "/wps/exports_P85/PROD/empcatRelease.xml", AT_FDCWD, "/wps/exports_P85/PROD/empcatRelease20220207154004.xml", 0) = 0 <0.003260>
+
+			$trace_entry->{'args'} = sprintf("%s%s, \"%s\", %s%s, \"%s\"%s",
+				$dfd0, $dfd0_path ne "" ? "<" . $dfd0_path . ">" : "", $path0,
+				$dfd1, $dfd1_path ne "" ? "<" . $dfd1_path . ">" : "", $path1,
+				defined $flags ? ", " . $flags : "");
+		}
+	} else { printf("renameat(2) syscall, but args '%s' didn't match the regex '%s'\n", $trace_entry->{'args'}, $regexes{'renameat'}); }
+}
+sub syscall_chroot {
+	my ($trace_entry) = @_;
+
+	if (!ret_is_error($trace_entry->{'ret'}) and my ($chroot_path) = $trace_entry->{'args'} =~ $regexes{'chroot'}) {
+		# TODO: track chroot path
+	}
+}
 
 sub syscall_execve {
 	my ($trace_entry) = @_;
@@ -1843,6 +1896,29 @@ sub syscall_clone {
 			pidtree_add_child($trace_entry->{'pid'}, $trace_entry->{'ret'}, get_execname($trace_entry->{'pid'}));
 		}
 	} else { printf("clone didn't match regex\n"); }
+}
+sub syscall_clone3 {
+	my ($trace_entry) = @_;
+
+	# if CLONE_FILES is set, the two processes SHARE fd table
+	# if execve is later called, the fd table is duplicated, and no longer shared
+#printf("clone args *%s*\n", $trace_entry->{'args'});
+	if (my ($clone3_args1, $clone3_args2, $size) = $trace_entry->{'args'} =~ $regexes{'clone3'}) {
+#		printf("clone flags: %s\n", $flags) if ($config{'debug'} >= 1);
+
+		if (!ret_is_error($trace_entry->{'ret'})) {
+			if ($clone3_args1 =~ /CLONE_FILES/) {
+				store_shared_fd_table_mapping($trace_entry->{'ret'}, $trace_entry->{'pid'});
+			} else {
+				inherit_fd_table($trace_entry->{'ret'}, $trace_entry->{'pid'});
+			}
+			set_execname($trace_entry->{'ret'}, get_execname($trace_entry->{'pid'}));
+
+			pidtree_add_child($trace_entry->{'pid'}, $trace_entry->{'ret'}, get_execname($trace_entry->{'pid'}));
+		}
+#	} else { printf("clone3 didn't match regex\n"); }
+	} else { # TODO: fix this regex
+	}
 }
 sub syscall_vfork {
 	my ($trace_entry) = @_;
@@ -1907,6 +1983,9 @@ sub syscall_kill {
 	'dup2' => \&syscall_dup2,
 	'dup3' => \&syscall_dup3,
 
+	'renameat' => \&syscall_renameat,
+	'renameat2' => \&syscall_renameat,
+
 	'getdents' => \&syscall_getdents,
 	'getdents64' => \&syscall_getdents,
 
@@ -1917,9 +1996,12 @@ sub syscall_kill {
 	'timerfd_create' => \&syscall_timerfd_create,
 	'epoll_create1' => \&syscall_epoll_create1,
 
+	'chroot' => \&syscall_chroot,
+
 	'execve' => \&syscall_execve,
 	'vfork' => \&syscall_vfork,
 	'clone' => \&syscall_clone,
+	'clone3' => \&syscall_clone3,
 	'kill' => \&syscall_kill,
 
 );
