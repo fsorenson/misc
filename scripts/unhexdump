@@ -1,0 +1,38 @@
+#!/bin/bash
+
+infile=$1
+
+[[ -n $infile && -f $infile ]] || {
+	echo "usage: $0 <input file> <output file>"
+	exit
+}
+outfile=${2:-/dev/stdout}
+
+INCLUDE_ADDR=${INCLUDE_ADDR:-0}
+
+if [[ $INCLUDE_ADDR -eq 1 ]] ; then
+	OUT="cat"
+else
+	OUT="xxd -r -p"
+fi
+
+last_addr=0
+last_line=""
+while read addr a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 aa ab ac ad ae af zzz ; do
+	[[ $addr == "*" || $addr == "$" ]] && continue
+
+	addr="0x$addr"
+	this_line="$a0 $a1 $a2 $a3 $a4 $a5 $a6 $a7 $a8 $a9 $aa $ab $ac $ad $ae $af"
+
+	while [[ $(($last_addr + 16)) -lt $(($addr)) ]] ; do
+		[[ $INCLUDE_ADDR -eq 1 ]] && printf "%08x " $(($last_addr))
+		echo "$last_line"
+		last_addr=$(($last_addr + 16))
+	done
+
+	[[ $INCLUDE_ADDR -eq 1 ]] && printf "%08x " $(($addr))
+	echo "$this_line"
+
+	last_addr=$addr
+	last_line="$this_line"
+done <$infile | $OUT >$outfile
