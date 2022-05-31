@@ -1,0 +1,425 @@
+function format_hex_string(buf, len) {
+	ret = ""
+	for (i = 0 ; i < len ; i++) {
+//		ret .= sprintf("%02x", stringat(buf, i))
+		ret .= sprintf("%02x", buf[i])
+	}
+	return ret
+}
+
+
+# encryption algorithm ciphers
+#define SMB2_ENCRYPTION_AES128_CCM      cpu_to_le16(0x0001)
+#define SMB2_ENCRYPTION_AES128_GCM      cpu_to_le16(0x0002)
+
+
+
+# stap -L 'module("cifs").function("generate_key")'
+# module("cifs").function("generate_key@fs/cifs/smb2transport.c:296")
+#	$label:struct kvec
+#	$context:struct kvec
+#	$key:__u8*
+#	$zero:unsigned char
+#	$i:__u8[]
+#	$L:__u8[]
+#	$prfhash:unsigned char[]
+#	$key_size:unsigned int
+# static int generate_key(
+#	struct cifs_ses *ses,
+#	struct kvec label,
+#	struct kvec context,
+#	__u8 *key,
+#	unsigned int key_size)
+probe module("cifs").function("generate_key") {
+	printf("%s (%d) - %s(%s)\n", execname(), tid(), ppfunc(), $$parms)
+}
+
+
+# stap -L 'module("cifs").function("generate_smb3signingkey")'
+# module("cifs").function("generate_smb3signingkey@fs/cifs/smb2transport.c:389")
+#	$ses:struct cifs_ses*
+#	$ptriplet:struct derivation_triplet const*
+
+
+probe module("cifs").function("generate_smb3signingkey") {
+	printf("%s (%d) - %s(%s)\n", execname(), tid(), ppfunc(), $$parms)
+
+/*
+	rqst = &@cast(@entry($rqst), "struct smb_rqst", "cifs")
+#	iov = &@cast(rqst->rq_iov
+	iov = &rqst->rq_iov[0]
+
+	shdr = &@cast(iov->iov_base, "struct smb2_sync_hdr", "cifs")
+	server = &@cast(@entry($server), "struct TCP_Server_Info", "cifs")
+
+#	key = &@cast(@entry($key), "unsigned char *")
+	key_addr = @entry(&$key)
+#	key = smb2_get_sign_key(shdr->SessionId, server)
+
+#	shdr = &@cast(@entry(
+#        struct smb2_sync_hdr *shdr = (struct smb2_sync_hdr *)iov[0].iov_base;
+
+#	key = "**********************************"
+
+
+	key_addr2 = find_ses_signing_key(&server->smb_ses_list, shdr->SessionId)
+*/
+
+
+}
+
+
+
+#smb3signingkey
+
+
+function fmt_hex(addr, len, separator) {
+	i = 0
+	ret = ""
+
+	while (i < len) {
+		try {
+			ch = kernel_char(addr + i)
+		} catch {
+			ret .= "ERROR READING MEMORY"
+			break
+		}
+		ret .= sprintf("%s%02x",
+			i > 0 ? separator : "",
+//			kernel_char(addr + i) & 0xff)
+			ch & 0xff)
+
+		i++
+	}
+	return ret
+}
+function fmt_hex_reverse(addr, len, separator) {
+	ret = ""
+
+	i = len
+	while (i > 0) {
+		try {
+			ch = kernel_char(addr + i - 1)
+		} catch {
+			ret .= "ERROR READING MEMORY"
+			break
+		}
+		ret .= sprintf("%s%02x",
+			i < len ? separator : "",
+			ch & 0xff)
+
+		i--
+	}
+	return ret
+}
+
+# module("cifs").function("generate_smb3signingkey@fs/cifs/smb2transport.c:389")
+#	$ses:struct cifs_ses*
+#	$ptriplet:struct derivation_triplet const*
+probe module("cifs").function("generate_smb3signingkey") {
+	printf("%s (%d) - %s()\n", execname(), tid(), ppfunc())
+
+	{
+#		unsigned long ul = htonll($ses->Suid)
+//		ul = htonll($ses->Suid)
+//		a = fmt_hex(&ul, 8, " ")
+		a = fmt_hex_reverse(&$ses->Suid, 8, " ")
+
+	printf("    Session Id: %s\n",
+		a)
+//		fmt_hex(&$ses->Suid, 8, " "))
+
+	}
+
+
+	printf("    ses->preauth_sha_hash: %s\n",
+		fmt_hex($ses->preauth_sha_hash, 64, ""))
+
+
+	printf("    ses->server->session_key.response: %s\n",
+		fmt_hex($ses->server->session_key->response, $ses->server->session_key->len, " "))
+
+	printf("    ses->auth_key.response %s\n",
+		fmt_hex($ses->auth_key->response, $ses->auth_key->len, " "))
+
+
+
+	printf("\n")
+}
+
+
+# stap -L 'module("cifs").function("generate_smb3signingkey").return'
+# module("cifs").function("generate_smb3signingkey@fs/cifs/smb2transport.c:389").return
+#	$return:int
+#	$ses:struct cifs_ses*
+#	$ptriplet:struct derivation_triplet const*
+probe module("cifs").function("generate_smb3signingkey").return {
+	ses = &@cast(@entry($ses), "struct cifs_ses", "cifs")
+
+	printf("%s (%d) - %s().return\n", execname(), tid(), ppfunc())
+
+
+	printf("    ses->server->session_key.response: %s\n",
+		fmt_hex(ses->server->session_key->response, ses->server->session_key->len, " "))
+
+	printf("    ses->preauth_sha_hash: %s\n",
+		fmt_hex(ses->preauth_sha_hash, 64, ""))
+
+	printf("    ses->server->session_key.response: %s\n",
+		fmt_hex(ses->server->session_key->response, ses->server->session_key->len, " "))
+
+	printf("    ses->auth_key.response %s\n",
+		fmt_hex(ses->auth_key->response, ses->auth_key->len, " "))
+
+	printf("    ses->binding: %d\n", ses->binding)
+
+	printf("    smb3signingkey: %s\n",
+		fmt_hex(ses->smb3signingkey, 16, " "))
+
+#	printf("    ses->chans[0].signkey: %s\n", format_hex_string(ses->chans[0]->signkey, 16))
+	printf("    ses->chans[0].signkey: %s\n",
+		fmt_hex(ses->chans[0]->signkey, 16, " "))
+
+
+	printf("    ses->smb3encryptionkey: %s\n",
+		fmt_hex(ses->smb3encryptionkey, 16, " "))
+	printf("    ses->smb3encrdetionkey: %s\n",
+		fmt_hex(ses->smb3decryptionkey, 16, " "))
+
+
+/*
+	printf("    ses->auth_key.response: ")
+	for (i = 0 ; i < 16 ; i++)
+		printf("%02x", (ses->auth_key->response[i]) & 0xff)
+	printf("\n")
+*/
+
+/*
+	key_addr2 = 0
+	if (ses->binding) {
+		key_addr2 = ses->smb3signingkey
+	} else {
+		for (i = 0 ; key_addr2 == 0 && i < ses->chan_count ; i++) {
+			chan = &@cast(ses->chans + i, "struct cifs_chan", "cifs")
+#			chan = ses->chans + i
+			if (chan->server == server) {
+				key_addr2 = chan->signkey
+				break
+			}
+		}
+	}
+*/
+
+}
+
+
+#probe module("cifs").function("smb2_check_receive") {
+#probe 
+#}
+
+# stap -L 'module("cifs").function("smb2_calc_signature")'
+# module("cifs").function("smb2_calc_signature@fs/cifs/smb2transport.c:214")
+#	$rqst:struct smb_rqst*
+#	$server:struct TCP_Server_Info*
+#	$allocate_crypto:bool
+#	$smb2_signature:unsigned char[]
+#	$hash:struct crypto_shash*
+#	$sdesc:struct sdesc*
+#	$drqst:struct smb_rqst
+#	$__func__:char const[] const
+
+# stap -L 'module("cifs").function("smb3_calc_signature")'
+# module("cifs").function("smb3_calc_signature@fs/cifs/smb2transport.c:514")
+#	$rqst:struct smb_rqst*
+#	$server:struct TCP_Server_Info*
+#	$allocate_crypto:bool
+#	$smb3_signature:unsigned char[]
+#	$hash:struct crypto_shash*
+#	$sdesc:struct sdesc*
+#	$drqst:struct smb_rqst
+#	$key:u8[]
+#	$__func__:char const[] const
+
+
+# stap -L 'module("cifs").function("smb2_calc_signature").return'
+# module("cifs").function("smb2_calc_signature@fs/cifs/smb2transport.c:214").return
+#	$return:int
+#	$rqst:struct smb_rqst*
+#	$server:struct TCP_Server_Info*
+#	$allocate_crypto:bool
+#	$smb2_signature:unsigned char[]
+#	$hash:struct crypto_shash*
+#	$sdesc:struct sdesc*
+#	$drqst:struct smb_rqst
+#	$__func__:char const[] const
+
+# stap -L 'module("cifs").function("smb3_calc_signature").return'
+# module("cifs").function("smb3_calc_signature@fs/cifs/smb2transport.c:514").return
+#	$return:int
+#	$rqst:struct smb_rqst*
+#	$server:struct TCP_Server_Info*
+#	$allocate_crypto:bool
+#	$smb3_signature:unsigned char[]
+#	$hash:struct crypto_shash*
+#	$sdesc:struct sdesc*
+#	$drqst:struct smb_rqst
+#	$key:u8[]
+#	$__func__:char const[] const
+
+%{
+#if 0
+%}
+
+function smb2_get_sign_key(ses_id, server) %{
+	__u64 ses_id = STAP_ARG_ses_id;
+	struct TCP_Server_Info *server = (struct TCP_Server_Info *)STAP_ARG_server;
+	u8 key[16] = { 0 };
+
+	struct cifs_chan *chan;
+	struct cifs_ses *ses = NULL;
+        struct TCP_Server_Info *it = NULL;
+        int i;
+        int rc = 0;
+
+        spin_lock(&cifs_tcp_ses_lock);
+       list_for_each_entry(it, &cifs_tcp_ses_list, tcp_ses_list) {
+                list_for_each_entry(ses, &it->smb_ses_list, smb_ses_list) {
+                        if (ses->Suid == ses_id)
+                                goto found;
+                }
+        }
+        cifs_server_dbg(VFS, "%s: Could not find session 0x%llx\n",
+                        __func__, ses_id);
+        rc = -ENOENT;
+        goto out;
+
+found:
+        if (ses->binding) {
+                /*
+                 * If we are in the process of binding a new channel
+                 * to an existing session, use the master connection
+                 * session key
+                 */
+                memcpy(key, ses->smb3signingkey, SMB3_SIGN_KEY_SIZE);
+                goto out;
+        }
+
+        /*
+         * Otherwise, use the channel key.
+         */
+        for (i = 0; i < ses->chan_count; i++) {
+                chan = ses->chans + i;
+                if (chan->server == server) {
+                        memcpy(key, chan->signkey, SMB3_SIGN_KEY_SIZE);
+                        goto out;
+                }
+        }
+
+        cifs_dbg(VFS,
+                 "%s: Could not find channel signing key for session 0x%llx\n",
+                 __func__, ses_id);
+        rc = -ENOENT;
+
+out:
+        spin_unlock(&cifs_tcp_ses_lock);
+
+	STAP_RETVALUE = key;
+%}
+
+
+%{
+#endif
+%}
+
+
+/* specify the kernel module from which the type is taken */
+@define list_for_each_module_entry(entry, head, module, type, field) %(
+        for (@entry = ((@cast(@head, "struct list_head")->next) - (&@cast(0, @type, @module)->@field)) ;
+                &@cast(@entry, @type, @module)->@field != @head ; 
+                @entry = (&@cast(@entry, @type, @module)->@field->next) - (&@cast(0, @type, @module)->@field)) %)
+@define list_for_each_entry(entry, head, type, field) %( /* module is actually 'kernel' */
+        @list_for_each_module_entry(@entry, @head, "kernel", @type, @field) %)
+
+
+
+function get_ses_signing_key(server, ses, sid) {
+	ses = &@cast(ses, "struct cifs_ses", "cifs")
+#	if (ses->Suid == shdr->SessionId) {
+	if (ses->Suid == sid) {
+		if (ses->binding) {
+			return ses->smb3signingkey
+		} else {
+			for (i = 0 ; i < ses->chan_count ; i++) {
+				chan = &@cast(ses->chans + i, "struct cifs_chan", "cifs")
+#					chan = ses->chans + i
+				if (chan->server == server)
+					return chan->signkey
+			}
+		}
+	}
+	return 0
+}
+
+
+#function find_ses_signing_key(ses, sid) {
+function find_ses_signing_key(server, ses_list_head, sid) {
+	@list_for_each_module_entry(ses, ses_list_head, "cifs", "struct cifs_ses", smb_ses_list) {
+		if (key_addr = get_ses_signing_key(server, ses, sid))
+			return key_addr
+	}
+	return 0
+}
+
+
+probe module("cifs").function("smb3_calc_signature").return {
+	rqst = &@cast(@entry($rqst), "struct smb_rqst", "cifs")
+#	iov = &@cast(rqst->rq_iov
+	iov = &rqst->rq_iov[0]
+
+	shdr = &@cast(iov->iov_base, "struct smb2_sync_hdr", "cifs")
+	server = &@cast(@entry($server), "struct TCP_Server_Info", "cifs")
+
+#	key = &@cast(@entry($key), "unsigned char *")
+	key_addr = @entry(&$key)
+#	key = smb2_get_sign_key(shdr->SessionId, server)
+
+#	shdr = &@cast(@entry(
+#        struct smb2_sync_hdr *shdr = (struct smb2_sync_hdr *)iov[0].iov_base;
+
+#	key = "**********************************"
+
+
+//	key_addr2 = find_ses_signing_key(server, &server->smb_ses_list, shdr->SessionId)
+/*
+	key_addr2 = 0
+	@list_for_each_module_entry(ses, &server->smb_ses_list, "cifs", "struct cifs_ses", smb_ses_list) {
+		ses = &@cast(ses, "struct cifs_ses", "cifs")
+		if (ses->Suid == shdr->SessionId) {
+			if (ses->binding) {
+				key_addr2 = ses->smb3signingkey
+			} else {
+				for (i = 0 ; key_addr2 == 0 && i < ses->chan_count ; i++) {
+					chan = &@cast(ses->chans + i, "struct cifs_chan", "cifs")
+#					chan = ses->chans + i
+					if (chan->server == server) {
+						key_addr2 = chan->signkey
+						break
+					}
+				}
+			}
+		}
+		if (key_addr2)
+			break
+	}
+*/
+
+
+	printf("sig: %s\n",
+		fmt_hex(shdr->Signature, 16, " "))
+//	for (i = 0 ; i < 16 ; i++)
+//		printf("%02x", shdr->Signature[i])
+//	printf("\n")
+
+}
+
+
