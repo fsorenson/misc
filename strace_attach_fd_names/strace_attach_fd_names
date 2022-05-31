@@ -852,6 +852,32 @@ sub undefined_to_empty {
 	$trace_entry->{$var} = "" if !defined $trace_entry->{$var};
 }
 
+sub err_name_to_num {
+	my $err_name = shift;
+	return eval("$err_name");
+}
+sub err_num_to_str {
+	my $err_num = shift;
+	$! = $err_num;
+	my $err_str = sprintf("%s", $!);
+	$! = 0;
+	return $err_str;
+}
+sub err_name_to_str {
+        my $err_name = shift;
+	my $err_num = err_name_to_num($err_name);
+	return err_num_to_str($err_num);
+}
+
+sub change_err_locale {
+	my $ret = shift;
+
+	if ((my $err_name, my $str) = $ret =~ $regexes{'extract_err_name'}) {
+		$ret = sprintf("-1 %s (%s)", $err_name, err_name_to_str($err_name));
+	}
+	return $ret;
+}
+
 sub reconstruct_line {
 	my ($trace_entry) = @_;
 
@@ -1193,6 +1219,8 @@ $patterns{'possible_renameat2_flags'} = "(?:, $patterns{'renameat2_flags'})?",
 	'extract_delay2' => qr/^$patterns{'possible_pid_string'}$patterns{'possible_timestamp_string'}$patterns{'my_delay_string'}(.\+)$/,
 
 	'extract_metadata' =>  qr/$patterns{'possible_pid_string'}(?:\s*)$patterns{'possible_timestamp_string'}$patterns{'possible_delay_string'}(.+?)$patterns{'possible_elapsed_string'}$/,
+
+	'extract_err_name' => qr/-1 (E[^ ]+) \(([^\)]+)\)/,
 
 	'getcwd' => qr/^$patterns{'quoted_string'}, $patterns{'digits_string'}/, # don't capture digits unless we come up with a reason later
 
