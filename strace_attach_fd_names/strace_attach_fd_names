@@ -371,12 +371,12 @@ sub store_fd_name {
 	my $fd = shift;
 	my $path = shift;
 
+	dump_backtrace() if !defined($path);
 	$path =~ s/^<|>$//g;
 
 	$pid = -1 if (!defined($pid));
 	$pid = get_shared_fd_table_mapping($pid);
 
-	if ($fd eq "3<UNIX:[333665315]>") { dump_backtrace(); }
 	return if ($fd < 0);
 
 	# TODO: track chroot()-relative paths
@@ -518,8 +518,8 @@ sub ret_is_error {
 	my $ret = shift;
 
 	if (!defined($ret)) {
-dump_backtrace();
-exit(1);
+		dump_backtrace();
+		exit(1);
 	}
 
 	return ($ret =~ $regexes{'return_error'});
@@ -536,8 +536,7 @@ sub ts_to_sec {
 	my $epoch_re = qr/^$patterns{'epoch_time_string'}$patterns{'time_possible_subseconds'}$/;
 
 	return $ts if ($ts =~ $epoch_re);
-printf "ts: %s\n", $ts if (!looks_like_number(substr($ts, 0, 2)));
-dump_backtrace() if (!looks_like_number(substr($ts, 0, 2)));
+
 	my $h = substr($ts, 0, 2) + 0;
 	my $m = substr($ts, 3, 2) + 0;
 	my $s = substr($ts, 6) + 0;
@@ -574,6 +573,7 @@ sub pidtree_add_pid {
 sub pidtree_new_cmd {
 	my ($pid, $cmd) = @_;
 
+	$pid = -1 if !defined $pid;
 	$tracking_data{'pid_tree'}{'cmds'}{$pid} = $cmd;
 	push @{$tracking_data{'pid_stats'}{'pid'}{$pid}{'cmd_history'}}, $cmd;
 }
@@ -681,7 +681,6 @@ sub compute_overall_stats {
 #	my $overall_ops_stats = $tracking_data{'pid_stats'}{'overall'}{'ops'};
 	my $overall_ops_stats = $overall_stats->{'ops'};
 
-
 	local *_add_syscall_stat = sub {
 		my $these_stats = shift;
 		my $op = shift;
@@ -697,7 +696,6 @@ sub compute_overall_stats {
 		'min' => 0+'inf',
 		'max' => 0,
 	} if !defined $overall_ops_stats->{$op};
-
 
 #		$overall_ops_stats
 #		if (!defined $overall_ops_stats->{$op}) {
@@ -746,7 +744,6 @@ sub compute_overall_stats {
 		}
 	};
 
-
 #			$tracking_data{'pid_stats'}{'overall'}{'ops'}
 #				$overall_ops_stats->{$op}{'count'} += $this_pid_stats->{'ops'}{$op}{'count'};
 #
@@ -769,10 +766,8 @@ sub compute_overall_stats {
 
 	}
 
-
 	# total number of ops, errors, time for each op for all pids
 	# count total syscall time for all pids
-
 
 #	if ($config{'proc_stats'}) {
 #		printf "per-pid stats\n";
@@ -808,7 +803,6 @@ sub output_stats {
 
 
 sub output_overall_stats {
-
 	printf "***** overall stats *****\n";
 	output_stats(%{$tracking_data{'pid_stats'}{'overall'}});
 }
@@ -819,10 +813,7 @@ sub output_pid_stats {
 	my $this_pid_stats = $tracking_data{'pid_stats'}{'pid'}{$pid};
 	return if !defined $this_pid_stats;
 
-	return if (!defined $this_pid_stats{'first_time'} || !defined $this_pid_stats{'last_time'});
-
-#	return if !defined $tracking_data{'pid_stats'}{'pid'}{$pid}{'cmd_history'};
-#	pid_tree'}{'cmd_history'}{$pid};
+	return if (!defined $this_pid_stats->{'first_time'} || !defined $this_pid_stats->{'last_time'});
 
 	my $cmd_history_str = "";
 	if (defined $tracking_data{'pid_stats'}{'pid'}{$pid}{'cmd_history'}) {
@@ -833,14 +824,11 @@ sub output_pid_stats {
 
 	printf "***** pid %d %s*****\n", $pid, $cmd_history_str;
 
-	print Dumper($this_pid_stats);
-
 	printf "first time: %s\n", $this_pid_stats->{'first_time'};
 	printf "last time:  %s\n", $this_pid_stats->{'last_time'};
 	printf "syscall time: %.6f\n", $this_pid_stats->{'syscall_time'};
 	printf "runtime:    %.6f\n", $this_pid_stats->{'runtime'};
 	output_stats(%{$this_pid_stats});
-
 }
 
 sub output_per_pid_stats {
@@ -853,29 +841,10 @@ sub output_per_pid_stats {
 	}
 }
 
-
-my $fooz = "
-system-call,  total,     count,  mean,      min,       max,       unfinished
-read          0.000301,  15,     0.000020,  0.000018,  0.000025,  0
-stat          0.000394,  18,     0.000022,  0.000018,  0.000058,  0
-close         0.000077,  4,      0.000019,  0.000019,  0.000020,  0
-openat        0.000735,  27,     0.000027,  0.000019,  0.000063,  0
-lseek         0.000177,  10,     0.000018,  0.000011,  0.000022,  0
-mmap          0.000351,  12,     0.000029,  0.000020,  0.000076,  0
-arch_prctl    0.000019,  1,      0.000019,  0.000019,  0.000019,  0
-fstat         0.000099,  5,      0.000020,  0.000019,  0.000023,  0
-brk           0.000041,  1,      0.000041,  0.000041,  0.000041,  0
-mprotect      0.000110,  5,      0.000022,  0.000020,  0.000025,  0
-execve        0.000340,  1,      0.000340,  0.000340,  0.000340,  0
-access        0.000023,  1,      0.000023,  0.000023,  0.000023,  0
-";
-
-
 sub defined_or_default {
 	my ($val, $default);
 	return (defined $val) ? $val : $default;
 }
-
 
 sub undefined_to_empty {
 	my ($trace_entry, $var) = @_;
@@ -904,12 +873,16 @@ sub reconstruct_line {
 	);
 
 	if ($trace_entry->{'syscall'} ne '') {
+		if ($trace_entry->{'ret'} && $config{'adjust_locale'}) {
+			$trace_entry->{'ret'} = change_err_locale($trace_entry->{'ret'});
+		}
+
 		$ret .= sprintf("%s(%s) = %s",
-		$trace_entry->{'syscall'}, $trace_entry->{'args'}, $trace_entry->{'ret'});
+			$trace_entry->{'syscall'}, $trace_entry->{'args'}, $trace_entry->{'ret'});
 	} elsif ($trace_entry->{'msg'} ne '') { # non-call/return
 		$ret .= $trace_entry->{'msg'};
 	}
-	$ret .= sprintf(" <%s>", $trace_entry->{'elapsed'}) if $trace_entry->{'elapsed'} ne '';
+	$ret .= sprintf(" <%s>", $trace_entry->{'elapsed'}) if ($config{'show_elapsed'} && $trace_entry->{'elapsed'} ne '');
 	return $ret;
 }
 sub extract_metadata {
@@ -918,14 +891,21 @@ sub extract_metadata {
 
 #	printf "    delay '%s'\n", (defined $trace_entry->{'delay'} ? $trace_entry->{'delay'} : 'NONE');
 #if (my @matches = $trace_entry->{'line'} =~ $regexes{'extract_metadata'}) {
-#	printf "match 2d\n";
-#	printf "    full line: %s\n", $trace_entry->{'line'};
-#	printf "    pid: '%s'\n", (defined $matches[0] ? $matches[0] : 'NONE');
-#	printf "    timestamp '%s'\n", (defined $matches[1] ? $matches[1] : 'NONE');
-#	printf "    delay '%s'\n", (defined $matches[2] ? $matches[2] : 'NONE');
+
+if (0) {
+	printf "match 2d\n";
+	printf "    full line: %s\n", $trace_entry->{'line'};
+	printf "    pid: '%s'\n", (defined $trace_entry->{'pid'} ? $trace_entry->{'pid'} : 'NONE');
+	printf "    timestamp '%s'\n", (defined $trace_entry->{'timestamp'} ? $trace_entry->{'timestamp'} : 'NONE');
+	printf "    delay '%s'\n", (defined $trace_entry->{'delah'} ? $trace_entry->{'delah'} : 'NONE');
+	printf "    op_info '%s'\n", $op_info;
 #	printf "    rest '%s'\n", (defined $matches[3] ? $matches[3] : 'NONE');
-#	printf "    elapsed: '%s'\n", (defined $matches[4] ? $matches[4] : 'NONE');
+	printf "    elapsed: '%s'\n", (defined $trace_entry->{'elapsed'} ? $trace_entry->{'elapsed'} : 'NONE');
+}
 		$trace_entry->{'line'} = $op_info;
+	} else {
+		printf "didn't match regex: %s\n", $trace_entry->{'line'};
+		exit;
 	}
 }
 
@@ -977,7 +957,7 @@ $patterns{'pid_string'} = "(?:(?:$patterns{'standard_pid_string'})|(?:$patterns{
 #$patterns{'pid_string'} = "(?|(?:$patterns{'standard_pid_string'})|(?:$patterns{'alt_pid_string'}))";
 
 %patterns = (%patterns,
-	'possible_pid_string' => "(?:($patterns{'pid_string'}) )?",
+	'possible_pid_string' => "(?:($patterns{'pid_string'}) )?(?:\\s*)",
 	'is_alt_pid' => $patterns{'alt_pid_string'},
 #	'extract_alt_pid_string' => "($patterns{'alt_pid_string'})(.+)",
 #	'extract_alt_pid_string' => "($patterns{'alt_pid_string'}) (.+)",
@@ -1075,7 +1055,8 @@ exit;
 
 
 
-	'socket_domain' => '(?:AF_[A-Z0-9]+)',
+#	'socket_domain' => '(?:AF_[A-Z0-9]+)',
+	'socket_domain' => '(?:[AP]F_[A-Z0-9]+)',
 #	'socket_type' => '(?:SOCK_[A-Z]+)',
 #	'socket_type' => '(0|(?:\\||SOCK_[A-Z]]+)+)',
 #	'socket_type' => '(?:0|SOCK_
@@ -1086,6 +1067,8 @@ exit;
 	'socket_proto' => '(?:.+?)',
 	'fd_with_possible_socket_string' => "($patterns{'fd_string'})$patterns{'possible_socket_string'}",
 
+	'possible_argument' => "(?:, (.+))?",
+	'possible_int_argument' => "(?:, (0[0-7]+))?",
 	'everything_else' => "(.+)?",
 
 	'return_error_string' => "-1 (E[^ ]+)\((.+)\)",
@@ -1203,7 +1186,7 @@ $patterns{'sockfd_with_possible_name'} = "($patterns{'fd_string'})$patterns{'pos
 	'extract_delay' => qr/^$patterns{'possible_pid_string'}$patterns{'possible_timestamp_string'}$patterns{'possible_relative_time_string'}(.\+)$/,
 	'extract_delay2' => qr/^$patterns{'possible_pid_string'}$patterns{'possible_timestamp_string'}$patterns{'my_delay_string'}(.\+)$/,
 
-	'extract_metadata' =>  qr/$patterns{'possible_pid_string'}$patterns{'possible_timestamp_string'}$patterns{'possible_delay_string'}(.+?)$patterns{'possible_elapsed_string'}$/,
+	'extract_metadata' =>  qr/$patterns{'possible_pid_string'}(?:\s*)$patterns{'possible_timestamp_string'}$patterns{'possible_delay_string'}(.+?)$patterns{'possible_elapsed_string'}$/,
 
 	'getcwd' => qr/^$patterns{'quoted_string'}, $patterns{'digits_string'}/, # don't capture digits unless we come up with a reason later
 
@@ -1417,7 +1400,7 @@ my %sig_names = (
 
 #sub syscall_
 sub syscall_getcwd {
-	my ($trace_entry) = $_;
+	my ($trace_entry) = @_;
 	printf("matched the getcwd pattern\n") if ($config{'debug'} >= 1);
 	if (my ($path) = $trace_entry->{'args'} =~ $regexes{'getcwd'}) {
 		set_cwd($trace_entry->{'pid'}, $path) if (!ret_is_error($trace_entry->{'ret'}));
@@ -1426,13 +1409,14 @@ sub syscall_getcwd {
 	}
 }
 sub syscall_chdir {
-	my ($trace_entry) = $_;
+	my ($trace_entry) = @_;
+
 	if (my ($path) = $trace_entry->{'args'} =~ $regexes{'chdir'}) {
 		set_cwd($trace_entry->{'pid'}, $path) if (!ret_is_error($trace_entry->{'ret'}));
 	} else { printf("chdir, but didn't match the re\n"); }
 }
 sub syscall_fchdir {
-	my ($trace_entry) = $_;
+	my ($trace_entry) = @_;
 	if (my ($fd, $fd_path) = $trace_entry->{'args'} =~ $regexes{'fchdir'}) {
 		$fd_path = get_fd_path($trace_entry->{'pid'}, $fd) if (!defined($fd_path));
 		set_cwd($trace_entry->{'pid'}, $fd_path) if ($fd_path ne "" && !ret_is_error($trace_entry->{'ret'}));
@@ -1704,7 +1688,8 @@ sub syscall_socket {
 			$trace_entry->{'ret'} = sprintf("%d<%s>", $trace_entry->{'ret'}, $fd_name);
 		}
 		store_fd_name($trace_entry->{'pid'}, $fd, $fd_name);
-		printf "stored socket fd %d name %s\n", $trace_entry->{'ret'}, $fd_name if ($config{'debug'} >= 1);
+#		printf "stored socket fd %d name %s\n", $trace_entry->{'ret'}, $fd_name if ($config{'debug'} >= 1);
+		printf "stored socket fd %d name %s\n", $fd, $fd_name if ($config{'debug'} >= 1);
 	} elsif (!ret_is_error($trace_entry->{'ret'})) { printf("didn't match socket regex: %s\n", $regexes{'socket'}); }
 }
 sub syscall_socketpair {
@@ -1814,8 +1799,10 @@ sub syscall_fcntl {
 sub syscall_execve {
 	my ($trace_entry) = @_;
 
-	if (my ($execve_path, $execve_argv, $execve_envp) = $trace_entry->{'args'} =~ $regexes{'execve'}) {
+	# only meaningful if the execve is successful
+	if (!ret_is_error($trace_entry->{'ret'}) and my ($execve_path, $execve_argv, $execve_envp) = $trace_entry->{'args'} =~ $regexes{'execve'}) {
 #		$trace_entry->{'this_line_execname'} = get_execname($trace_entry->{'pid'}) if ($config{'show_execnames'} && $trace_entry->{'this_line_execname'} eq "");
+
 
 		if ($trace_entry->{'this_line_execname'} eq "") {
 			$trace_entry->{'this_line_execname'} = get_execname($trace_entry->{'pid'});
@@ -1824,7 +1811,6 @@ sub syscall_execve {
 		}
 		printf("execve_path %s\nargv: %s\n", $execve_path, $execve_argv) if ($config{'debug'} >= 1);
 
-
 		if (get_cwd($trace_entry->{'pid'}) eq "" && (my ($args1, $exec_pwd, $args2) = $execve_envp =~ $regexes{'execve_pwd_path'})) {
 			set_cwd($trace_entry->{'pid'}, $exec_pwd);
 			printf("in execve(), environment variable PWD is '%s'; setting cwd\n",
@@ -1832,6 +1818,7 @@ sub syscall_execve {
 		}
 	# TODO - clear the CLOEXEC fds
 	# duplicate the fd table, if the process was cloned with CLONE_FILES (table is shared)
+	} elsif (ret_is_error($trace_entry->{'ret'})) { # unsuccessful execve
 	} else {
 		printf "'%s' did not match 'execve' regex: %s\n", $trace_entry->{'args'}, $regexes{'execve'};
 	}
@@ -2123,7 +2110,7 @@ if (!defined($trace_entry{'syscall'})) {
 
 printf("parsing %s\n", $trace_entry{'line'}) if ($config{'debug'} >= 1);
 	$trace_entry{'orig_line'} = $trace_entry{'line'};
-	$trace_entry{'line'} = $trace_entry{'line'};
+#	$trace_entry{'line'} = $trace_entry{'line'};
 
 
 	# separate off execname, in case we're reprocessing one of our own
@@ -2144,119 +2131,8 @@ printf("parsing %s\n", $trace_entry{'line'}) if ($config{'debug'} >= 1);
 
 	extract_metadata(\%trace_entry); # extract necessary metadata from the line
 
-if (0) {
-	if (my ($trimmed_line, $extracted_elapsed) = $trace_entry{'line'} =~ $regexes{'extract_elapsed'}) {
-		printf "extracted an elapsed: %s\n", $extracted_elapsed;
-		$trace_entry{'elapsed'} = $extracted_elapsed;
-		$trace_entry{'line'} = $trimmed_line;
-	}
-	if (my ($pid_string, $timestamp_string, $delay_string, $remainder) = $trace_entry{'line'} =~ $regexes{'extract_delay2'}) {
-		printf "extracted a delay: %s\n", $delay_string;
-		$trace_entry{'line'} = sprintf("%s %s%s",
-			$pid_string,
-			(defined($timestamp_string) && $timestamp_string ne '') ? $timestamp_string . ' ' : '',
-			$remainder);
-		$trace_entry{'delay'} = trim($delay_string);
-	} else {
-		printf "did not match delay for line: %s\n", $trace_entry{'line'};
-
-		my $re1 = qr/^$patterns{'possible_pid_string'}(.+)$/;
-#	'extract_delay2' => qr/^$patterns{'possible_pid_string'}$patterns{'possible_timestamp_string'}$patterns{'my_delay_string'}(.\+)$/,
-
-		if ((my $foo1, my $rest1) = $trace_entry{'line'} =~ $re1) {
-			printf "match 1: pulled out a pid: %s; rest: %s\n", $foo1, $rest1;
-#			exit;
-		}
-	}
-}
-	if (0) {
-my $mds = "(?:(?:\\+$patterns{'relative_time_seconds'}\.$patterns{'time_possible_subseconds'}))";
-my $mds2 = '(\+[0-9]+(?:(?:\.[0-9]{3}(?:[0-9]{3}(?:[0-9]{3})?)?)?) )?';
-#^(?:^(?:(\+[0-9]+(?:(?:\.[0-9]{3}(?:[0-9]{3}(?:[0-9]{3})?)?)?)) )?(.+)$)
-my $mds3 = '(?:(\+[0-9]+(?:(?:\.[0-9]{3}(?:[0-9]{3}(?:[0-9]{3})?)?)?)) )?';
-my $mds4 = "(?:(?:\\+($patterns{'relative_time_seconds'}\.$patterns{'time_possible_subseconds'}) ))?";
-
-printf "mds:  %s\n", $mds;
-printf "mds2: %s\n", $mds2;
-printf "mds3: %s\n", $mds3;
-printf "mds4: %s\n", $mds4;
-		my $pps_str = "(?:$patterns{'digits_string'} )?";
-
-		my $re2 = qr/^$patterns{'possible_pid_string'}$patterns{'possible_timestamp_string'}(.+)$/;
-		my $re3 = qr/^$pps_str$patterns{'possible_timestamp_string'}($mds)?(.+)$/;
-		my $re4 = qr/^$pps_str$patterns{'possible_timestamp_string'}(\+[0-9]+(?:(?:\.[0-9]{3}(?:[0-9]{3}(?:[0-9]{3})?)?)?) )($mds)?(.+)$/;
-
-		if ((my $foo1, my $foo2, my $rest1) = $trace_entry{'line'} =~ $re2) {
-			printf "match 2: pulled out a pid: %s; timestamp: %s, rest: %s\n", $foo1, $foo2, $rest1;
-
-my $re2b = qr/^$mds3(.+)$/;
-printf "mds3: %s\n", $mds3;
-printf "re2b: %s\n", $re2b;
-my $re2c = qr/^$patterns{'possible_pid_string'}$patterns{'possible_timestamp_string'}$mds3(.+)$/;
-
-			printf "    pid: '%s'\n", $foo1 if defined($foo1);
-			printf "    timestamp '%s'\n", $foo2 if defined($foo2);
-
-			if (my ($foo3, $foo4) = $rest1 =~ $re2b) {
-				printf "    delay: '%s'\n", $foo3 if defined($foo3);
-				printf "    rest of rest: '%s'\n", $foo4;
-			} else {
-				printf "didn't match something...: %s\n", $rest1;
-			}
-
-if (my @matches = $trace_entry{'line'} =~ $re2c) {
-	printf "match 2c\n";
-
-	printf "    full line: %s\n", $trace_entry{'line'};
-	printf "    pid: '%s'\n", (defined $matches[0] ? $matches[0] : 'NONE');
-	printf "    timestamp '%s'\n", (defined $matches[1] ? $matches[1] : 'NONE');
-	printf "    delay '%s'\n", (defined $matches[2] ? $matches[2] : 'NONE');
-	printf "    rest '%s'\n", (defined $matches[3] ? $matches[3] : 'NONE');
-}
-
-printf "mds3:                  %s\n", $mds3;
-printf "possible_delay_string: %s\n", $patterns{'possible_delay_string'};
-
-#my $re2d = qr/$patterns{'possible_pid_string'}$patterns{'possible_timestamp_string'}$mds3(.+?)$patterns{'possible_elapsed_string'}$/;
-my $re2d = qr/$patterns{'possible_pid_string'}$patterns{'possible_timestamp_string'}$patterns{'possible_delay_string'}(.+?)$patterns{'possible_elapsed_string'}$/;
-printf "re2d: %s\n", $re2d;
-#if (my @matches = $trace_entry{'line'} =~ $re2d) {
-if (my @matches = $trace_entry{'line'} =~ $regexes{'extract_metadata'}) {
-	printf "match 2d\n";
-
-	printf "    full line: %s\n", $trace_entry{'line'};
-	printf "    pid: '%s'\n", (defined $matches[0] ? $matches[0] : 'NONE');
-	printf "    timestamp '%s'\n", (defined $matches[1] ? $matches[1] : 'NONE');
-	printf "    delay '%s'\n", (defined $matches[2] ? $matches[2] : 'NONE');
-	printf "    rest '%s'\n", (defined $matches[3] ? $matches[3] : 'NONE');
-	printf "    elapsed: '%s'\n", (defined $matches[4] ? $matches[4] : 'NONE');
-}
-		}
-my $re6 = qr/^$patterns{'possible_pid_string'}$patterns{'possible_timestamp_string'}$mds3(.+)$/;
-my $re7 = qr/^($pps_str)?$patterns{'possible_timestamp_string'}($mds3)?(.+)$/;
-
-my $pps_str2 = "(?:($patterns{'digits_string'})(?: ))?";
-
-my $re8 = qr/$pps_str2$patterns{'possible_timestamp_string'}($mds3)?(.+)$/;
-my $ptss_str2;
-printf "re8: %s\n", $re8;
-
-printf "pps_str:  %s\n", $pps_str;
-printf "pps_str2:  %s\n", $pps_str2;
-printf "ptss_str:  %s\n", $patterns{'possible_timestamp_string'};
-printf "re8:       %s\n", $re8;
-
-		if ((my $foo1, my $foo2, my $foo3, my $rest1) = $trace_entry{'line'} =~ $re8) {
-			printf "match 3:\n";
-			printf "    full line: '%s'\n", $trace_entry{'line'};
-			printf "    pid: '%s'\n", (defined $foo1 ? $foo1 : 'NONE');
-			printf "    timestamp '%s'\n", (defined $foo2 ? $foo2 : 'NONE');
-			printf "    delay '%s'\n", (defined $foo3 ? $foo3 : 'NONE');
-			printf "    rest '%s'\n", (defined $rest1 ? $rest1 : 'NONE');
-		}
-	}
-
-	if ( ($old_pid_string, $old_timestamp_string, $old_delay_string, $trace_entry{'syscall'}, $trace_entry{'args'}, $trace_entry{'ret'}, my $old_elapsed_string) = $trace_entry{'line'} =~ $regexes{'syscall'}) {
+#	if ( ($old_pid_string, $old_timestamp_string, $old_delay_string, $trace_entry{'syscall'}, $trace_entry{'args'}, $trace_entry{'ret'}, my $old_elapsed_string) = $trace_entry{'line'} =~ $regexes{'syscall'}) {
+	if ( ($trace_entry{'syscall'}, $trace_entry{'args'}, $trace_entry{'ret'}) = $trace_entry{'line'} =~ $regexes{'new_syscall'}) {
 
 #		$trace_entry{'pid'} = trim($trace_entry{'pid'}) if defined($trace_entry{'pid'});
 #		$trace_entry{'timestamp'} = trim($trace_entry{'timestamp'}) if defined($trace_entry{'timestamp'});
@@ -2293,7 +2169,6 @@ printf "re8:       %s\n", $re8;
 			printf("%12s - %s\n", "ret", get_match_val($trace_entry{'ret'}));
 			printf("%12s - %s\n", "elapsed", get_match_val($trace_entry{'elapsed'}));
 		}
-
 
 		if (defined($syscall_functions{$trace_entry{'syscall'}})) {
 			$syscall_functions{$trace_entry{'syscall'}}->(\%trace_entry);
@@ -2433,11 +2308,13 @@ printf "didn't match: %s\n", $trace_entry{'line'};
 
 	add_syscall_stats(\%trace_entry);
 
-	if ($config{'debug'} >= 1) {
-		printf("<<<=== %s\n", $trace_entry{'orig_line'});
-		printf("===>>> %s\n", $trace_entry{'line'});
-	} else {
-		output_trace_entry(\%trace_entry);
+	if ($config{'output_lines'}) {
+		if ($config{'debug'} >= 1) {
+			printf("<<<=== %s\n", $trace_entry{'orig_line'});
+			printf("===>>> %s\n", $trace_entry{'line'});
+		} else {
+			output_trace_entry(\%trace_entry);
+		}
 	}
 }
 flush_trace_entries();
@@ -2448,4 +2325,4 @@ output_per_pid_stats() if ($config{'proc_stats'});
 display_pidtree() if $config{'pidtree'};
 
 
-print Dumper(\%tracking_data);
+#print Dumper(\%tracking_data);
