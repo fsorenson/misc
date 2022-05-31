@@ -68,6 +68,8 @@
 #include <sys/fcntl.h>
 #include <sys/ioctl.h>
 #include <libgen.h>
+#include <sys/sysmacros.h>
+
 
 #define BUF_ALIGN (1024UL)
 
@@ -107,6 +109,11 @@ struct test_info {
 	long block_size;
 	char *dir_path;
 	char *path;
+	int loop_count;
+	io_context_t io_ctx;
+	struct io_event *events;
+	struct iocb **iocbs;
+	int verbose;
 };
 //struct test_info *test_info;
 
@@ -158,7 +165,7 @@ int parse_sizes(struct test_info *test_info, int argc, char *argv[]) {
 	char *pbuf, *p, *pend;
 	int i = 0;
 
-	pbuf = size_str = strdup(argv[2]);
+	pbuf = size_str = strdup(argv[3]);
 	pend = size_str + strlen(size_str);
 
 	while ((p = strsep(&pbuf, ","))) {
@@ -178,9 +185,9 @@ int parse_sizes(struct test_info *test_info, int argc, char *argv[]) {
 
 			test_info->writes[i].size = strtoul(p, &endptr, 10);
 			if (test_info->writes[i].size) {
-				if (test_info->writes[i].size % test_info->block_size)
-					msg_exit(EXIT_FAILURE, "ERROR: write size '%lu' is not a multiple of the block size '%ld'\n",
-						test_info->writes[i].size, test_info->block_size);
+//				if (test_info->writes[i].size % test_info->block_size)
+//					msg_exit(EXIT_FAILURE, "ERROR: write size '%lu' is not a multiple of the block size '%ld'\n",
+//						test_info->writes[i].size, test_info->block_size);
 
 				if (*endptr == '@') {
 					test_info->writes[i].pos = strtoul(endptr + 1, NULL, 10);
@@ -277,22 +284,104 @@ void get_path(struct test_info *test_info, const char *path) {
 	free(tmp_path);
 }
 
+int do_one_test(struct test_info *test_info) {
+	int fd, ret = EXIT_FAILURE;
+	int i;
+
+	if ((fd = open(test_info->path, O_RDWR|O_CREAT|O_TRUNC|O_DIRECT, 0660)) == -1)
+		msg_exit(2, "Error creating file %s errno=%d %m\n", test_info->path, errno);
+
+
+	test_info->io_ctx = 0;
+	if ((ret = io_setup(test_info->write_count, &test_info->io_ctx)) != 0)
+		msg_exit(EXIT_FAILURE, "Error with io_setup: %m\n");
+
+
+
+	for (i = 0 ; i < test_info->write_count ; i++) {
+		test_info->iocbs[i] = &test_info->writes[i].iocb;
+		io_prep_pwrite(test_info->iocbs[i], fd, test_info->writes[i].buf, test_info->writes[i].size, test_info->writes[i].pos);
+	}
+
+	for (i = 0 ; i < test_info->write_count ; i++) {
+//		io_prep_pwrite(test_info->iocbs[i], fd, bufs[i], write_sizes[i], write_positions[i]);
+//		io_submit(test_info->io_ctx, 1, &test_info->iocbs[i]);
+//		io_submit(test_info->io_ctx, 1, test_info->writes[i].iocb);
+
+		if (test_info->writes[i].trunc_size)
+			ftruncate(fd, test_info->writes[i].trunc_size);
+
+		io_submit(test_info->io_ctx, 1, &test_info->iocbs[i]);
+//		printf("submitted io %d\n", i);
+	}
+
+/* ********** */
+	ret = io_getevents(test_info->io_ctx, test_info->write_count, test_info->write_count, test_info->events, NULL);
+
+	if (test_info->verbose)
+		printf("received %d events\n", ret);
+	io_destroy(test_info->io_ctx);
+	fsync(fd);
+	close(fd);
+
+	ret = EXIT_SUCCESS;
+	fd = open(test_info->path, O_RDONLY);
+	for (i = 0 ; i < test_info->write_count ; i++) {
+		int j;
+
+		for (j = 0 ; j < test_info->write_count ; j++) {
+			if (test_info->iocbs[i] == test_info->events[j].obj) {
+				if (test_info->verbose)
+					printf(" io %d (returned as event %d): %lu bytes at %lu: (0x%lx-0x%lx) ",
+						i, j, test_info->writes[i].size, test_info->writes[i].pos,
+						test_info->writes[i].pos, test_info->writes[i].pos + test_info->writes[i].size - 1);
+				if (test_info->writes[i].size == test_info->events[j].res) {
+					if (pread(fd, test_info->writes[i].buf, test_info->writes[i].size, test_info->writes[i].pos) != test_info->writes[i].size) {
+						printf("FAILURE\n");
+						ret = EXIT_FAILURE;
+						continue;
+					}
+					if (memchr(test_info->writes[i].buf, 0x00, test_info->writes[i].size) != 0) {
+						printf("FAILURE\n");
+						ret = EXIT_FAILURE;
+						continue;
+					}
+
+					printf("SUCCESS\n");
+				} else if (IS_ERR(test_info->events[j].res)) {
+					int res = 0 - PTR_ERR(test_info->events[j].res);
+					printf("FAILURE (%d: %s)\n", res, strerror(res));
+					ret = EXIT_FAILURE;
+					continue;
+				} else {
+					printf("FAILURE (got %lu bytes)\n", test_info->events[j].res);
+					ret = EXIT_FAILURE;
+					continue;
+				}
+			}
+		}
+	}
+	return ret;
+}
+
+
+
 int main(int argc, char *argv[]) {
 //	unsigned long sleep_time = 0;
 //	unsigned long *write_positions;
 
 	struct test_info test_info;
-	io_context_t io_ctx = 0;
-	struct io_event *events;
-	struct iocb **iocbs;
-	int fd, ret;
+	int ret;
 	int i;
 
-	if (argc != 3)
-		msg_exit(1, "Usage: %s <filename> <size>[,<size>[,<size>]]\n", argv[0]);
+	if (argc != 4)
+		msg_exit(1, "Usage: %s <loop_count> <filename> <size>[,<size>[,<size>]]\n", argv[0]);
 
 	memset(&test_info, 0, sizeof(struct test_info));
-	test_info.path = argv[1];
+
+	test_info.verbose = 1;
+	test_info.loop_count = strtol(argv[1], NULL, 10);
+	test_info.path = argv[2];
 
 	get_path(&test_info, test_info.path);
 	get_blocksize(&test_info);
@@ -300,34 +389,48 @@ int main(int argc, char *argv[]) {
 	if (parse_sizes(&test_info, argc, argv) < 1)
 		msg_exit(EXIT_FAILURE, "ERROR: 0 valid write sizes found\nUsage: %s <filename> <size>[,<size>[,<size>]]\n", argv[0]);
 
+
+	test_info.events = calloc(sizeof(struct io_event), test_info.write_count);
+	test_info.iocbs = malloc(sizeof(struct iocb *) * test_info.write_count);
+
+	for (i = 0 ; i < test_info.loop_count ; i++) {
+		if ((ret = do_one_test(&test_info)) == EXIT_FAILURE)
+			break;
+	}
+
+
+	if (ret == EXIT_SUCCESS)
+		msg_exit(EXIT_SUCCESS, "SUCCESS\n");
+	else
+		msg_exit(EXIT_FAILURE, "FAILURE\n");
+
+
+#if 0
 	if ((fd = open(test_info.path, O_RDWR|O_CREAT|O_TRUNC|O_DIRECT, 0660)) == -1)
 		msg_exit(2, "Error creating file %s errno=%d %m\n", test_info.path, errno);
 
 
-	if ((ret = io_setup(test_info.write_count, &io_ctx)) != 0)
-		msg_exit(EXIT_FAILURE, "Error with io_setup: %m\n");
-
-	events = calloc(sizeof(struct io_event), test_info.write_count);
-	iocbs = malloc(sizeof(struct iocb *) * test_info.write_count);
 
 	for (i = 0 ; i < test_info.write_count ; i++) {
-		iocbs[i] = &test_info.writes[i].iocb;
-		io_prep_pwrite(iocbs[i], fd, test_info.writes[i].buf, test_info.writes[i].size, test_info.writes[i].pos);
+		test_info.iocbs[i] = &test_info.writes[i].iocb;
+		io_prep_pwrite(test_info.iocbs[i], fd, test_info.writes[i].buf, test_info.writes[i].size, test_info.writes[i].pos);
 	}
 
 	for (i = 0 ; i < test_info.write_count ; i++) {
-//		io_prep_pwrite(iocbs[i], fd, bufs[i], write_sizes[i], write_positions[i]);
-//		io_submit(io_ctx, 1, &iocbs[i]);
+//		io_prep_pwrite(test_info.iocbs[i], fd, bufs[i], write_sizes[i], write_positions[i]);
+//		io_submit(io_ctx, 1, &test_info.iocbs[i]);
 //		io_submit(io_ctx, 1, test_info.writes[i].iocb);
 
 		if (test_info.writes[i].trunc_size)
 			ftruncate(fd, test_info.writes[i].trunc_size);
 
-		io_submit(io_ctx, 1, &iocbs[i]);
+		io_submit(io_ctx, 1, &test_info.iocbs[i]);
 //		printf("submitted io %d\n", i);
 	}
+#endif
 
 /* ********** */
+#if 0
 	ret = io_getevents(io_ctx, test_info.write_count, test_info.write_count, events, NULL);
 
 	printf("received %d events\n", ret);
@@ -341,7 +444,7 @@ int main(int argc, char *argv[]) {
 		int j;
 
 		for (j = 0 ; j < test_info.write_count ; j++) {
-			if (iocbs[i] == events[j].obj) {
+			if (test_info.iocbs[i] == events[j].obj) {
 				printf(" io %d (returned as event %d): %lu bytes at %lu: (0x%lx-0x%lx) ",
 					i, j, test_info.writes[i].size, test_info.writes[i].pos,
 					test_info.writes[i].pos, test_info.writes[i].pos + test_info.writes[i].size - 1);
@@ -376,6 +479,7 @@ int main(int argc, char *argv[]) {
 		msg_exit(EXIT_SUCCESS, "SUCCESS\n");
 	else
 		msg_exit(EXIT_FAILURE, "FAILURE\n");
+#endif
 }
 
 #if 0
