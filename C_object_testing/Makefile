@@ -1,6 +1,6 @@
 CC=gcc
 
-all: test12
+all: test12 c_meld
 #all: c_obj_1 test7 test8 test9 test10 test11
 
 
@@ -114,6 +114,8 @@ test12: test12.c libtest12.so
 #gcc -g test9.c test9_lib.o test9_lib_abs.o -o test9 -Wl,-T -Wl,test9_merged.lds
 
 
+c_meld: c_meld.c
+	gcc c_meld.c -o c_meld -fverbose-asm -fms-extensions -fdiagnostics-show-location=every-line -fdiagnostics-show-option -ggdb3 -fvar-tracking -fvar-tracking-assignments -frecord-gcc-switches -gno-strict-dwarf -Wa,--gdwarf-sections -grecord-gcc-switches -fno-omit-frame-pointer -Wl,-q -rdynamic -z nocombreloc -z nocopyreloc -fPIC
 
 
 
