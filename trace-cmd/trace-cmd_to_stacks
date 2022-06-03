@@ -1,0 +1,109 @@
+#!/usr/bin/env -S awk -f
+BEGIN {
+	depth = 0
+}
+func push(fn) {
+#	tmp_stk = stack()
+	for (push_i = 0 ; push_i < depth ; push_i++) {
+		if (ary[push_i] == fn) {
+			printf "dropping recursive %s from stack, and truncating: %s", fn, stack()
+			depth = push_i
+			printf "  stack now %s\n", stack()
+		}
+	}
+	ary[depth] = fn
+	depth++
+}
+func pop() {
+	depth--
+	if (depth < 0) {
+		depth = 0
+		return ""
+	}
+	return ary[depth]
+}
+func stack() {
+	ret = ""
+	for (stack_i = 0 ; stack_i < depth ; stack_i++) {
+		if (stack_i == 0) { ret = ary[0] }
+		else { ret = ret" -> "ary[stack_i] }
+	}
+	return ret
+}
+
+(/DROPPED/ || /^$/) {next}
+(/^cpus=/ || / is empty$/) {next}
+
+{
+	ts_s = substr($3, 1, index($3, ".") - 1)
+	ts_us = substr($3, index($3, ".") + 1)
+
+	if (last_ts_s == 0) {
+		last_ts_s = ts_s
+		last_ts_us = ts_us
+	}
+
+	delta_s = ts_s - last_ts_s
+	delta_us = ts_us - last_ts_us
+	if (deltz_us < 0) {
+		delta_s--
+		delta_us += 1000000
+	}
+
+	last_ts_s = ts_s
+	last_ts_us = ts_us
+
+	if ($4 == "funcgraph_entry:" && $NF == "{") {
+	# rm-25238 [004] 1653677103.118146: funcgraph_entry: | __pagevec_lookup() {
+		f = $(NF-1)
+		new_fn = substr(f, 1, length(f) - 2)
+		push(new_fn)
+
+		dir = "> "
+		us = ""
+		stk = stack()
+
+
+next
+
+	} else if ($4 == "funcgraph_entry:") {
+	# rm-25238 [004] 1653677103.118146: funcgraph_entry: 0.930 us   |  __find_get_pages();
+		push(substr($NF, 1, length($NF) - 3))
+
+		dir = "><"
+		us = $(NF-3)
+		us_a = substr(us, 1, index(us, ".") - 1)
+		us_b = substr(us, index(us, ".") + 1)
+		ns = (us_a * 1000) + us_b
+
+		stk = stack()
+		pop()
+	} else {
+	# rm-25238 [004] 1653677103.118147: funcgraph_exit:   1.279 us   |  } /* __pagevec_lookup */
+
+		dir = " <"
+		us = $(NF-6)
+		stk = stack()
+		pop()
+
+		us_a = substr(us, 1, index(us, ".") - 1)
+		us_b = substr(us, index(us, ".") + 1)
+		ns = (us_a * 1000) + us_b
+	}
+
+#	printf "%2s %10d.%06d %2d.%06d  %s\n", dir, ts_s, ts_us, delta_s, delta_us, stk
+	printf "%2s %10s %s\n", dir, us, stk
+
+	last_ts_s = ts_s
+	last_ts_us = ts_us
+
+	counts[dir" "stk]++
+	times[dir" "stk] += ns
+}
+END {
+	printf "\n\ntotals\n"
+	printf "%6s  %6s  %s\n", "count", "time", "stack"
+	for (l in counts) {
+		printf  "%6d  %6d  %s\n", counts[l], times[l], l
+	}
+}
