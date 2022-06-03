@@ -431,6 +431,21 @@ sub get_fd_path {
 		get_match_val($pid), $fd, $result) if ($config{'debug'} >= 1);
 	return $result;
 }
+sub cleanup_path {
+	my $path = shift;
+
+	my @path_components = split('/', $path);
+	my @new_path_components;
+	for my $ele (@path_components) {
+		if ($ele eq "..") { pop @new_path_components; }
+		elsif ($ele eq "") {}
+		else { push @new_path_components, $ele; }
+	}
+	my $new_path = '/' . join '/', @new_path_components;
+
+	return $new_path;
+}
+
 sub get_atpath {
 	my $pid = shift;
 	my $dfd = shift;
@@ -451,19 +466,19 @@ sub get_atpath {
 			my $cwd = get_cwd($pid);
 
 			return $cwd if ($cwd ne "" and $path eq ".");
-			return $cwd . "/" . $path if ($cwd ne "");
-			return $path;
+			return cleanup_path($cwd . "/" . $path) if ($cwd ne "");
+			return cleanup_path $path;
 		}
 
 		# dirfd is not AT_FDCWD and the pathname given in pathname is relative, then it is interpreted relative to the directory referred to by the file descriptor dirfd (rather than relative to the current working directory of the calling process, as is done by open() for a relative pathname).
 
 		my $fd_path = get_fd_path($pid, $dfd);
 		return $fd_path if ($fd_path ne "" and $path eq ".");
-		return $fd_path . "/" . $path if ($fd_path ne "");
+		return cleanup_path($fd_path . "/" . $path) if ($fd_path ne "");
 
 		# return one of these, depending on which we decide we like best
-		return "<" . $dfd . ">/" . $path;
-		return $path;
+		return "<" . $dfd . ">/" . cleanup_path($path);
+#		return cleanup_path($path);
 	};
 
 	my $result = _get_atpath($pid, $dfd, $path);
