@@ -19,6 +19,7 @@ my %config = (
 	'expand_getdents|expand-getdents' => false, # like strace_getdents awk script -- not very reversible, though
 	'output_ls|output-ls' => false, # gather file & directory information from getdents, *stat*, readlink* calls, and output at end as if from 'ls -alR'
 	'combined_stats' => false, # syscall stats (ala '-c')
+	'times' => false, # output only start & end times
 	'proc_stats' => false, # output per-process syscall stats (rather than combined '-c' stats)
 	'show_delays' => false, # output relative delay between syscall completion and next syscall start, for each pid
 	'pidtree' => false, # gather and output tree of pids
@@ -47,6 +48,14 @@ GetOptions(
 
 	'output_lines|output-lines' => sub { $config{'output_lines'} = true; },
 	'nooutput_lines|nooutput-lines' => sub { $config{'output_lines'} = false; },
+
+	'times' => sub {
+		$config{'times'} = true;
+		$config{'output_lines'} = false;
+		$config{'show_elapsed'} = false;
+		$config{'show_timestamps'} = false;
+		$config{'combined_stats'} = false;
+	},
 
 	'stats' => sub { $config{'combined_stats'} = true; },
 	'proc_stats|proc-stats' => sub { $config{'proc_stats'} = true },
@@ -107,9 +116,12 @@ if ($config{'debug'} >= 1) {
 	printf("config{'show_execnames'}: $config{'show_execnames'}\n");
 }
 
-
 if ($config{'output_lines'} == false) { # if suppressing normal output, make sure we output at least stats or pidtree
-	$config{'combined_stats'} = true if (!$config{'proc_stats'} && !$config{'combined_stats'} && !$config{'pidtree'});
+	$config{'combined_stats'} = true if (
+		!$config{'proc_stats'} &&
+		!$config{'combined_stats'} &&
+		!$config{'pidtree'} &&
+		!$config{'times'});
 }
 
 STDOUT->autoflush(1);
@@ -926,9 +938,34 @@ sub reconstruct_line {
 	$ret .= sprintf(" <%s>", $trace_entry->{'elapsed'}) if ($config{'show_elapsed'} && $trace_entry->{'elapsed'} ne '');
 	return $ret;
 }
+sub timestamp_to_seconds {
+	my $str = shift;
+
+	return 0 if !defined $str;
+
+	if (my ($epoch_str, $subsec) = $str =~ /($patterns{'epoch_time_string'})($patterns{'time_possible_subseconds'})/) {
+		return sprintf("%s%s", $epoch_str, $subsec) if defined $subsec;
+		return $epoch_str;
+	}
+	if (my ($h, $m, $s, $subsec) = $str =~ /($patterns{'hours_string'}):($patterns{'minutes_string'}):($patterns{'seconds_string'})($patterns{'time_possible_subseconds'})/) {
+
+		my $ts_sec = ((($h * 60) + $m) * 60) + $s;
+		return sprintf("%d%s", $ts_sec, $subsec) if defined $subsec;
+		return sprintf("%d", $ts_sec);
+	}
+	return $str;
+}
 sub extract_metadata {
 	my ($trace_entry) = @_;
-	if (($trace_entry->{'pid'}, $trace_entry->{'timestamp'}, $trace_entry->{'delay'}, my $op_info, $trace_entry->{'elapsed'}) = $trace_entry->{'line'} =~ $regexes{'extract_metadata'}) {
+	if (
+		($trace_entry->{'pid'},
+		$trace_entry->{'timestamp'},
+		$trace_entry->{'delay'},
+		my $op_info,
+		$trace_entry->{'elapsed'}) = $trace_entry->{'line'} =~ $regexes{'extract_metadata'}) {
+
+		$tracking_data{'trace_stats'}{'start_time'} = $trace_entry->{'timestamp'} if (! defined $tracking_data{'trace_stats'}{'start_time'});
+		$tracking_data{'trace_stats'}{'end_time'} = $trace_entry->{'timestamp'};
 
 #	printf "    delay '%s'\n", (defined $trace_entry->{'delay'} ? $trace_entry->{'delay'} : 'NONE');
 #if (my @matches = $trace_entry->{'line'} =~ $regexes{'extract_metadata'}) {
@@ -2256,6 +2293,8 @@ printf("parsing %s\n", $trace_entry{'line'}) if ($config{'debug'} >= 1);
 
 	extract_metadata(\%trace_entry); # extract necessary metadata from the line
 
+next if ($config{'times'});
+
 #	if ( ($old_pid_string, $old_timestamp_string, $old_delay_string, $trace_entry{'syscall'}, $trace_entry{'args'}, $trace_entry{'ret'}, my $old_elapsed_string) = $trace_entry{'line'} =~ $regexes{'syscall'}) {
 	if ( ($trace_entry{'syscall'}, $trace_entry{'args'}, $trace_entry{'ret'}) = $trace_entry{'line'} =~ $regexes{'new_syscall'}) {
 
@@ -2444,10 +2483,19 @@ printf "didn't match: %s\n", $trace_entry{'line'};
 }
 flush_trace_entries();
 
+
+if ($config{'times'}) {
+	printf "start time: %s\n", $tracking_data{'trace_stats'}{'start_time'};
+	printf "end time: %s\n", $tracking_data{'trace_stats'}{'end_time'};
+	my $sts = timestamp_to_seconds($tracking_data{'trace_stats'}{'start_time'});
+	my $ets = timestamp_to_seconds($tracking_data{'trace_stats'}{'end_time'});
+
+	printf "elapsed time: %f\n", $ets - $sts;
+}
+
 compute_overall_stats();
 output_overall_stats() if ($config{'combined_stats'});
 output_per_pid_stats() if ($config{'proc_stats'});
 display_pidtree() if $config{'pidtree'};
-
 
 #print Dumper(\%tracking_data);
