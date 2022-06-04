@@ -1,0 +1,108 @@
+#!/usr/bin/perl -w
+
+#	Frank Sorenson <sorenson@redhat.com>, 2022
+#
+#	script to read and format xfs stats found in /sys/fs/xfs/<device>/stats/stats
+
+use strict;
+use warnings;
+
+my %btree_stats_names = (
+	0 => "lookup",
+	1 => "compare",
+	2 => "insrec",
+	3 => "delrec",
+	4 => "newroot",
+	5 => "killroot",
+	6 => "increment",
+	7 => "decrement",
+	8 => "lshift",
+	9 => "rshift",
+	10 => "split",
+	11 => "join",
+	12 => "alloc",
+	13 => "free",
+	14 => "moves",
+);
+
+my %stat_groups = (
+	"extent_alloc" => [ "allocx", "allocb", "freex", "freeb" ],
+
+	"abt" => [ "lookup", "compare", "insrec", "delrec" ],
+	"abtb2" => [ "lookup", "compare", "insrec", "delrec", "newroot", "killroot", "increment", "decrement", "lshift", "rshift", "split", "join", "alloc", "free", "moves" ],
+	"abtc2" => [ "lookup", "compare", "insrec", "delrec", "newroot", "killroot", "increment", "decrement", "lshift", "rshift", "split", "join", "alloc", "free", "moves" ],
+	"attr" => [ "get", "set", "remove", "list" ],
+	"blk_map" => [ "blk_mapr", "blk_mapw", "blk_unmap", "add_exlist", "del_exlist", "look_exlist", "cmp_exlist" ],
+	"bmbt" => [ "lookup", "compare", "insrec", "delrec" ],
+	"bmbt2" => [ "lookup", "compare", "insrec", "delrec", "newroot", "killroot", "increment", "decrement", "lshift", "rshift", "split", "join", "alloc", "free", "moves" ],
+	"buf" => [ "get", "create", "get_locked", "get_locked_waited", "busy_locked", "miss_locked", "page_retries", "page_found", "get_read" ],
+
+	"dir" => [ "lookup", "create", "remove", "getdents" ],
+	"fibt2" => [ "lookup", "compare", "insrec", "delrec", "newroot", "killroot", "increment", "decrement", "lshift", "rshift", "split", "join", "alloc", "free", "moves" ],
+	"ibt2" => [ "lookup", "compare", "insrec", "delrec", "newroot", "killroot", "increment", "decrement", "lshift", "rshift", "split", "join", "alloc", "free", "moves" ],
+	"icluster" => [ "iflush_count", "icluster_flushcnt", "icluster_flushinode" ],
+	"ig" => [ "attempts", "found", "frecycle", "missed", "dup", "reclaims", "attrchg" ],
+	"log" => [ "writes", "blocks", "noiclogs", "force", "force_sleep" ],
+
+	"push_ail" => [ "try_logspace", "sleep_logspace", "push", "success", "pushbuf", "pinned","locked", "flushing", "restarts", "flush" ],
+	"qm" => [ "dquot", "dquot_unused", "dqreclaims", "dqreclaim_misses", "dquot_dups", "dqcachemisses", "dqcachehits", "dqwants" ],
+	"rw" => [ "write_calls", "read_calls" ],
+	"trans" => [ "sync", "async", "empty" ],
+	"vnodes" => [ "active", "alloc", "get", "hold", "rele", "reclaim", "remove", "free" ],
+# /* # vnodes not on free lists */
+# /* # times vn_alloc called */
+# /* # times vn_get called */
+# /* # times vn_hold called */
+# /* # times vn_rele called */
+# /* # times vn_reclaim called */
+# /* # times vn_remove called */
+# /* # times vn_free called */
+
+	"xpc" => [ "xstrat_bytes", "write_bytes", "read_bytes" ], # extra precision counters
+	"xstrat" => [ "quick", "split" ],
+);
+
+sub max {
+	my $v1 = shift;
+	my $v2 = shift;
+	return $v1 > $v2 ? $v1 : $v2;
+}
+
+while (<>) {
+	chomp;
+	my $line = $_;
+
+	my @vals = split(" ", $line);
+	my $group_name = shift @vals;
+	my @group_fields = $stat_groups{$group_name};
+
+	printf "group: %s\n", $group_name;
+
+	my $field_count = scalar @vals;
+	if (defined $stat_groups{$group_name}) {
+
+		my $max_label_line_width = 90;
+		my @label_lines;
+		my @val_lines;
+		my $current_width = 0;
+		my $current_line = 0;
+		for (0 .. ($field_count - 1)) {
+			my $width = max(length(sprintf("%s", $stat_groups{$group_name}[$_])) + 2, length(sprintf("%d", $vals[$_])) + 2);
+
+			if ($current_width > 0 && $current_width + $width > $max_label_line_width) {
+				$current_line++;
+				$current_width = 0;
+			}
+			$label_lines[$current_line] .= sprintf("%*s", $width, $stat_groups{$group_name}[$_]);
+			$val_lines[$current_line] .= sprintf("%*d", $width, $vals[$_]);
+			$current_width += $width;
+		}
+		for (0 .. $current_line) {
+			printf "    %s\n", $label_lines[$_];
+			printf "    %s\n", $val_lines[$_];
+		}
+	} else {
+
+		printf "    %s\n", join(" ", @vals);
+	}
+}
