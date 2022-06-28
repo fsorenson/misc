@@ -1359,12 +1359,17 @@ $patterns{'possible_renameat2_flags'} = "(?:, $patterns{'renameat2_flags'})?",
 	'read', 'readv', 'pread', 'preadv', 'preadv2', 'pread64',
 	'write', 'writev', 'pwrite', 'pwritev', 'pwritev2', 'pwrite64',
 
+	'inotify_add_watch', 'inotify_rm_watch',
+
 	"lseek", '_llseek',
 	"fadvise64", 'fallocate',
 	"fsync", "fdatasync",
 	"ioctl",
 	'epoll_wait', # TODO: anything to parse?
 	'epoll_ctl', # TODO: 3rd arg 'fd'
+	'epoll_pwait', # TODO: other fd args
+	'epoll_pwait2', # TODO: other fd args
+
 	'splice', # TODO: 1st arg 'fd_in', 3rd arg 'fd_out'
 	'getpeername',
 	'timerfd_settime',
@@ -1409,6 +1414,10 @@ $patterns{'possible_renameat2_flags'} = "(?:, $patterns{'renameat2_flags'})?",
 	# TODO:
 	'poll', 'select',
 
+	'io_getevents', # TODO: parse args for fds
+	'io_submit', # TODO: parse args for fds
+
+
 	"alarm",
 	"chmod",
 	"get_mempolicy",
@@ -1423,7 +1432,10 @@ $patterns{'possible_renameat2_flags'} = "(?:, $patterns{'renameat2_flags'})?",
 	"getsid",
 	"getsockname",
 	"getsockopt",
+	'getxattr',
 	"keyctl",
+	'listxattr',
+	'mbind',
 	'mlock',
 	"nanosleep",
 	"pipe2",
@@ -1456,12 +1468,15 @@ $patterns{'possible_renameat2_flags'} = "(?:, $patterns{'renameat2_flags'})?",
 	"setreuid",
 	'setsid',
 	"setuid",
+	'setxattr',
 	"shmat",
 	"shmctl",
 	"shmdt",
 	"shmget",
 	"sigaltstack",
 	"sysinfo",
+	"symlink", # TODO: relative paths
+	"symlinkat", # TODO: 2nd arg is a dfd
 	'times',
 	"tgkill",
 	"umask",
