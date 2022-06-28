@@ -1937,6 +1937,29 @@ sub syscall_renameat {
 		}
 	} else { printf("renameat(2) syscall, but args '%s' didn't match the regex '%s'\n", $trace_entry->{'args'}, $regexes{'renameat'}); }
 }
+sub syscall_inotify_init {
+	my ($trace_entry) = @_;
+	# int inotify_init(void);
+	# int inotify_init1(int flags);
+#469426 1655778774.508576 inotify_init1(IN_CLOEXEC) = 18<anon_inode:inotify> <0.000054>
+	if (my ($flags) = $trace_entry->{'args'} =~ /^(.+)?$/) {
+		$flags = defined_or_default($flags, ""); # if set, may be IN_NONBLOCK|IN_CLOEXEC
+		if (! defined $flags) { $flags = "" };
+
+		if (!ret_is_error($trace_entry->{'ret'}) and my ($fd, $fd_path) = $trace_entry->{'ret'} =~ $regexes{'return_fd_path'}) {
+			store_cloexec_fd($trace_entry->{'pid'}, $fd) if ($flags =~ /\bIN_CLOEXEC\b/);
+			if (!defined($fd_path) || $fd_path eq "") {
+				$fd_path = "anon_inode:inotofy";
+				$trace_entry->{'ret'} = sprintf("%d<%s>", $fd, $fd_path);
+			}
+			store_fd_name($trace_entry->{'pid'}, $fd, $fd_path);
+		} else {
+			printf "did not match the return_fd_path\n";
+		}
+	} else {
+		printf("inotify_init, but didn't match the re for args '%s'\n", $trace_entry->{'args'});
+	}
+}
 sub syscall_chroot {
 	my ($trace_entry) = @_;
 
@@ -2091,6 +2114,9 @@ sub syscall_kill {
 	'socketpair' => \&syscall_socketpair,
 	'timerfd_create' => \&syscall_timerfd_create,
 	'epoll_create1' => \&syscall_epoll_create1,
+
+	'inotify_init' => \&syscall_inotify_init,
+	'inotify_init1' => \&syscall_inotify_init,
 
 	'chroot' => \&syscall_chroot,
 
