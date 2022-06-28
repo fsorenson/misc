@@ -1,0 +1,798 @@
+#!/usr/bin/perl -w
+
+use strict;
+use warnings;
+
+sub trim {
+	my $s = shift;
+	$s =~ s/^\s+|\s+$//g;
+	return $s
+}
+
+my %fh_names;
+my %current_fh_names;
+#my %fh_paths;
+
+my %fh_parents;
+my %current_fh_parents;
+my %all_fhs;
+
+my @temporaries;
+my @historical;
+
+my %pending; # pending rpc xids
+my %in_progress;
+
+
+my %nfs_mappings = (
+	"nfs.procedure_v3" => {
+		0 => "NULL",
+		1 => "GETATTR",
+		2 => "SETATTR",
+		3 => "LOOKUP",
+		4 => "ACCESS",
+		5 => "READLINK",
+		6 => "READ",
+		7 => "WRITE",
+		8 => "CREATE",
+		9 => "MKDIR",
+		10 => "SYMLINK",
+		11 => "MKNOD",
+		12 => "REMOVE",
+		13 => "RMDIR",
+		14 => "RENAME",
+		15 => "LINK",
+		16 => "READDIR",
+		17 => "READDIRPLUS",
+		18 => "FSSTAT",
+		19 => "FSINFO",
+		20 => "PATHCONF",
+		21 => "COMMIT"},
+	"nfs.opcode" => {
+		3 => "ACCESS",
+		4 => "CLOSE",
+		5 => "COMMIT",
+		6 => "CREATE",
+		7 => "DELEGPURGE",
+		8 => "DELEGRETURN",
+		9 => "GETATTR",
+		10 => "GETFH",
+		11 => "LINK",
+		12 => "LOCK",
+		13 => "LOCKT",
+		14 => "LOCKU",
+		15 => "LOOKUP",
+		16 => "LOOKUPP",
+		17 => "NVERIFY",
+		18 => "OPEN",
+		19 => "OPENATTR",
+		20 => "OPEN_CONFIRM",
+		21 => "OPEN_DOWNGRADE",
+		22 => "PUTFH",
+		23 => "PUTPUBFH",
+		24 => "PUTROOTFH",
+		25 => "READ",
+		26 => "READDIR",
+		27 => "READLINK",
+		28 => "REMOVE",
+		29 => "RENAME",
+		30 => "RENEW",
+		31 => "RESTOREFH",
+		32 => "SAVEFH",
+		33 => "SECINFO",
+		34 => "SETATTR",
+		35 => "SETCLIENTID",
+		36 => "SETCLIENTID_CONFIRM",
+		37 => "VERIFY",
+		38 => "WRITE",
+		39 => "RELEASE_LOCKOWNER",
+		40 => "BACKCHANNEL_CTL",
+		41 => "BIND_CONN_TO_SESSION",
+		42 => "EXCHANGE_ID",
+		43 => "CREATE_SESSION",
+		44 => "DESTROY_SESSION",
+		45 => "FREE_STATEID",
+		46 => "GET_DIR_DELEGATION",
+		47 => "GETDEVINFO",
+		48 => "GETDEVLIST",
+		49 => "LAYOUTCOMMIT",
+		50 => "LAYOUTGET",
+		51 => "LAYOUTRETURN",
+		52 => "SECINFO_NO_NAME",
+		53 => "SEQUENCE",
+		54 => "SET_SSV",
+		55 => "TEST_STATEID",
+		56 => "WANT_DELEG",
+		57 => "DESTROY_CLIENTID",
+		58 => "RECLAIM_COMPLETE",
+		59 => "ALLOCATE",
+		60 => "COPY",
+		61 => "COPY_NOTIFY",
+		62 => "DEALLOCATE",
+		63 => "IO_ADVISE",
+		64 => "LAYOUTERROR",
+		65 => "LAYOUTSTATS",
+		66 => "OFFLOAD_CANCEL",
+		67 => "OFFLOAD_STATUS",
+		68 => "READ_PLUS",
+		69 => "SEEK",
+		70 => "WRITE_SAME",
+		71 => "CLONE",
+		72 => "GETXATTR",
+		73 => "SETXATTR",
+		74 => "LISTXATTRS",
+		75 => "REMOVEXATTR",
+		10044 => "ILLEGAL"},
+);
+
+
+sub collapse_var {
+	my $str = shift;
+	my $ret;
+
+	my @vars = split(/,/, $str);
+	foreach my $var (@vars) {
+		if (!defined $ret) { $ret = $var; }
+		elsif ($ret ne $var) { return "MIXED"; }
+		else { }
+	}
+	return $ret;
+}
+
+sub all_nfs_status3_success {
+	return 1 if (collapse_var($_[0]) == 0);
+	return 0;
+}
+sub all_nfsstat4_success {
+	return 1 if (collapse_var($_[0]) == 0);
+	return 0;
+}
+#sub all_nfs_status3_success {
+#	my $nfs_status3_str = shift;
+#	return 1 if $nfs_status3_str eq "";
+#	foreach my $status3 (split(/,/, $nfs_status3_str)) {
+#		return 0 if $status3 != 0;
+#	}
+#	return 1;
+#}
+#sub all_nfsstat4_success {
+#	my $nfsstat4_str = shift;
+#	return 1 if $nfsstat4_str eq "";
+#	foreach my $nfsstat4 (split(/,/, $nfsstat4_str)) {
+#		return 0 if $nfsstat4 != 0;
+#	}
+#	return 1;
+#}
+
+sub check_parent {
+	my $frame = shift;
+	my $dir_fh = shift;
+	my $fh = shift;
+
+	if (defined $current_fh_parents{$fh}) {
+		return if ($current_fh_parents{$fh} eq $dir_fh);
+#		if ($fh_parents{$fh} ne $dir_fh) {
+#			printf "***** WARNING: frame %d - parent change for fh %s (%s): %s -> %s\n", $frame, $fh, $fh_names{$fh}, $current_fh_parents{$fh}, $dir_fh;
+push @historical, sprintf("frame %d - parent change for fh %s (%s): %s -> %s\n", $frame, $fh, $fh_names{$fh}, $current_fh_parents{$fh}, $dir_fh);
+
+#			$fh_parents{$fh} .= " -> " . $dir_fh;
+			$fh_parents{$fh} = $dir_fh;
+			$current_fh_parents{$fh} = $dir_fh;
+#		}
+	} else {
+#		printf "%s/%s - %s\n", $dir_fh, $fh, $name;
+#		printf "%s/%s - %s\n", $dir_fh, $fh, $current_fh_names{$fh};
+		if (defined $current_fh_names{$fh}) {
+			printf "%s/%s - %s\n", $dir_fh, $fh, $current_fh_names{$fh};
+		} else {
+			printf "%s/%s\n", $dir_fh, $fh;
+		}
+		$fh_parents{$fh} = $dir_fh;
+		$current_fh_parents{$fh} = $dir_fh;
+	}
+}
+sub check_name {
+	my $frame = shift;
+	my $fh = shift;
+	my $name = shift;
+
+	return if (defined $current_fh_names{$fh} && $current_fh_names{$fh} eq $name);
+#	if (defined $fh_names{$fh} && $fh_names{$fh} ne $name) {
+	if (defined $current_fh_names{$fh} && $current_fh_names{$fh} ne $name) {
+#		printf "***** WARNING: frame %d - name change for fh %s: %s -> %s\n", $frame, $fh, $current_fh_names{$fh}, $name;
+#		$fh_names{$fh} .= " -> " . $name;
+		push @historical, sprintf("frame %d - name change for fh %s: %s -> %s\n", $frame, $fh, $current_fh_names{$fh}, $name);
+		$fh_names{$fh} = $name;
+	} else {
+		$fh_names{$fh} = $name;
+	}
+	$current_fh_names{$fh} = $name;
+	$all_fhs{$fh} = $fh;
+}
+sub check_parent_and_name {
+	my $frame = shift;
+	my $dir_fh = shift;
+	my $fh = shift;
+	my $name = shift;
+
+printf "checking parent and name for fh %s\n", $fh;
+
+	check_parent($frame, $dir_fh, $fh);
+
+	check_name($frame, $fh, $name);
+
+	return;
+
+	if (defined $fh_parents{$fh}) {
+		return if ($fh_parents{$fh} eq $dir_fh && $fh_names{$fh} eq $name);
+		if ($fh_names{$fh} ne $name) {
+			printf "***** WARNING: frame %d - name change for fh %s/%s: %s -> %s\n", $frame, $dir_fh, $fh, $fh_names{$fh}, $name;
+			$fh_names{$fh} .= " -> " . $name;
+		}
+		if ($fh_parents{$fh} ne $dir_fh) {
+			printf "***** WARNING: frame %d - parent change for fh %s (%s): %s -> %s\n", $frame, $fh, $fh_names{$fh}, $fh_parents{$fh}, $dir_fh;
+			$fh_parents{$fh} .= " -> " . $dir_fh;
+		}
+#	} elsif (!defined $fh_parents{$fh}) {
+	} else {
+		printf "%s/%s - %s\n", $dir_fh, $fh, $name;
+
+		$fh_parents{$fh} = $dir_fh;
+		$fh_names{$fh} = $name;
+#		$all_fhs{$fh} = $fh;
+	}
+	$all_fhs{$fh} = $fh;
+}
+my %single_fh_opcodes = (
+	"53,22,3,9" => "SEQUENCE,PUTFH,ACCESS",
+	"53,22,4" => "SEQUENCE,PUTHF,CLOSE",
+	"53,22,5" => "SEQUENCE,PUTFH,COMMIT",
+	"53,22,9" => "SEQUENCE,PUTFH,GETATTR",
+	"53,22,9,4" => "SEQUENCE,PUTFH,GETATTR,CLOSE",
+	"53,22,9,8" => "SEQUENCE,PUTFH,GETATTR,DELEGRETURN",
+	"53,22,18,3,9" => "SEQUENCE,PUTFH,OPEN,ACCESS", # open of just directory handle?
+	"53,22,25" => "SEQUENCE,PUTFH,READ",
+#	"53,22,28" => "SEQUENCE,PUTFH,REMOVE",
+	"53,22,34,9" => "SEQUENCE,PUTFH,SETATTR,GETATTR",
+	"53,22,38,9" => "SEQUENCE,PUTFH,WRITE,GETATTR",
+	"53,22,38" => "SEQUENCE,PUTFH,WRITE",
+
+#17131  15.775161   10.47.4.15 → 10.47.4.102  NFS 390 V4 Call (Reply In 17132) SEQUENCE | PUTFH | OPEN DH: 0xa9d699dd/global.tmp | GETFH | ACCESS FH: 0x00000000, [Check: RD MD XT XE] | GETATTR
+#***** WARNING: no match: 17132	1	53,22,18,10,3,9	0,0,0,0,0,0,0	global.tmp,global.tmp	0x7f6b77bd,0x38b2f54a	V4 Reply (Call In 17131) SEQUENCE | PUTFH | OPEN StateID: 0x38b5 | GETFH | ACCESS, [Access Denied: XE], [Allowed: RD MD XT] | GETATTR
+
+#17062	0	53,22,28		0x8f285e5c	sosadmin.sqlite3-journal	V4 Call (Reply In 17063) SEQUENCE | PUTFH | REMOVE DH: 0x8f285e5c/sosadmin.sqlite3-journal
+#17063	1	53,22,28	0,0,0,0	0xe2181f83	sosadmin.sqlite3-journal	V4 Reply (Call In 17062) SEQUENCE | PUTFH | REMOVE
+#17153	0	53,22,32,22,29		0xa9d699dd,0xa9d699dd	global.tmp,global.tmp	V4 Call (Reply In 17154) SEQUENCE | PUTFH | SAVEFH | PUTFH | RENAME From: db_0.tmp To: db_0.stat
+#17154	1	53,22,32,22,29	0,0,0,0,0,0	0x38b2f54a	global.tmp	V4 Reply (Call In 17153) SEQUENCE | PUTFH | SAVEFH | PUTFH | RENAME
+
+#159350	0	53,22,26		0x52712f77	global.tmp	V4 Call (Reply In 159356) SEQUENCE | PUTFH | READDIR FH: 0x52712f77
+#159356	1	53,22,26	0,0,0,0	0x38b2f54a	global.tmp	V4 Reply (Call In 159350) SEQUENCE | PUTFH | READDIR
+);
+
+
+sub nfs3_procedures_to_names {
+	my $procedures_str = shift;
+	my @procedures = split /,/, $procedures_str;
+	my @ret;
+
+	foreach my $procedure (split /,/, $procedures_str) {
+		push @ret, $nfs_mappings{'nfs.procedure_v3'}{$procedure};
+	}
+	return join "|", @ret;
+}
+
+sub single_fh_opcode {
+	my $opcodes_str = shift;
+	my $fhs_count = shift;
+	my $names_count = shift;
+
+	return 0 if ($fhs_count != 1 || $names_count != 1);
+	return 1 if defined $single_fh_opcodes{$opcodes_str};
+
+	return 0;
+}
+
+sub parse_nfsv3 {
+	my ($line, $frame, $rpc_programversion, $rpc_msgtyp, $rpc_xids_str, $procedures_str, $nfs_status3_str, $fhs_str, $names_str, $path_component_str) = @_;
+
+	my @procedures = split(/,/, $procedures_str);
+	my @nfs_status3 = split(/,/, $nfs_status3_str);
+
+	my @fhs = split(/,/, $fhs_str);
+	my $fhs_count = scalar @fhs;
+
+	my @names = split(/,/, $names_str);
+	my $names_count = scalar @names;
+
+	$rpc_msgtyp = collapse_var($rpc_msgtyp);
+
+	return if ($rpc_msgtyp eq "MIXED"); # would this ever happen?
+
+	return if (!all_nfs_status3_success($nfs_status3_str)); # TODO: partial success?
+	return if (scalar @procedures > 1); # TODO: frames with more than one nfs procedure (multiple RPCs)
+
+	printf "frame %d\n", $frame;
+
+printf "rpc_msgtyps %s\n", $rpc_msgtyp;
+printf "procedures: %s (%s) - %s\n", join("|", @procedures), scalar @procedures, nfs3_procedures_to_names($procedures_str);
+printf "status: %s (%d)\n", join("|", @nfs_status3), scalar @nfs_status3;
+printf "fhs: %s (%d)\n", join("|", @fhs), scalar @fhs;
+printf "names: %s (%d)\n", join("|", @names), scalar @names;
+
+	my %single_fh_name_procedures = (
+		'1' => 1, # GETATTR
+		'4' => 1, # ACCESS
+		'6' => 1, # READ
+		'7' => 1, # WRITE
+		'21' => 1, # COMMIT
+	);
+	my %unknown_fh_name_procedures = (
+		'19' => 1, # FSINFO
+		'20' => 1, # PATHCONF
+	);
+
+	if ($names_str ne "" && $path_component_str ne "") {
+		printf "so what do we do if both name and path are set?:\n";
+		printf "    nfs.name: %s\n", $names_str;
+		printf "    nfs.pathname.component: %s\n", $path_component_str;
+	}
+
+
+	if (defined $single_fh_name_procedures{$procedures_str}) {
+		if ($names_count == 1 && $fhs_count == 1) {
+			check_name($frame, $fhs[0], $names[0]);
+		} else {
+			printf "unexpected number of fhs (%d) or names (%d); expected 1\n", $fhs_count, $names_count;
+		}
+		return;
+
+
+
+#119     3,3     0       8                               0xec1e5351      testfile2               V3 CREATE Call, DH: 0xec1e5351/testfile2 Mode: UNCHECKED
+#120     3,3     1       8               0               0x5c30715e,0xec1e5351   testfile2               V3 CREATE Reply (Call In 119)
+
+	} elsif ($procedures_str eq '8' || $procedures_str eq '9') { # CREATE/MKDIR - usually expecting 2 names, 2 fhs
+		if ($rpc_msgtyp == 0) {
+			if ($names_count == 1 && $fhs_count == 1) {
+				# need to save
+#				push @
+			}
+			if ($names_count == 2 && $fhs_count == 2 && collapse_var($names_str) eq $names[0]) { # have 2 fhs but just one name (must be the newly-created)
+				my $dfh = $fhs[0];
+				my $fh = $fhs[1];
+				my $name2 = $names[0];
+
+				check_parent_and_name($frame, $dfh, $fh, $name2);
+				return;
+			}
+		}
+		if (($names_count == 2 || $names_count == 3) && $fhs_count == 2) {
+			my $dfh = $fhs[0];
+			my $fh = $fhs[1];
+			my $name1 = $names[0];
+			my $name2 = $names[1];
+
+			check_name($frame, $dfh, $name1); # TODO: DOUBLE-CHECK
+			check_parent_and_name($frame, $dfh, $fh, $name2);
+			return;
+		} elsif ($names_count == 2 && $fhs_count == 1) { # failed CREATE/MKDIR, or no response...  we have the name of the parent fh, and a name we attempted to create
+			my $dfh = $fhs[0];
+			my $name1 = $names[0]; # we have the name of the parent directory
+			check_name($frame, $dfh, $name1);
+			return;
+		} elsif ($names_count == 1 && $fhs_count == 2) { # CREATE/MKDIR succeeded, but we don't know the name of the parent directory
+			my $dfh = $fhs[0];
+			my $fh = $fhs[1];
+			my $name2 = $names[0];
+			check_parent_and_name($frame, $dfh, $fh, $name2);
+			return;
+		} elsif ($names_count ==1 && $fhs_count == 1) { # failed CREATE/MKDIR, or no response... we have only the name we tried to create
+			return;
+		}
+	} elsif ($procedures_str eq '3') { # LOOKUP - usually expecting 2
+		if ($rpc_msgtyp == 0) {
+			if ($names_count == 2 && $fhs_count == 2 && collapse_var($names_str) eq $names[0]) { # have 2 fhs but just one name (must be the looked-up)
+				my $dfh = $fhs[0];
+				my $fh = $fhs[1];
+				my $name2 = $names[0];
+
+				check_parent_and_name($frame, $dfh, $fh, $name2);
+				return;
+			} elsif ($names_count == 3 && $fhs_count == 2) { # appear to have both names
+				my $dfh = $fhs[0];
+				my $fh = $fhs[1];
+				my $name1 = $names[0];
+				my $name2 = $names[1];
+
+				check_name($frame, $dfh, $name1);
+				check_parent_and_name($frame, $dfh, $fh, $name2);
+				return;
+			} elsif ($names_count == 1 && $fhs_count == 1) { # no response, apparently
+				return;
+			} elsif ($names_count == 2 && $fhs_count == 1) { # perhaps NFS3ERR_NOENT
+				return;
+			}
+		} else {
+			if ($names_count == 2 && $fhs_count == 2) {
+				my $dfh = $fhs[0];
+				my $fh = $fhs[1];
+				my $name1 = $names[0];
+				my $name2 = $names[1];
+
+				check_name($frame, $dfh, $name1);
+				check_parent_and_name($frame, $dfh, $fh, $name2);
+				return;
+			} elsif (($rpc_msgtyp == 0 && $fhs_count == 2 && $names_count == 3) || # successful lookup... have both names
+				( $rpc_msgtyp == 1 && $fhs_count == 2 && $names_count == 2)) {
+				my $dfh = $fhs[0];
+				my $fh = $fhs[1];
+				my $name1 = $names[0];
+				my $name2 = $names[1];
+				check_name($frame, $dfh, $name1);
+				check_parent_and_name($frame, $dfh, $fh, $name2);
+				return;
+			} elsif (($rpc_msgtyp == 0 && $fhs_count == 2 && $names_count == 1) || # successful lookup... only have the name of the looked-up fh
+				( $rpc_msgtyp == 1 && $fhs_count == 2 && $names_count == 1)) {
+				my $dfh = $fhs[0];
+				my $name2 = $names[0];
+				check_name($frame, $dfh, $name2);
+				return;
+			} elsif ($rpc_msgtyp == 0 && $fhs_count == 1 && $names_count == 2) { # failed lookup...  we have the name of the parent fh, and a name we attempted to look up (which didn't exist, so didn't have an FH)
+				my $dfh = $fhs[0];
+				my $name1 = $names[0];
+				check_name($frame, $dfh, $name1);
+				return;
+			} elsif ($rpc_msgtyp == 0 && $fhs_count == 1 && $names_count == 1) { # failed lookup... no response
+				return;
+#		} elsif ($rpc_msgtyp == 1 && $fhs_count == 1 && $names_count == 1 && ERROR
+#		17370   0.333870 10.219.223.94 → 10.219.211.204 NFS 244 V3 LOOKUP Call, DH: 0x2faad7bc/NsAluObXGca2p9tE  rpc.xid == 0xa8a35487
+#[sorenson@bearskin 2nd_attempt]$ grep -w 17370 out
+# 17370	3,3	0	3				0x2faad7bc	NsAluObXGca2p9tE		V3 LOOKUP Call, DH: 0x2faad7bc/NsAluObXGca2p9tE
+			} else {
+				printf "error with LOOKUP\n";
+			}
+		}
+	} elsif ($procedures_str eq '12' || $procedures_str eq '13') { # REMOVE/RMDIR
+		if ($rpc_msgtyp == 0) {
+			
+#frame 87
+#rpc_msgtyps 0
+#procedures: 13 (1) - RMDIR
+#status:  (0)
+#fhs: 0xec1e5351 (1)
+#names: testdir2 (1)
+#fixme
+
+
+
+		} else {
+		}
+	} elsif ($procedures_str eq '17') { # READDIRPLUS
+		if ($rpc_msgtyp == 0) {
+			if ($names_count == 2 && $fhs_count == 2) {
+				my $dfh = $fhs[1];
+				my $fh = $fhs[0];
+				my $name1 = $names[1];
+				my $name2 = $names[0];
+				check_name($frame, $dfh, $name1);
+				check_parent_and_name($frame, $dfh, $fh, $name2);
+				return;
+			} elsif ($names_count == 1 && $fhs_count == 2) { # we don't know if we have the name of the directory itself or its parent - ambiguous
+				return;
+			} elsif ($names_count == 1 && $fhs_count == 1) { # no response?
+				return;
+			}
+		} else {
+		}
+	} elsif (defined $unknown_fh_name_procedures{$procedures_str}) { # don't really have info about these
+		return;
+	} else {
+	}
+printf "fixme\n";
+
+}
+sub parse_nfsv4 {
+	my ($line, $frame, $rpc_programversion, $rpc_msgtyp, $rpc_xids_str, $opcodes_str, $nfsstat4_str, $fhs_str, $names_str, $path_component_str) = @_;
+
+	my @opcodes = split(/,/, $opcodes_str);
+	my @nfsstat4 = split(/,/, $nfsstat4_str);
+
+	my @fhs = split(/,/, $fhs_str);
+	my $fhs_count = scalar @fhs;
+
+	my @names = split(/,/, $names_str);
+	my $names_count = scalar @names;
+
+	return if (!all_nfsstat4_success($nfsstat4_str));
+
+	if ($opcodes_str eq "53,22,26" && all_nfsstat4_success($nfsstat4_str)) { # SEQUENCE,PUTFH,READDIR
+		if (scalar @fhs == (scalar @names) + 1) {
+#	53,22,26	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0	__pycache__,sosadmin.sqlite3-journal,.local_configuration_is_setup,sosadmin.sqlite3-journal,local.py.example,sosadmin.sqlite3-journal,redis.log,sosadmin.sqlite3-journal,local.py,sosadmin.sqlite3-journal,log,sosadmin.sqlite3-journal,sosadmin.sqlite3,sosadmin.sqlite3-journal,redis.pid,sosadmin.sqlite3-journal,sessions,sosadmin.sqlite3-journal,yob,sosadmin.sqlite3-journal,ping_log,sosadmin.sqlite3-journal,redis.conf,sosadmin.sqlite3-journal,.cache,sosadmin.sqlite3-journal,sosadmin.sqlite3-journal	0xe5a3108e,0x0026abf2,0xa9f16ef0,0xec4559d4,0xe2f97a70,0xb4467e94,0x8ec8417a,0x56fcf277,0xf81400ea,0x2f19d204,0x32aec260,0x929f4e38,0x2520e4f4,0xe2181f83	V4 Reply (Call In 56400) SEQUENCE | PUTFH | READDIR
+# 164526	1	53,22,26	0,0,0,0,0,0	0xdf5afbe5,0xf2581468,0x38b2f54a	thumbnail_128x128#png_12039,global.tmp,symbol#oa_12041,global.tmp,global.tmp	V4 Reply (Call In 164521) SEQUENCE | PUTFH | READDIR
+# 164592	1	53,22,26	0,0,0,0,0,0	0x333909c3,0x1c567544,0x38b2f54a	thumbnail_128x128#png_12036,global.tmp,symbol#oa_12038,global.tmp,global.tmp	V4 Reply (Call In 164591) SEQUENCE | PUTFH | READDIR
+
+# possibly also:
+#		if (scalar @fhs == (scalar @names) + 1) {
+			my $dir_fh = $fhs[scalar @names];
+			$all_fhs{$dir_fh} = $dir_fh;
+			for (my $i = 0 ; $i < scalar @names ; $i++) {
+				my $fh = $fhs[$i];
+				my $name = $names[$i];
+#			printf "%s/%s - %s\n", $dir_fh, $fhs[$i], $names[$i];
+				#
+				check_parent_and_name($frame, $dir_fh, $fh, $name);
+			}
+#		}
+		} elsif (scalar @fhs == scalar @names) { # guessing there's no dir name
+#			my $dir_fh = $fhs[scalar @names];
+#			$all_fhs{$dir_fh} = $dir_fh;
+			for (my $i = 0 ; $i < scalar @names ; $i++) {
+#				my $fh = $fhs[$i];
+#				my $name = $names[$i];
+#			printf "%s/%s - %s\n", $dir_fh, $fhs[$i], $names[$i];
+				#
+				check_name($frame, $fhs[$i], $names[$i]);
+			}
+		} else {
+			printf "WARNING: frame %d - %d names and %d fhs\n", $frame, $names_count, $fhs_count;
+		}
+#	} elsif ($opcodes_str eq "53,22,15,10,9" && $nfsstat4_str eq "0,0,0,0,0,0" && scalar @fhs == scalar @names) { # SEQUENCE,PUTFH,LOOKUP,GETFH,GETATTR
+	} elsif ($opcodes_str eq "53,22,15,10,9" && $fhs_count == 2 && $names_count == 2) { # SEQUENCE,PUTFH,LOOKUP,GETFH,GETATTR
+#0	53,22,15,10,9		global.tmp,global.tmp	0x6477430f,0x38b2f54a	V4 Call (Reply In 19829) SEQUENCE | PUTFH | LOOKUP DH: 0x6477430f/global.tmp | GETFH | GETATTR
+#1	53,22,15,10,9	0,0,0,0,0,0	global.tmp,global.tmp	0xf863d46f,0x38b2f54a	V4 Reply (Call In 19828) SEQUENCE | PUTFH | LOOKUP | GETFH | GETATTR
+		my $dir_fh = $fhs[0];
+		my $fh = $fhs[1];
+		my $name = $names[0];
+
+		check_parent_and_name($frame, $dir_fh, $fh, $name);
+#	} elsif (
+#   30   1.207225   10.47.4.15 → 10.47.4.102  NFS 362 V4 Call SEQUENCE | PUTFH | OPEN DH: 0xe2181f83/libnss_systemd.so.2 | GETFH | ACCESS FH: 0x00000000, [Check: RD MD XT XE] | GETATTR
+#***** WARNING: no match: 30     0       53,22,18,10,3,9         sosadmin.sqlite3-journal        0xe2181f83
+
+#	} elsif ($opcodes_str eq "53,22,18,3,9" && scalar @fhs == scalar @names) { # OPEN of just directory handle?
+	} elsif (0) {
+#435	0	53,22,18,3,9		0xffa4d438	sosadmin.sqlite3-journal	V4 Call (Reply In 436) SEQUENCE | PUTFH | OPEN DH: 0xffa4d438/ | ACCESS FH: 0xffa4d438, [Check: RD MD XT XE] | GETATTR FH: 0xffa4d438
+#436	1	53,22,18,3,9	0,0,0,0,0,0	0xe2181f83	sosadmin.sqlite3-journal	V4 Reply (Call In 435) SEQUENCE | PUTFH | OPEN StateID: 0xf29d | ACCESS, [Allowed: RD MD XT XE] | GETATTR
+#		my $dir_fh = $fhs[scalar @names];
+		if (scalar @fhs == 1) {
+#		$all_fhs{$dir_fh} = $dir_fh;
+#		for (my $i = 0 ; $i < scalar @names ; $i++) {
+#			my $fh = $fhs[$i];
+#			my $name = $names[$i];
+#			printf "%s/%s - %s\n", $dir_fh, $fhs[$i], $names[$i];
+
+#			my $fh = $fhs[0];
+#			my $name = $names[0];
+#			check_name($fh, $name);
+		check_name($fhs[0], $names[0]);
+#			check_parent_and_name($frame, $dir_fh, $fh, $name);
+		} else {
+			printf "***** WARNING: frame %d - unrecognized number of fhs/names: %s\n", $frame, $line;
+		}
+#	} elsif (single_fh_opcode($opcodes_str, scalar @fhs, scalar @names)) {
+	} elsif (single_fh_opcode($opcodes_str, $fhs_count, $names_count)) {
+
+
+
+#	} elsif ($opcodes_str eq "53,22,9,4" && scalar @fhs == scalar @names && scalar @fhs == 1) {
+		check_name($fhs[0], $names[0]);
+	} elsif ($fhs_count == 1 && $names_count == 1) {
+		printf "POSSIBLE single_fh_opcode: %s - %s\n", $opcodes_str, $line;
+
+	} elsif ($opcodes_str eq "53,22,18,10,3,9") {
+#19876	53,22,18,10,3,9	0x6477430f,0x38b2f54a	global.tmp,global.tmp	db_17975.tmp	V4 Call (Reply In 19877) SEQUENCE | PUTFH | OPEN DH: 0x6477430f/db_17975.tmp | GETFH | ACCESS FH: 0x00000000, [Check: RD MD XT XE] | GETATTR
+#19877	53,22,18,10,3,9	0x9308859b,0x38b2f54a	global.tmp,global.tmp		V4 Reply (Call In 19876) SEQUENCE | PUTFH | OPEN StateID: 0x8587 | GETFH | ACCESS, [Access Denied: XE], [Allowed: RD MD XT] | GETATTR
+		if ($rpc_msgtyp eq "0" && $names_count == 2 && $fhs_count == 2) {
+			check_name($fhs[0], $names[0]);
+			check_parent_and_name($frame, $fhs[0], $fhs[1], $path_component_str);
+		} else {
+			check_name($fhs[0], $names[0]);
+		}
+	} elsif ($opcodes_str eq "53,22,6,10,9") { # SEQUENCE,PUTFH,CREATE,GETFH,GETATTR
+printf "CREATE: %s\n", $line;
+		if ($rpc_msgtyp eq "0" && defined $path_component_str && defined $names_str) {
+#			check_name($
+#			check_parent_and_name($frame, $fhs[0], $names[0], $path_component_str)
+
+
+
+
+
+#158501 295.426245    10.47.4.5 → 10.47.4.102  NFS 326 V4 Call SEQUENCE | PUTFH | CREATE | GETFH | GETATTR  nfs.pathname.component == "DPWM_decap_top"  nfs.name == "journal"  nfs.fh.hash == 0xed9f2016
+#***** WARNING: no match: 158508	1	53,22,6,10,9	0,0,0,0,0,0	0x8199b5fb,0x38b2f54a	global.tmp,global.tmp		V4 Reply (Call In 158501) SEQUENCE | PUTFH | CREATE | GETFH | GETATTR
+
+		}
+	} elsif ($opcodes_str eq "53,22,28") { # SEQUENCE,PUTFH,REMOVE
+# parent dir and name
+
+print "%s\n", $line;
+
+# call has 1 fh and 1 $path_component_str
+# reply has 1 fh and no $path_component_str
+
+
+
+#153287 294.823051   10.47.4.15 → 10.47.4.102  NFS 310 V4 Call (Reply In 153304) SEQUENCE | PUTFH | REMOVE DH: 0xed120ec2/B_ADC_FWR#ADC_DFT_snapshot#data#dm_3313_11606
+#153304 294.825048  10.47.4.102 → 10.47.4.15   NFS 458 V4 Reply (Call In 153287) SEQUENCE | PUTFH | REMOVE  ; V4 Reply (Call In 153239) SEQUENCE | PUTFH | WRITE | GETATTR
+#[sorenson@bearskin 2022-01-31]$ egrep -w '153287|153304' out
+#***** WARNING: no match: 153304	1,1	53,22,28,53,22,38,9	0,0,0,0,0,0,0,0,0	0x38b2f54a,0x38b2f54a	global.tmp,global.tmp		V4 Reply (Call In 153287) SEQUENCE | PUTFH | REMOVE  ; V4 Reply (Call In 153239) SEQUENCE | PUTFH | WRITE | GETATTR
+#[sorenson@bearskin 2022-01-31]$ 
+
+#97330     0       53,22,28                0xf52d5c58      global.tmp      layout#oa_43    V4 Call (Reply In 97342) SEQUENCE | PUTFH | REMOVE DH: 0xf52d5c58/layout#oa_43
+#97342     1       53,22,28        0,0,0,0 0x38b2f54a      global.tmp              V4 Reply (Call In 97330) SEQUENCE | PUTFH | REMOVE
+#97405  0,0     53,22,18,3,9,53,22,28           0x22a34084,0xed120ec2   global.tmp,global.tmp   B_ADC_FWR##oalib_3307_11599     V4 Call (Reply In 97407) SEQUENCE | PUTFH | OPEN DH: 0x22a34084/ | ACCESS FH: 0x22a34084, [Check: RD MD XT XE] | GETATTR FH: 0x22a34084  ; V4 Call (Reply In 97409) SEQUENCE | PUTFH | REMOVE DH: 0xed120ec2/B_ADC_FWR##oalib_3307_11599
+#97409     1       53,22,28        0,0,0,0 0x38b2f54a      global.tmp              V4 Reply (Call In 97405) SEQUENCE | PUTFH | REMOVE
+#97491     0       53,22,28                0xf740cf52      global.tmp      expand#cfg_11567        V4 Call (Reply In 97492) SEQUENCE | PUTFH | REMOVE DH: 0xf740cf52/expand#cfg_11567
+
+
+
+# 0x49816580,0x33e28964   global.tmp,global.tmp   layout#oa_25960
+
+
+	} elsif ($opcodes_str eq "53,22,32,22,29") { # SEQUENCE,PUTFH,SAVEFH,PUTFH,RENAME
+printf "Frame %d - RENAME with %d fhs and %d names\n", $frame, $fhs_count, $names_count;
+printf "%s\n", $line if ($fhs_count > 1 || $names_count > 1);
+		if ($fhs_count == 1 && $rpc_msgtyp eq '1') { # just one weird nfs.fh.hash
+
+		} elsif ($names_count == 2 && $fhs_count == 2) {
+			my $from_filename = $fhs[0] . "/" . $names[0];
+			my $to_filename = $fhs[1] . "/" . $names[1];
+
+			printf "RENAME from '%s' to '%s'\n", $from_filename, $to_filename;
+
+#			if ($fhs[0] ne $fhs[1]) {
+#				check_parent_and_name($fhs[1], 
+
+			if (defined $fh_names{$fhs[0]} && $fh_names{$fhs[0]} ne $names[0]) {
+				check_name($fhs[0], $names[0]);
+#				printf "RENAME of fh %s: %s => %s\n", $fhs[0], $fh_names{$fhs[0]}, $names[0];
+#				printf "RENAME - 1 FH and 1 name: %s\n", $line;
+			}
+		} else {
+			printf "***** WARNING: frame %d - unrecognized rename args: %s\n", $frame, $line;
+#***** WARNING: frame 17153 - unrecognized rename args: 17153    0       53,22,32,22,29          0xa9d699dd,0xa9d699dd   global.tmp,global.tmp   db_0.tmp,db_0.stat      V4 Call (Reply In 17154) SEQUENCE | PUTFH | SAVEFH | PUTFH | RENAME From: db_0.tmp To: db_0.stat
+
+		}
+	} elsif ($rpc_msgtyp eq "0" && $nfsstat4_str eq "") { # Call, where error exists
+
+	} else {
+		printf "***** WARNING: no match: %s\n", $line;
+	}
+}
+
+sub parse_programversion {
+	my $str = shift;
+#	my $ret;
+
+#	my @versions = split(/,/, $str);
+#	foreach my $vers (@versions) {
+#		if (!defined $ret) { $ret = $vers; }
+#		elsif ($ret ne $vers) { return "MIXED"; }
+#		else { }
+#	}
+#	return $ret;
+	return collapse_var($str);
+}
+
+
+
+
+
+if (scalar @ARGV != 1) {
+	printf "usage: get_names_and_fhs.pl <pcap>\n";
+	exit 1;
+}
+my $input_file = $ARGV[0];
+
+
+
+#open (my $fh, "-|", "tshark -2n -r " . $input_file . " -Tfields -E header=n -e nfs.name -e nfs.fh.hash 'nfs.name && nfs.fh.hash'") or die "could no open file $input_file: $!";
+#open (my $input_fh, "-|", "tshark -2n -r " . $input_file . " -Tfields -E header=n -e frame.number -e rpc.msgtyp -e nfs.opcode -e nfs.nfsstat4 -e nfs.name -e nfs.fh.hash 'nfs.name && nfs.fh.hash'") or die "could no open file $input_file: $!";
+
+#my $filter = "!(nfs.nfsstat4 in {1..11000}) && (nfs.name || nfs.pathname.component) && nfs.fh.hash";
+my $filter = "(nfs.name || nfs.pathname.component) && nfs.fh.hash";
+
+#open (my $input_fh, "-|", "tshark -2n -r " . $input_file . " -Tfields -E header=n -e frame.number -e rpc.programversion -e rpc.msgtyp -e nfs.opcode -e nfs.status3 -e nfs.nfsstat4 -e nfs.fh.hash -e nfs.name -e nfs.pathname.component -e _ws.col.Info '$filter'") or die "could no open file $input_file: $!";
+
+#my $cmd = "tshark -2n -r " . $input_file . " -Tfields -E header=n -e frame.number -e rpc.programversion -e rpc.msgtyp -e nfs.procedure_v3 -e nfs.opcode -e nfs.status3 -e nfs.nfsstat4 -e nfs.fh.hash -e nfs.name -e nfs.pathname.component -e _ws.col.Info '$filter'";
+my $cmd = "tshark -n -r " . $input_file . " -Tfields -E header=n -e frame.number -e rpc.programversion -e rpc.msgtyp -e rpc.xid -e nfs.procedure_v3 -e nfs.opcode -e nfs.status3 -e nfs.nfsstat4 -e nfs.fh.hash -e nfs.name -e nfs.pathname.component -e _ws.col.Info '$filter'";
+printf "executing: %s\n", $cmd;
+
+#open (my $input_fh, "-|", $cmd);
+#open (my $input_fh, "out");
+open (my $input_fh, "out2");
+#]$ tshark -2n -r merged.pcap $(tshark_fields rpc.msgtyp nfs.opcode nfs.nfsstat4 nfs.name nfs.fh.hash) 'nfs.name && nfs.fh.hash && nfs.opcode==lookup'
+while (<$input_fh>) {
+	chomp;
+	my $line = trim($_);
+
+	next if ($line =~ /Packet size limited during capture/); # appears we got a truncated frame...  suspicious--don't trust
+
+
+	my @fields = split(/\t/, $line);
+	my $frame = $fields[0];
+
+	my $rpc_programversion = parse_programversion($fields[1]);
+	my $rpc_msgtyp = $fields[2];
+
+	my $rpc_xids_str = $fields[3];
+
+	my $procedures_str = $fields[4];
+	my $opcodes_str = $fields[5];
+#	my @opcodes = split(/,/, $opcodes_str);
+
+	my $nfs_status3_str = $fields[6];
+	my $nfsstat4_str = $fields[7];
+#	my @nfsstat4 = split(/,/, $nfsstat4);
+
+	my $fhs_str = $fields[8];
+#	my @fhs = split(/,/, $fhs_str;
+#	my $fhs_count = scalar @fhs;
+
+	my $names_str = $fields[9];
+#	my @names = split(/,/, $names_str);
+#	my $names_count = scalar @names;
+
+	my $path_component_str = $fields[10];
+
+	if ($rpc_programversion eq "3") {
+		parse_nfsv3($line, $frame, $rpc_programversion, $rpc_msgtyp, $rpc_xids_str, $procedures_str, $nfs_status3_str, $fhs_str, $names_str, $path_component_str);
+	} elsif ($rpc_programversion eq "4") {
+		parse_nfsv4($line, $frame, $rpc_programversion, $rpc_msgtyp, $rpc_xids_str, $opcodes_str, $nfsstat4_str, $fhs_str, $names_str, $path_component_str);
+
+	} else {
+		printf "ERROR: unknown program version: %s\n", $rpc_programversion;
+	}
+}
+
+printf "********************** dump of filehandles and names **********************\n";
+
+printf "total fhs found; %d\n", scalar(keys %all_fhs);
+
+my @without_parent;
+my @without_name;
+foreach my $fh (keys %all_fhs) {
+	push(@without_parent, $fh) if !defined $fh_parents{$fh};
+	push(@without_name, $fh) if ! defined $fh_names{$fh};
+
+	if (defined $fh_parents{$fh}) {
+		my $pos = $fh;
+		my $path_str = "";
+		my %visited;
+
+printf "resolving path for fh %s\n", $fh;
+		while (defined $pos) {
+
+			last if ($visited{$pos});
+
+if (!defined $pos) { printf "it's not defined, yo\n"; }
+			my $this_name = defined $fh_names{$pos} ? $fh_names{$pos} : $fh;
+
+
+			$path_str = ($path_str eq "") ? $this_name : $this_name . "/" . $path_str;
+
+
+last if (!defined $pos);
+last if (!defined $fh_parents{$pos});
+$visited{$pos} = $pos;
+
+#printf "parent of %s is %s\n", $pos, $fh_parents{$pos};
+
+			$pos = $fh_parents{$pos};
+
+#printf "%s...\n", $pos if (defined $pos);
+		}
+		printf "%s - %s\n", $fh, $path_str;
+	} else {
+		printf "fh %s\n", $fh;
+	}
+
+}
+printf "%d fhs have no parent\n", scalar(@without_parent);
+foreach my $fh (@without_parent) {
+	printf "%s\n", $fh;
+}
+printf "%d fhs have no name\n", scalar(@without_name);
+foreach my $fh (@without_name) {
+	printf "%s\n", $fh;
+}
