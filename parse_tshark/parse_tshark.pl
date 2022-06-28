@@ -1003,7 +1003,7 @@ my $no_value_fields_re = qr/$no_value_fields_str/;
 while (<>) {
 	my $line = $_;
 	$line =~ s/\n$//g;
-	$line =~ s/\[Packet size limited during capture\]//g;
+	$line =~ s/\[(Packet size limited during capture|TCP ACKed unseen segment|Previous segment not captured)\]//g;
 
 #   20  10.431619 192.168.1.20 → 192.168.1.25 NFS 334 V4 Call (Reply In 21) EXCHANGE_ID  nfs.data == 4c:69:6e:75:78:20:4e:46:53:76:34:2e:31:20:6e:66:73:2d:63:6c:69:65:6e:74:2e:6e:6f:76:61:6c:6f:63:61:6c  nfs.verifier4 == 0x5af56ed61d164a00  rpc.auth.machinename == "nfs-client.novalocal" 
 #   20  10.431619 192.168.1.20 → 192.168.1.25 NFS 334 V4 Call (Reply In 21) EXCHANGE_ID *
