@@ -869,8 +869,9 @@ sub output_per_pid_stats {
 }
 
 sub defined_or_default {
-	my ($val, $default);
-	return (defined $val) ? $val : $default;
+	my ($val, $default) = @_;
+	$val = $default if !defined $val;
+	return $val;
 }
 
 sub undefined_to_empty {
