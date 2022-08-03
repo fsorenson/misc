@@ -24,6 +24,9 @@
 #include <ctype.h>
 #include <signal.h>
 #include <errno.h>
+#include <math.h>
+#include <limits.h>
+#include <getopt.h>
 #include <sys/stat.h>
 #include <sys/sysmacros.h>
 #include <sys/types.h>
@@ -31,18 +34,34 @@
 #include <sys/wait.h>
 #include <sys/time.h>
 
-#define MAX_PROC		(50)
-#define DEFAULT_PROC_COUNT	(5)
-
 #define DEFAULT_TEST_COUNT	(100)
+
+#define DEFAULT_PROC_COUNT	(5)
+#define MAX_PROC_COUNT		(50)
+
 #define DEFAULT_THREAD_COUNT	(3)
-#define MAX_THREADS		(100)
+#define MAX_THREAD_COUNT	(100)
+
+
 #define OFF_0			(768UL)
 
 #define KiB			(1024ULL)
 #define MiB			(KiB * KiB)
-#define BUF_SIZE		(MiB)
-#define FILE_SIZE		(BUF_SIZE * 100 + OFF_0)
+#define GiB			(KiB * KiB * KiB)
+
+
+#define DEFAULT_OFF_0		(768UL)
+
+#define DEFAULT_BUF_SIZE	(MiB)
+#define MIN_BUF_SIZE		(128ULL)
+#define MAX_BUF_SIZE		(MAX_FILE_SIZE)
+
+#define DEFAULT_FILE_SIZE	(200ULL * MiB + DEFAULT_OFF_0) /* was based on size of buffer * a constant '500' + the offset */
+#define MIN_FILE_SIZE		(4ULL * KiB)
+#define MAX_FILE_SIZE		(10 * GiB)
+
+#define DEFAULT_UPDATE_DELAY_S	(5)
+#define DEFAULT_UPDATE_DELAY_US	(1230)
 
 #define TSTAMP_BUF_SIZE		(32)
 #define DUMP_BYTE_COUNT		(128)
@@ -55,18 +74,29 @@ static char fill_chars[] = FILL_CHARS;
 #ifndef PAGE_SIZE
 #define PAGE_SIZE (4096)
 #endif
-#define VERIFY_BUF_SIZE (((OFF_0 + PAGE_SIZE - 1)/PAGE_SIZE) * PAGE_SIZE)
 
 #define mb()	__asm__ __volatile__("mfence" ::: "memory")
 
-#define UPDATE_DELAY_S 5
-#define UPDATE_DELAY_US 0
+
+#define min(a,b) ({ \
+	typeof(a) _a = (a); \
+	typeof(b) _b = (b); \
+	_a < _b ? _a : _b; \
+})
+#define max(a,b) ({ \
+	typeof(a) _a = (a); \
+	typeof(b) _b = (b); \
+	_a > _b ? _a : _b; \
+})
+
+
+typedef enum { verify_mode_end, verify_mode_ongoing } verify_mode;
 
 struct shared_struct {
 	bool exit_test;
 	int filler[4];
-	int test_counts[MAX_PROC];
-	int replicated[MAX_PROC];
+	int test_counts[MAX_PROC_COUNT];
+	int replicated[MAX_PROC_COUNT];
 };
 struct shared_struct *shared;
 
@@ -78,6 +108,7 @@ struct thread_args {
 	int id;
 	unsigned char c;
 	off_t offset;
+	size_t size;
 	int write_count;
 
 	pid_t tid;
@@ -85,8 +116,9 @@ struct thread_args {
 
 struct proc_args {
 	int proc_num;
-	struct thread_args thread_args[MAX_THREADS];
+//	struct thread_args thread_args[MAX_THREAD_COUNT];
 	char tstamp_buf[TSTAMP_BUF_SIZE]; // may only be used by the main test process
+	struct thread_args thread_args[MAX_THREAD_COUNT];
 	char *name;
 	char *log_name;
 
@@ -107,6 +139,7 @@ struct proc_args {
 
 struct globals {
 	char tstamp_buf[TSTAMP_BUF_SIZE]; // may only be used by the main controlling process
+	struct timeval update_timer;
 
 	char *exe;
 	char *base_dir_path;
@@ -119,6 +152,9 @@ struct globals {
 	int testfile_dir_fd;
 	int log_dir_fd;
 
+	verify_mode verify_mode;
+
+	int off0;
 	int proc_count;
 	int running_proc_count;
 	int test_count;
@@ -130,7 +166,7 @@ struct globals {
 	size_t buf_size;
 
 	struct proc_args *proc;
-	pid_t cpids[MAX_PROC];
+	pid_t cpids[MAX_PROC_COUNT];
 
 	int replicated;
 } globals;
@@ -223,8 +259,8 @@ void handle_child_exit(int sig, siginfo_t *info, void *ucontext) {
 		for (i = 0 ; i < globals.proc_count ; i++) {
 			if (globals.cpids[i] == pid) {
 				if (check_proc_replicated(i)) {
-					global_sig_output("child %d (pid %d) replicated the bug with device %d:%d inode %lu\n",
-						i, pid, globals.proc[i].major, globals.proc[i].minor, globals.proc[i].inode);
+					global_sig_output("child %d (pid %d) replicated the bug on test #%d with device %d:%d inode %lu\n",
+						i, pid, globals.proc[i].test_count, globals.proc[i].major, globals.proc[i].minor, globals.proc[i].inode);
 
 					globals.replicated++;
 					set_exit(true); // tell everyone else to exit
@@ -236,7 +272,7 @@ void handle_child_exit(int sig, siginfo_t *info, void *ucontext) {
 						global_sig_output("child %d (pid %d) exited without replicating the bug\n", i, pid);
 				}
 				globals.cpids[i] = 0;
-				globals.proc->pid = 0;
+				globals.proc[i].pid = 0;
 
 				i = globals.proc_count;
 				found = true;
@@ -249,7 +285,7 @@ void handle_child_exit(int sig, siginfo_t *info, void *ucontext) {
 }
 void show_progress(int sig) {
 	char tstamp_buf[TSTAMP_BUF_SIZE];
-        int test_counts[MAX_PROC];
+        int test_counts[MAX_PROC_COUNT];
 	int replicated_count = 0, running_count = 0, test_count = 0, i;
 
 	mb();
@@ -265,16 +301,66 @@ void show_progress(int sig) {
 		globals.proc_count, running_count, test_count, replicated_count);
 }
 
-#define min(a,b) ({ \
-	typeof(a) _a = (a); \
-	typeof(b) _b = (b); \
-	_a < _b ? _a : _b; \
-})
-#define max(a,b) ({ \
-	typeof(a) _a = (a); \
-	typeof(b) _b = (b); \
-	_a > _b ? _a : _b; \
-})
+/* returns a size in bytes */
+uint64_t parse_size(const char *size_str) {
+	uint64_t uint_size = 0, ret;
+	long double size;
+	int shift = 0, have_uint = 0;
+	char *p;
+
+	uint_size = strtoull(size_str, NULL, 10);
+	size = strtold(size_str, &p);
+
+	if (fabsl((long double)uint_size - size) < 1e-9)
+		have_uint = 1; /* integer, or close enough */
+
+	while (*p != '\0' && (*p == '.' || *p == ' '))
+		p++;
+	if (*p != '\0') {
+		if (strlen(p) <= 3) {
+			if (strlen(p) == 2 && tolower(*(p+1)) != 'b')
+				goto out_badsize;
+			else if (strlen(p) == 3 &&
+				(tolower(*(p+1)) != 'i' || tolower(*(p+2)) != 'b'))
+				goto out_badsize;
+
+			switch (tolower(*p)) {
+				/* can't actually represent these */
+				case 'y':
+				case 'z':
+					printf("size too large: %s\n", p);
+					return 0;
+					break;;
+				case 'e': shift++;
+				case 'p': shift++;
+				case 't': shift++;
+				case 'g': shift++;
+				case 'm': shift++;
+				case 'k':
+					shift++;
+					break;;
+				default:
+					goto out;
+					break;;
+			}
+		} else
+			goto out_badsize;
+	}
+	if (have_uint && shift)
+		ret = uint_size * (1ULL << (shift * 10));
+	else if (have_uint)
+		ret = uint_size;
+	else if (shift)
+		ret = (uint64_t)(size * (long double)(1ULL << (shift * 10)));
+	else
+		ret = uint_size; /* might as well be an integer */
+out:
+	return ret;
+
+out_badsize:
+	printf("unrecognized size: '%s'\n", p);
+	return 0;
+}
 
 void hexdump(const char *pre, const char *addr, off_t start_offset, size_t len) {
 	size_t offset = 0;
@@ -310,7 +396,6 @@ int check_replicated(void) {
 	struct stat st;
 
 	if ((fd = openat(globals.testfile_dir_fd, proc_args->name, O_RDONLY|O_DIRECT)) < 0) {
-//		output("%s  [%d / proc %d] unable to open file for verification: %m\n", tstamp(proc_args->tstamp_buf), proc_args->pid, proc_args->proc_num);
 		proc_output("unable to open file for verification: %m\n");
 		return 0;
 	}
@@ -324,7 +409,7 @@ int check_replicated(void) {
 		goto out_close;
 	}
 
-	if ((ptr = memchr(map + OFF_0, 0, st.st_size - OFF_0))) {
+	if ((ptr = memchr(map + globals.off0, 0, st.st_size - globals.off0))) {
 		off_t offset = ptr - map;
 		int dump_bytes = min(DUMP_BYTE_COUNT, st.st_size - offset + (DUMP_BYTE_COUNT>>1));
 
@@ -411,16 +496,14 @@ void *write_func(void *args_ptr) {
 		goto out;
 	}
 
-
 	do {
 		size_t this_write_count = min(globals.buf_size, globals.filesize - thread_args->offset);
 		ssize_t wrsize;
 
-
 		if (get_exit()) { // just skip to the end
 			off_t offset = thread_args->offset;
 
-			thread_output("exiting early after writing %lu bytes\n", offset);
+			thread_output("exiting early after writing %d times\n", thread_args->write_count);
 			while (offset < globals.filesize) {
 				pthread_barrier_wait(&proc_args->bar);
 
@@ -434,33 +517,58 @@ void *write_func(void *args_ptr) {
 			pthread_barrier_wait(&proc_args->bar);
 		}
 
-		thread_output("offset 0x%lx, count 0x%lx, '%c' starting write\n",
-			thread_args->offset, this_write_count, fill_chars[thread_args->c]);
+		thread_output("write %d, offset 0x%lx, count 0x%lx, '%c' starting write\n",
+			thread_args->write_count + 1, thread_args->offset, this_write_count, fill_chars[thread_args->c]);
 
 		wrsize = pwrite(proc_args->fd, thread_args->buf, this_write_count, thread_args->offset);
 
-		thread_output("offset 0x%lx, count 0x%lx, '%c' complete (0x%lx written)\n",
-			thread_args->offset, this_write_count, fill_chars[thread_args->c], wrsize);
+		thread_output("write %d, offset 0x%lx, count 0x%lx, '%c' complete (0x%lx written)\n",
+			thread_args->write_count + 1, thread_args->offset, this_write_count, fill_chars[thread_args->c], wrsize);
 
 		if (wrsize != this_write_count) {
 			thread_output("error writing to file: %m\n");
 			goto out;
 		}
 
-
-char tmpbuf[BUF_SIZE];
-pread(proc_args->fd, tmpbuf, this_write_count, thread_args->offset);
-int matched_chars = compare_mem(thread_args->buf, tmpbuf, this_write_count);
-if (matched_chars != this_write_count) {
-	thread_output("re-read data does not match written data; mismatch at offset 0x%lx\n", thread_args->offset + matched_chars);
-	thread_args->offset += this_write_count;
-	set_exit(true);
-
-	continue;	
-}
-
-
+		thread_args->size = thread_args->offset + this_write_count;
 		thread_args->write_count++;
+
+		if (globals.verify_mode == verify_mode_ongoing) {
+#if 1 /* use mmap to verify */
+			void *map;
+
+			if ((map = mmap(NULL, this_write_count, PROT_READ, MAP_SHARED, proc_args->fd, thread_args->offset)) == MAP_FAILED) {
+				thread_output("mmap failed while verifying file contents: %m\n");
+				globals.verify_mode = verify_mode_end; // will this even take?
+			} else {
+				size_t matched_chars = compare_mem(thread_args->buf, map, this_write_count);
+				if ((munmap(map, this_write_count)) < 0) {
+					thread_output("munmap returned an error after verifying file contents: %m\n");
+				}
+
+				if (matched_chars != this_write_count) {
+					thread_output("re-read data does not match written data; mismatch at offset 0x%lx\n", thread_args->offset + matched_chars);
+					thread_args->offset += (globals.buf_size * globals.thread_count);
+					set_exit(true);
+
+					continue;	
+				}
+			}
+#else /* re-read to verify */
+			tmpbuf = malloc(this_write_count); // TODO: check return value (if we keep this code)
+			pread(proc_args->fd, tmpbuf, this_write_count, thread_args->offset);
+			int matched_chars = compare_mem(thread_args->buf, tmpbuf, this_write_count);
+			free(tmpbuf);
+			if (matched_chars != this_write_count) {
+				thread_output("re-read data does not match written data; mismatch at offset 0x%lx\n", thread_args->offset + matched_chars);
+				thread_args->offset += (globals.buf_size * globals.thread_count);
+				set_exit(true);
+
+				continue;
+			}
+#endif
+		}
+
 		thread_args->offset += (globals.buf_size * globals.thread_count);
 		thread_args->c = (thread_args->c + globals.thread_count) % FILL_LEN;
 	} while (thread_args->offset < globals.filesize);
@@ -478,6 +586,57 @@ out:
 	return NULL;
 }
 
+// if some of the threads got an extra write() in, need to reduce the file size to the largest size known to have been written by all threads
+//
+// for the file size, determine which thread would have written the
+//     (offset + length) to cause the file to become that size
+// with n being the number of times this thread has written:
+//     all the threads lower must also have at least n writes;
+//     all the threads higher must have at least n-1 writes
+void truncate_test_file(void) {
+	struct stat st;
+	int ending_thread, write_count, i;
+	size_t truncate_size;
+
+	fstat(proc_args->fd, &st);
+
+	truncate_size = st.st_size;
+	ending_thread = (((truncate_size - globals.off0) / globals.buf_size) - 1) % globals.thread_count; // the thread that would have caused the file to be this size
+	write_count = proc_args->thread_args[ending_thread].write_count;
+
+	proc_output("file size is 0x%lx (%lu), last written by thread %d, which wrote %d times to file size 0x%lx (%lu)\n",
+		st.st_size, st.st_size, ending_thread, write_count,
+		proc_args->thread_args[ending_thread].size, proc_args->thread_args[ending_thread].size);
+
+	for (i = (ending_thread + globals.thread_count - 1) ; i > ending_thread ; i--) {
+		int check_thread = i % globals.thread_count;
+
+		proc_output("checking thread %d, which wrote %d times making file size 0x%lx (%lu)\n",
+			check_thread, proc_args->thread_args[check_thread].write_count,
+			proc_args->thread_args[check_thread].size, proc_args->thread_args[check_thread].size);
+
+		if (check_thread < ending_thread && proc_args->thread_args[check_thread].write_count < write_count) {
+			write_count = proc_args->thread_args[check_thread].write_count;
+			truncate_size = proc_args->thread_args[check_thread].size;
+
+			proc_output("reducing size to 0x%lx (%lu) due to write count for thread %d (%d)\n",
+				truncate_size, truncate_size, check_thread, write_count);
+		} else if (check_thread > ending_thread && proc_args->thread_args[check_thread].write_count < (write_count - 1)) {
+			write_count = proc_args->thread_args[check_thread].write_count;
+			truncate_size = proc_args->thread_args[check_thread].size;
+
+			proc_output("reducing size to 0x%lx (%lu) due to write count for thread %d (%d)\n",
+				truncate_size, truncate_size, check_thread, write_count);
+		}
+	}
+
+	if (truncate_size < st.st_size) {
+		proc_output("truncating file from 0x%lx to size known to have completed: 0x%lx\n", st.st_size, truncate_size);
+		ftruncate(proc_args->fd, truncate_size);
+	} else {
+//		proc_output("well... suppose I don't really need to truncate to its current size or larger (from %lu to %lu)\n", st.st_size, truncate_size);
+	}
+}
 
 int do_one_test(void) {
 	int i, ret = EXIT_FAILURE;
@@ -513,7 +672,7 @@ int do_one_test(void) {
 	for (i = 0; i < globals.thread_count; i++) {
 		proc_args->thread_args[i].id = i;
 		proc_args->thread_args[i].c = i % FILL_LEN; // in case we have more threads than fill chars
-		proc_args->thread_args[i].offset = OFF_0 + (globals.buf_size * i);
+		proc_args->thread_args[i].offset = globals.off0 + (globals.buf_size * i);
 		if ((ret = pthread_create(&proc_args->thread_args[i].thread, NULL, write_func, &proc_args->thread_args[i])) != 0) {
 			proc_output("pthread_create(%d) ret=%d\n", i, ret);
 			ret = EXIT_FAILURE;
@@ -527,42 +686,22 @@ int do_one_test(void) {
 			ret = EXIT_FAILURE;
 			goto out;
 		}
-		proc_output("thread %d final offset=0x%lx\n", i, proc_args->thread_args[i].offset);
+		proc_output("thread %d wrote to file size 0x%lx\n", i, proc_args->thread_args[i].size);
 
 	}
-// do we need to truncate like the file if the writes did not all complete?
-#if 1
-	size_t truncate_size = proc_args->thread_args[0].offset;
-	for (i = 1 ; i < globals.thread_count ; i++) {
-		if (proc_args->thread_args[i].offset > truncate_size)
-			truncate_size = proc_args->thread_args[i].offset;
-		else
-			break;
-	}
-	if (truncate_size < globals.filesize) {
 
-struct stat st;
-fstat(proc_args->fd, &st);
-if (st.st_size <= truncate_size) {
-	proc_output("well... suppose I don't really need to truncate to its current size or larger (from %lu to %lu)\n", st.st_size, truncate_size);
-} else {
-		proc_output("truncating file from 0x%lx to size known to have completed: 0x%lx\n", st.st_size, truncate_size);
-//output("filesize: %lu, truncate size: %lu\n", globals.filesize, truncate_size);
-		ftruncate(proc_args->fd, truncate_size);
-}
-	}
-
-
-#endif
+	// if some of the threads got an extra write() in, need to reduce the file size to the largest size known to have been written by all threads
+	truncate_test_file();
 
 	close(proc_args->fd);
 	proc_args->fd = -1;
 
-
-	proc_output("verifying file contents\n");
-	if ((check_replicated()) == true) {
-		ret = EXIT_SUCCESS;
-		proc_args->replicated = true;
+	if (globals.verify_mode == verify_mode_end) {
+		proc_output("test #%d verifying file contents\n", proc_args->test_count);
+		if ((check_replicated()) == true) {
+			ret = EXIT_SUCCESS;
+			proc_args->replicated = true;
+		}
 	}
 
 out:
@@ -586,7 +725,7 @@ int do_one_proc(int proc_num) {
 	proc_args->pid = getpid();
 	proc_args->state_mutex = (pthread_mutex_t) PTHREAD_MUTEX_INITIALIZER;
 
-	proc_output("proc %d alive\n", proc_args->proc_num);
+	proc_output("alive\n");
 
 	if ((proc_args->log_fd = openat(globals.log_dir_fd, proc_args->log_name, O_CREAT|O_WRONLY|O_TRUNC, 0644)) < 0) {
 		proc_output("error opening logfile '%s/logs/%s': %m\n", globals.base_dir_path, proc_args->log_name);
@@ -606,7 +745,7 @@ int do_one_proc(int proc_num) {
 		goto out;
 	}
 
-	proc_output("proc %d alive\n", proc_args->proc_num); // repeat ourselves, now that we've got our own logfile
+	proc_output("alive\n"); // repeat ourselves, now that we've got our own logfile
 
 	for (proc_args->test_count = 1 ; proc_args->test_count <= globals.test_count ; proc_args->test_count++) {
 		incr_test_count(proc_args->proc_num);
@@ -614,7 +753,7 @@ int do_one_proc(int proc_num) {
 		ret = do_one_test();
 
 		if (proc_args->replicated) {
-			proc_output("test proc %d replicated the bug on test %d with device %d:%d inode %lu\n",
+			proc_output("test proc %d replicated the bug on test #%d with device %d:%d inode %lu\n",
 				proc_args->proc_num, proc_args->test_count,
 				proc_args->major, proc_args->minor, proc_args->inode);
 			set_proc_replicated(proc_args->proc_num, true);
@@ -641,9 +780,31 @@ out:
 }
 
 int usage(int ret) {
-	output("usage; %s <base_directory_path> [<process_count> [<thread_count>]]\n", globals.exe);
-	output("\tdefault process count: %d\n", DEFAULT_PROC_COUNT);
-	output("\tdefault thread count: %d\n", DEFAULT_THREAD_COUNT);
+//	output("usage; %s <base_directory_path> [<process_count> [<thread_count>]]\n", globals.exe);
+	output("usage; %s [<options>] <base_directory_path>\n", globals.exe);
+
+	output("\t-s | --file_size=<size>\t\t(default: %llu, min: %llu, max: %llu)\n", DEFAULT_FILE_SIZE, MIN_FILE_SIZE, MAX_FILE_SIZE);
+
+	output("\t-b | --buffer_size=<size>\t\t(default: %llu, min: %llu, max: %llu)\n", DEFAULT_BUF_SIZE, MIN_BUF_SIZE, MAX_BUF_SIZE);
+	output("\t-p | --processes=<process_count>\t(default: %d, max: %d)\n", DEFAULT_PROC_COUNT, MAX_PROC_COUNT);
+	output("\t-t | --threads=<thread_count>\t\t(default: %d, max: %d)\n", DEFAULT_THREAD_COUNT, MAX_THREAD_COUNT);
+
+	output("\t-c | --test_count=<test_count>\t\t(default: %d)\n", DEFAULT_TEST_COUNT);
+	output("\t-o | --offset=<offset_bytes>\t\t(default: %lu)\n", DEFAULT_OFF_0);
+
+	if (DEFAULT_UPDATE_DELAY_US) {
+		uint32_t usec = DEFAULT_UPDATE_DELAY_US, rzero = 0, rdiv = 1;
+
+		while ( usec >= 10 && usec % 10 == 0) {
+			rzero++; rdiv *= 10; usec /= 10;
+		}
+		output("\t-u | --update_frequency=<seconds>\t(default: %d.%0*d seconds)\n", DEFAULT_UPDATE_DELAY_S, 6 - rzero, usec);
+	} else
+                output("\t-u | --update_frequency=<seconds>\t(default: %d seconds)\n", DEFAULT_UPDATE_DELAY_S);
+
+	output("\t-v | --verify_end\t\t\tverify the file after all writes\n");
+	output("\t-V | --verify_continuous\t\tverify the file after each write\n");
+
 	return ret;
 }
 #define msg_usage0(ret, args...) do { \
@@ -656,28 +817,9 @@ int usage(int ret) {
 	usage(ret); \
 })
 
-void do_init(char *exe) {
-	memset(&globals, 0, sizeof(globals));
-
-	globals.exe = exe;
-	globals.proc_count = DEFAULT_PROC_COUNT;
-	globals.test_count = DEFAULT_TEST_COUNT;
-	globals.thread_count = DEFAULT_THREAD_COUNT;
-	globals.pid = getpid();
-	globals.filesize = FILE_SIZE;
-	globals.buf_size = BUF_SIZE;
-
-	globals.base_dir_fd = -1;
-	globals.testfile_dir_fd = -1;
-	globals.log_dir_fd = -1;
-}
-
 void setup_handlers(void) {
-	struct itimerval timer = {
-		.it_value = { .tv_sec = UPDATE_DELAY_S, .tv_usec = UPDATE_DELAY_US },
-		.it_interval = { .tv_sec = UPDATE_DELAY_S, .tv_usec = UPDATE_DELAY_US },
-	};
-
+//        struct itimerval timer = { .it_value = globals.update_timer, .it_interval = globals.update_timer };
+        struct itimerval timer;
 	struct sigaction sa;
 
 	memset(&sa, 0, sizeof(sa));
@@ -691,6 +833,8 @@ void setup_handlers(void) {
 	sigaction(SIGHUP, &sa, NULL);
 	sigaction(SIGQUIT, &sa, NULL);
 
+	timer.it_value = globals.update_timer;
+	timer.it_interval = globals.update_timer;
 	sigfillset(&sa.sa_mask);
 	sa.sa_handler = &show_progress;
 	sigaction(SIGALRM, &sa, NULL);
@@ -700,19 +844,17 @@ void setup_handlers(void) {
 	sa.sa_handler = NULL;
 	sa.sa_sigaction = &handle_child_exit;
 	sigaction(SIGCHLD, &sa, NULL);
-
 }
 
 int do_testing() {
 	sigset_t signal_mask;
 	int ret, i;
 
-	globals.total_write_count = (globals.filesize - OFF_0 + globals.buf_size - 1) / globals.buf_size; // total number of writes by all threads
+	globals.total_write_count = (globals.filesize - globals.off0 + globals.buf_size - 1) / globals.buf_size; // total number of writes by all threads
 	// all threads will write at least (globals.total_write_count / globals.thread_count)
 	globals.extra_write_threads = globals.total_write_count % globals.thread_count;
 
 	global_output("file size will be %ld (0x%lx) bytes, and buffer size will be %lu (0x%lx)\n", globals.filesize, globals.filesize, globals.buf_size, globals.buf_size);
-
 
 	shared = mmap(NULL, sizeof(struct shared_struct), PROT_READ|PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
 	shared->exit_test = false;
@@ -721,7 +863,6 @@ int do_testing() {
 
 	globals.stdout_fd = dup(fileno(stdout));
 	globals.stderr_fd = dup(fileno(stderr));
-
 
 	if ((mkdir(globals.base_dir_path, 0777)) && errno != EEXIST) {
 		global_output("error creating base dir '%s': %m\n", globals.base_dir_path);
@@ -798,7 +939,6 @@ int do_testing() {
 		}
 	}
 
-
 	setup_handlers();
 
 	sigfillset(&signal_mask);
@@ -846,29 +986,126 @@ out:
 	return ret;
 }
 
+void do_init(char *exe) {
+	memset(&globals, 0, sizeof(globals));
+
+	globals.exe = exe;
+	globals.proc_count = DEFAULT_PROC_COUNT;
+	globals.thread_count = DEFAULT_THREAD_COUNT;
+	globals.test_count = DEFAULT_TEST_COUNT;
+	globals.pid = getpid();
+	globals.filesize = DEFAULT_FILE_SIZE;
+	globals.buf_size = DEFAULT_BUF_SIZE;
+	globals.off0 = DEFAULT_OFF_0;
+
+	globals.base_dir_fd = -1;
+	globals.testfile_dir_fd = -1;
+	globals.log_dir_fd = -1;
+
+	globals.verify_mode = verify_mode_end; // or verify_mode_ongoing
+	globals.update_timer = (struct timeval){ .tv_sec = DEFAULT_UPDATE_DELAY_S, .tv_usec = DEFAULT_UPDATE_DELAY_US };
+}
+
+int parse_args(int argc, char *argv[]) {
+	int opt = 0, long_index = 0;
+	static struct option long_options[] = {
+		{ "file_size",	required_argument, 0, 's' },
+		{ "buffer_size",	required_argument, 0, 'b' },
+		{ "processes",	required_argument, 0, 'p' },
+		{ "threads",	required_argument, 0, 't' },
+		{ "offset",	required_argument, 0, 'o' },
+		{ "test_count",	required_argument, 0, 'c' },
+		{ "update_frequency", required_argument, 0, 'u' },
+
+		{ "verify_end",	no_argument, 0, 'v' },
+		{ "verify_continuous",	no_argument, 0, 'V' },
+		{ NULL, 0, 0, 0 },
+	};
+	int ret = EXIT_SUCCESS;
+
+	do_init(argv[0]);
+
+	opterr = 0;
+	while ((opt = getopt_long(argc, argv, "s:b:p:t:o:c:u:vV", long_options, &long_index)) != -1) {
+		switch (opt) {
+			case 's':
+				globals.filesize = parse_size(optarg);
+
+				if (globals.filesize == 0)
+					return msg_usage(EXIT_FAILURE, "unable to parse filesize '%s'\n", optarg);
+				if (globals.filesize < MIN_FILE_SIZE || globals.filesize > MAX_FILE_SIZE)
+					return msg_usage(EXIT_FAILURE, "invalid file size '%s'; size must be between %llu and %llu\n", optarg, MIN_FILE_SIZE, MAX_FILE_SIZE);
+				break;
+			case 'b':
+				globals.buf_size = parse_size(optarg);
+				if (globals.buf_size == 0)
+					return msg_usage(EXIT_FAILURE, "unable to parse buffer size '%s'\n", optarg);
+				if (globals.buf_size < MIN_BUF_SIZE || globals.buf_size > MAX_BUF_SIZE)
+					return msg_usage(EXIT_FAILURE, "invalid bufrer size '%s'; size must be between %llu and %llu\n", optarg, MIN_BUF_SIZE, MAX_BUF_SIZE);
+				break;
+			case 'p':
+				globals.proc_count = strtoul(optarg, NULL, 10);
+				if (globals.proc_count < 1 || globals.proc_count > MAX_PROC_COUNT)
+					return msg_usage(EXIT_FAILURE, "invalid number of proceses '%s'; test process count must be between 1 and %d\n", optarg, MAX_PROC_COUNT);
+				break;
+			case 't':
+				globals.thread_count = strtoul(optarg, NULL, 10);
+				if (globals.thread_count < 1 || globals.thread_count > MAX_THREAD_COUNT)
+					return msg_usage(EXIT_FAILURE, "invalid thread count '%s'; thread count must be be between 1 and %d\n", optarg, MAX_THREAD_COUNT);
+				break;
+			case 'o':
+				globals.off0 = strtoul(optarg, NULL, 10);
+				break;
+			case 'c':
+				globals.test_count = strtoul(optarg, NULL, 10);
+				break;
+			case 'u': {
+				char *endp;
+				globals.update_timer.tv_sec = strtoul(optarg, &endp, 10);
+				if (globals.update_timer.tv_sec == ULONG_MAX) {
+					if (errno == ERANGE)
+						return msg_usage(EXIT_FAILURE, "could not convert '%s' to seconds\n", optarg);
+					return msg_usage(EXIT_FAILURE, "unknown parsing error with '%s': %m\n", optarg);
+				}
+				if (*endp == '.') {
+					uint64_t mult = 1000000;
+
+					endp++;
+					while (isdigit(*endp)) {
+						globals.update_timer.tv_usec += mult * (*endp - '0');
+						mult /= 10;
+						endp++;
+
+						if (!mult)
+							break;
+					}
+				}
+				break;
+			}
+			case 'v': globals.verify_mode = verify_mode_end; break;
+			case 'V': globals.verify_mode = verify_mode_ongoing ; break;
+			default: {
+				return msg_usage(EXIT_FAILURE, "unrecognized option '%c'\n", opt);
+				break;
+			}
+		}
+	}
+
+	if (optind >= argc)
+		return msg_usage(EXIT_FAILURE, "No path specified\n");
+	globals.base_dir_path = argv[optind];
+
+	return ret;
+}
 
 int main(int argc, char *argv[]) {
 	int ret = EXIT_FAILURE;
 
-	do_init(argv[0]);
-
-	if (argc < 2)
-		return usage(EXIT_FAILURE);
-
-	globals.base_dir_path = argv[1];
-
-	if (argc > 2) {
-		globals.proc_count = strtoul(argv[2], NULL, 10);
-		if (globals.proc_count < 1 || globals.proc_count > MAX_PROC)
-			return msg_usage(EXIT_FAILURE, "test process count must be between 1 and %d\n", MAX_PROC);
-	}
-	if (argc > 3) {
-		globals.thread_count = strtoul(argv[3], NULL, 10);
-		if (globals.thread_count < 1 || globals.thread_count > MAX_THREADS)
-			return msg_usage(EXIT_FAILURE, "thread count should be between 1 and %d\n", MAX_THREADS);
-	}
+	if ((ret = parse_args(argc, argv)) != EXIT_SUCCESS)
+		goto out;
 
 	ret = do_testing();
 
-	return ret;;
+out:
+	return ret;
 }
