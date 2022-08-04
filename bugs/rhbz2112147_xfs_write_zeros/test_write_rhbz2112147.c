@@ -6,6 +6,7 @@
 	replicates a bug where simultaneous writes to a page may end up with
 	zero-byte data
 
+	# gcc -Wall -lpthread -lm -g ttest_write_rhbz2112147.c -o test_write_rhbz2112147
 
 */
 
@@ -36,7 +37,7 @@
 
 #define DEFAULT_TEST_COUNT	(100)
 
-#define DEFAULT_PROC_COUNT	(5)
+#define DEFAULT_PROC_COUNT	(40)
 #define MAX_PROC_COUNT		(50)
 
 #define DEFAULT_THREAD_COUNT	(3)
@@ -105,20 +106,23 @@ struct thread_args {
 	char *buf;
 
 	pthread_t thread;
-	int id;
-	unsigned char c;
+
 	off_t offset;
 	size_t size;
-	int write_count;
 
 	pid_t tid;
+	int id;
+	int write_count;
+
+	unsigned char c;
 };
 
 struct proc_args {
 	int proc_num;
 //	struct thread_args thread_args[MAX_THREAD_COUNT];
 	char tstamp_buf[TSTAMP_BUF_SIZE]; // may only be used by the main test process
-	struct thread_args thread_args[MAX_THREAD_COUNT];
+//	struct thread_args thread_args[MAX_THREAD_COUNT];
+	struct thread_args *thread_args;
 	char *name;
 	char *log_name;
 
@@ -138,37 +142,38 @@ struct proc_args {
 } *proc_args;
 
 struct globals {
-	char tstamp_buf[TSTAMP_BUF_SIZE]; // may only be used by the main controlling process
-	struct timeval update_timer;
+        pid_t cpids[MAX_PROC_COUNT];
+        char tstamp_buf[TSTAMP_BUF_SIZE]; // may only be used by the main controlling process
+        struct timeval update_timer;
 
-	char *exe;
-	char *base_dir_path;
+        char *exe;
+        char *base_dir_path;
 
-	int stdout_fd;
-	int stderr_fd;
+        size_t filesize;
+        size_t buf_size;
 
-	pid_t pid;
-	int base_dir_fd;
-	int testfile_dir_fd;
-	int log_dir_fd;
+        struct proc_args *proc;
 
-	verify_mode verify_mode;
+        int stdout_fd;
+        int stderr_fd;
 
-	int off0;
-	int proc_count;
-	int running_proc_count;
-	int test_count;
-	int thread_count;
+        pid_t pid;
+        int base_dir_fd;
+        int testfile_dir_fd;
+        int log_dir_fd;
 
-	int total_write_count; // total number of writes required to fill the file
-	int extra_write_threads; // number of threads which will write an extra time
-	size_t filesize;
-	size_t buf_size;
+        verify_mode verify_mode;
 
-	struct proc_args *proc;
-	pid_t cpids[MAX_PROC_COUNT];
+        int off0;
+        int proc_count;
+        int running_proc_count;
+        int test_count;
+        int thread_count;
 
-	int replicated;
+        int total_write_count; // total number of writes required to fill the file
+        int extra_write_threads; // number of threads which will write an extra time
+
+        int replicated;
 } globals;
 
 
@@ -413,7 +418,7 @@ int check_replicated(void) {
 		off_t offset = ptr - map;
 		int dump_bytes = min(DUMP_BYTE_COUNT, st.st_size - offset + (DUMP_BYTE_COUNT>>1));
 
-		proc_output("error: found zero bytes at offset 0x%08lx\n", offset);
+		proc_output("error: found zero bytes at offset 0x%08lx (%lu)\n", offset, offset);
 
 		if (dump_bytes > 0) {
 			hexdump("", ptr - (DUMP_BYTE_COUNT>>1), offset - (DUMP_BYTE_COUNT>>1), dump_bytes);
@@ -484,13 +489,12 @@ off_t compare_mem(void *_a, void *_b, size_t len) {
 }
 #pragma GCC pop_options
 
-
 void *write_func(void *args_ptr) {
 	struct thread_args *thread_args = (struct thread_args *)args_ptr;
 
 	thread_args->tid = gettid();
 
-	thread_output("alive, initial offset 0x%lx\n", thread_args->offset);
+	thread_output("alive, initial offset 0x%lx (%lu)\n", thread_args->offset, thread_args->offset);
 	if ((thread_args->buf = malloc(globals.buf_size)) == NULL) {
 		thread_output("error allocating buffer: %m\n");
 		goto out;
@@ -498,7 +502,7 @@ void *write_func(void *args_ptr) {
 
 	do {
 		size_t this_write_count = min(globals.buf_size, globals.filesize - thread_args->offset);
-		ssize_t wrsize;
+		ssize_t written;
 
 		if (get_exit()) { // just skip to the end
 			off_t offset = thread_args->offset;
@@ -510,22 +514,22 @@ void *write_func(void *args_ptr) {
 				offset += (globals.buf_size * globals.thread_count);
 			}
 			break;
-		} else {
-
-			memset(thread_args->buf, fill_chars[thread_args->c], this_write_count);
-
-			pthread_barrier_wait(&proc_args->bar);
 		}
 
-		thread_output("write %d, offset 0x%lx, count 0x%lx, '%c' starting write\n",
-			thread_args->write_count + 1, thread_args->offset, this_write_count, fill_chars[thread_args->c]);
+		memset(thread_args->buf, fill_chars[thread_args->c], this_write_count);
+		pthread_barrier_wait(&proc_args->bar);
 
-		wrsize = pwrite(proc_args->fd, thread_args->buf, this_write_count, thread_args->offset);
+		thread_output("write %d, offset 0x%lx (%lu), count 0x%lx (%lu), '%c' starting write\n",
+			thread_args->write_count + 1, thread_args->offset, thread_args->offset,
+			this_write_count, this_write_count, fill_chars[thread_args->c]);
 
-		thread_output("write %d, offset 0x%lx, count 0x%lx, '%c' complete (0x%lx written)\n",
-			thread_args->write_count + 1, thread_args->offset, this_write_count, fill_chars[thread_args->c], wrsize);
+		written = pwrite(proc_args->fd, thread_args->buf, this_write_count, thread_args->offset);
 
-		if (wrsize != this_write_count) {
+		thread_output("write %d, offset 0x%lx (%lu), count 0x%lx (%lu), '%c' complete (0x%lx (%lu) written)\n",
+			thread_args->write_count + 1, thread_args->offset, thread_args->offset,
+			this_write_count, this_write_count, fill_chars[thread_args->c], written, written);
+
+		if (written != this_write_count) {
 			thread_output("error writing to file: %m\n");
 			goto out;
 		}
@@ -534,7 +538,6 @@ void *write_func(void *args_ptr) {
 		thread_args->write_count++;
 
 		if (globals.verify_mode == verify_mode_ongoing) {
-#if 1 /* use mmap to verify */
 			void *map;
 
 			if ((map = mmap(NULL, this_write_count, PROT_READ, MAP_SHARED, proc_args->fd, thread_args->offset)) == MAP_FAILED) {
@@ -542,31 +545,18 @@ void *write_func(void *args_ptr) {
 				globals.verify_mode = verify_mode_end; // will this even take?
 			} else {
 				size_t matched_chars = compare_mem(thread_args->buf, map, this_write_count);
-				if ((munmap(map, this_write_count)) < 0) {
+				if ((munmap(map, this_write_count)) < 0)
 					thread_output("munmap returned an error after verifying file contents: %m\n");
-				}
 
 				if (matched_chars != this_write_count) {
-					thread_output("re-read data does not match written data; mismatch at offset 0x%lx\n", thread_args->offset + matched_chars);
+					thread_output("re-read data does not match written data; mismatch at offset 0x%lx (%lu)\n",
+						thread_args->offset + matched_chars, thread_args->offset + matched_chars);
 					thread_args->offset += (globals.buf_size * globals.thread_count);
 					set_exit(true);
 
 					continue;	
 				}
 			}
-#else /* re-read to verify */
-			tmpbuf = malloc(this_write_count); // TODO: check return value (if we keep this code)
-			pread(proc_args->fd, tmpbuf, this_write_count, thread_args->offset);
-			int matched_chars = compare_mem(thread_args->buf, tmpbuf, this_write_count);
-			free(tmpbuf);
-			if (matched_chars != this_write_count) {
-				thread_output("re-read data does not match written data; mismatch at offset 0x%lx\n", thread_args->offset + matched_chars);
-				thread_args->offset += (globals.buf_size * globals.thread_count);
-				set_exit(true);
-
-				continue;
-			}
-#endif
 		}
 
 		thread_args->offset += (globals.buf_size * globals.thread_count);
@@ -579,7 +569,6 @@ void *write_func(void *args_ptr) {
 		pthread_barrier_wait(&proc_args->bar);
 	} else
 		thread_output("writes complete\n");
-
 out:
 	if (thread_args->buf)
 		free(thread_args->buf);
@@ -631,7 +620,8 @@ void truncate_test_file(void) {
 	}
 
 	if (truncate_size < st.st_size) {
-		proc_output("truncating file from 0x%lx to size known to have completed: 0x%lx\n", st.st_size, truncate_size);
+		proc_output("truncating file from 0x%lx (%lu) to size known to have completed: 0x%lx (%lu)\n",
+			st.st_size, st.st_size, truncate_size, truncate_size);
 		ftruncate(proc_args->fd, truncate_size);
 	} else {
 //		proc_output("well... suppose I don't really need to truncate to its current size or larger (from %lu to %lu)\n", st.st_size, truncate_size);
@@ -686,7 +676,7 @@ int do_one_test(void) {
 			ret = EXIT_FAILURE;
 			goto out;
 		}
-		proc_output("thread %d wrote to file size 0x%lx\n", i, proc_args->thread_args[i].size);
+		proc_output("thread %d wrote to file size 0x%lx (%lu)\n", i, proc_args->thread_args[i].size, proc_args->thread_args[i].size);
 
 	}
 
@@ -747,6 +737,7 @@ int do_one_proc(int proc_num) {
 
 	proc_output("alive\n"); // repeat ourselves, now that we've got our own logfile
 
+	proc_args->thread_args = malloc(sizeof(struct thread_args) * globals.thread_count);
 	for (proc_args->test_count = 1 ; proc_args->test_count <= globals.test_count ; proc_args->test_count++) {
 		incr_test_count(proc_args->proc_num);
 
@@ -773,6 +764,8 @@ out:
 	free(proc_args->log_name);
 	if (proc_args->fd >= 0)
 		close(proc_args->fd);
+	if (proc_args->thread_args)
+		free(proc_args->thread_args);
 
 	dup3(globals.stdout_fd, fileno(stdout), 0); // restore stdout, close log
 	dup3(globals.stderr_fd, fileno(stderr), 0); // restore stderr
@@ -780,7 +773,6 @@ out:
 }
 
 int usage(int ret) {
-//	output("usage; %s <base_directory_path> [<process_count> [<thread_count>]]\n", globals.exe);
 	output("usage; %s [<options>] <base_directory_path>\n", globals.exe);
 
 	output("\t-s | --file_size=<size>\t\t(default: %llu, min: %llu, max: %llu)\n", DEFAULT_FILE_SIZE, MIN_FILE_SIZE, MAX_FILE_SIZE);
@@ -855,6 +847,7 @@ int do_testing() {
 	globals.extra_write_threads = globals.total_write_count % globals.thread_count;
 
 	global_output("file size will be %ld (0x%lx) bytes, and buffer size will be %lu (0x%lx)\n", globals.filesize, globals.filesize, globals.buf_size, globals.buf_size);
+	global_output("creating %d test processes, each having %d threads\n", globals.proc_count, globals.thread_count);
 
 	shared = mmap(NULL, sizeof(struct shared_struct), PROT_READ|PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
 	shared->exit_test = false;
@@ -982,6 +975,9 @@ out:
 		close(globals.log_dir_fd);
 	if (globals.base_dir_fd >= 0)
 		close(globals.base_dir_fd);
+
+	if (globals.proc)
+		munmap(globals.proc, sizeof(struct proc_args) * globals.proc_count);
 
 	return ret;
 }
