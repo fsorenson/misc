@@ -89,6 +89,7 @@
 #include <sys/mman.h>
 #include <sys/wait.h>
 #include <sys/time.h>
+#include <sys/utsname.h>
 
 #define DEFAULT_TEST_COUNT	(100)
 
@@ -200,6 +201,9 @@ struct proc_args {
 struct globals {
         pid_t cpids[MAX_PROC_COUNT];
         char tstamp_buf[TSTAMP_BUF_SIZE]; // may only be used by the main controlling process
+
+	struct utsname uts;
+
         struct timeval update_timer;
 
         char *exe;
@@ -937,6 +941,7 @@ int do_testing() {
 	// all threads will write at least (globals.total_write_count / globals.thread_count)
 	globals.extra_write_threads = globals.total_write_count % globals.thread_count;
 
+	global_output("test running on '%s' arch '%s' kernel '%s'\n", globals.uts.nodename, globals.uts.machine, globals.uts.release);
 	global_output("base directory for testing is '%s'\n", globals.canonical_base_dir_path);
 
 	global_output("file size will be 0x%lx (%lu) bytes, and buffer size will be 0x%lx (%lu)\n", globals.filesize, globals.filesize, globals.buf_size, globals.buf_size);
@@ -1080,6 +1085,8 @@ void do_init(char *exe) {
 
 	globals.verify_mode = verify_mode_end; // or verify_mode_ongoing
 	globals.update_timer = (struct timeval){ .tv_sec = DEFAULT_UPDATE_DELAY_S, .tv_usec = DEFAULT_UPDATE_DELAY_US };
+
+	uname(&globals.uts);
 }
 
 int parse_args(int argc, char *argv[]) {
