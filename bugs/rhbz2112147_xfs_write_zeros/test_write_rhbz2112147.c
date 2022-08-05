@@ -728,6 +728,7 @@ void truncate_test_file(void) {
 int do_one_test(void) {
 	int i, ret = EXIT_FAILURE;
 	struct stat st;
+	bool pthread_barrier_initialized = false;
 
 	proc_output("starting test #%d\n", proc_args->test_count);
 
@@ -755,6 +756,7 @@ int do_one_test(void) {
 		proc_output("error calling pthread_barrier_init(): %m\n");
 		goto out;
 	}
+	pthread_barrier_initialized = true;
 
 	for (i = 0; i < globals.thread_count; i++) {
 		proc_args->thread_args[i].id = i;
@@ -792,10 +794,8 @@ int do_one_test(void) {
 	}
 
 out:
-	if ((pthread_barrier_destroy(&proc_args->bar))) {
-		proc_output("error calling pthread_barrier_destroy(): %m\n");
-		// don't consider this fatal
-	}
+	if ((pthread_barrier_initialized && pthread_barrier_destroy(&proc_args->bar)))
+		proc_output("error calling pthread_barrier_destroy(): %m\n"); // don't consider this fatal
 
 	if (proc_args->fd >= 0) {
 		if (close(proc_args->fd))
