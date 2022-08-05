@@ -93,10 +93,10 @@
 #define DEFAULT_TEST_COUNT	(100)
 
 #define DEFAULT_PROC_COUNT	(40)
-#define MAX_PROC_COUNT		(50)
+#define MAX_PROC_COUNT		(100)
 
 #define DEFAULT_THREAD_COUNT	(3)
-#define MAX_THREAD_COUNT	(100)
+#define MAX_THREAD_COUNT	(1000)
 
 
 #define OFF_0			(768UL)
@@ -117,7 +117,7 @@
 #define MAX_FILE_SIZE		(10 * GiB)
 
 #define DEFAULT_UPDATE_DELAY_S	(5)
-#define DEFAULT_UPDATE_DELAY_US	(1230)
+#define DEFAULT_UPDATE_DELAY_US	(0)
 
 #define TSTAMP_BUF_SIZE		(32)
 #define DUMP_BYTE_COUNT		(128)
