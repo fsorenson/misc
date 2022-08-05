@@ -750,6 +750,21 @@ int do_one_test(void) {
 	proc_output("opened '%s/testfiles/%s' - device %d:%d inode %lu\n",
 		globals.base_dir_path, proc_args->name, major(st.st_dev), minor(st.st_dev), st.st_ino);
 
+	{ // fill the first off0 bytes so that the only 0-byte contents are actually the bug
+		char *buf;
+		int ret2;
+		if ((buf = malloc(globals.off0)) == NULL) {
+			proc_output("error allocating memory to write initial off0 bytes to test file: %m\n");
+			goto out;
+		}
+		memset(buf, fill_chars[FILL_LEN - 1], globals.off0);
+		if ((ret2 = pwrite(proc_args->fd, buf, globals.off0, 0)) != globals.off0)
+			proc_output("error writing initial off0 bytes to test file: %m\n");
+		free(buf);
+		if (ret2 != globals.off0)
+			goto out;
+	}
+
 	memset(proc_args->thread_args, 0, sizeof(struct thread_args) * globals.thread_count);
 
 	if ((pthread_barrier_init(&proc_args->bar, NULL, globals.thread_count))) {
