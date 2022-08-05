@@ -6,7 +6,62 @@
 	replicates a bug where simultaneous writes to a page may end up with
 	zero-byte data
 
-	# gcc -Wall -lpthread -lm -g ttest_write_rhbz2112147.c -o test_write_rhbz2112147
+	# gcc -Wall -lpthread -lm -g test_write_rhbz2112147.c -o test_write_rhbz2112147
+
+	# ./test_write_rhbz2112147 <path_to_test_directory> [<options>]
+
+	(execute without options to see the usage message)
+
+
+	the reproducer will:
+	 A. create <test_directory>/testfiles and <test_directory>/logs
+	 B. spawn 40 (default; configurable) test processes
+	  each test process will:
+	   1. redirect stdout/stderr to a logfile at <test_directory>/logs/test##.log
+	   2. delete the test file <test_directory>/testfiles/test##
+	   3. create-open the file <test_directory>/testfiles/test## for testing
+	   4. spawn 3 (default; configurable) threads
+	    the threads will work together to write as much as 200 MiB (default; configurable)
+		of non-zero data to the testfile, beginning at offset 0x300 (default; configurable)
+	    a. all threads will wait at a barrier for synchronization
+	    b. thread 0 will write 1 MiB (default; configurable) starting at offset 0x300
+	    c. thread 1 will write 1 MiB starting at offset 0x10300 (the previous offset + 1 MiB)
+	    d. thread 2 will write 1 MiB starting at offset 0x20300 (the previous offset + 1 MiB)
+
+	    e. all threads will wait at a barrier for synchronization
+	    f. thread 0 will write 1 MiB starting at offset 0x30300
+	    g. thread 1 will write 1 MiB starting at offset 0x40300
+	    h. thread 2 will write 1 MiB starting at offset 0x50300
+
+	    i. all threads will wait at a barrier for synchronization
+	    ...
+
+	    ?. exit after writing its portions of the test file
+
+	   5. the test process waits for completion of the child threads
+	   6. close the test file
+	   7. verify that the contents of the file are non-zero
+	    a. if bug is reproduced:
+	      (1) set a flag to denote successful reproduction
+	    b. if bug is not reproduced:
+	      (1) clear the state of the threads
+	      (2) loop back to '2' above for as many as 100 (default; configurable) attempts
+
+	   (after bug is reproduced or test count is exhausted)
+	   8. close the logfile
+	   9. exit
+
+	 C. main process waits for test process exit
+	  1. every 5 seconds (default; configurable) output message giving the status of the
+		testing, including the number of running processes, total attempts to
+		replicate the bug, and number of processes which have replicated it
+	 D. examine the process's flag which denotes whether reproduction was successful
+	   1. if bug is reproduced:
+	     a. sets a global flag to indicate that all processes and threads should exit
+         E. wait for all test processes to exit
+	 F. count the number of successful tests
+
+
 
 */
 
