@@ -183,6 +183,7 @@ struct proc_args {
 
 	unsigned int major;
 	unsigned int minor;
+	off_t replicated_offset;
 	ino_t inode;
 
 	pid_t pid;
@@ -203,9 +204,11 @@ struct globals {
 
         char *exe;
         char *base_dir_path;
+	char *canonical_base_dir_path;
 
         size_t filesize;
         size_t buf_size;
+        off_t off0;
 
         struct proc_args *proc;
 
@@ -219,7 +222,6 @@ struct globals {
 
         verify_mode verify_mode;
 
-        int off0;
         int proc_count;
         int running_proc_count;
         int test_count;
@@ -319,17 +321,18 @@ void handle_child_exit(int sig, siginfo_t *info, void *ucontext) {
 		for (i = 0 ; i < globals.proc_count ; i++) {
 			if (globals.cpids[i] == pid) {
 				if (check_proc_replicated(i)) {
-					global_sig_output("child %d (pid %d) replicated the bug on test #%d with device %d:%d inode %lu\n",
-						i, pid, globals.proc[i].test_count, globals.proc[i].major, globals.proc[i].minor, globals.proc[i].inode);
+					global_sig_output("test proc %d (pid %d) replicated the bug on test #%d with device %d:%d inode %lu at offset 0x%lx (%lu)\n",
+						i, pid, globals.proc[i].test_count, globals.proc[i].major, globals.proc[i].minor, globals.proc[i].inode,
+						globals.proc[i].replicated_offset, globals.proc[i].replicated_offset);
 
 					globals.replicated++;
 					set_exit(true); // tell everyone else to exit
 				} else {
 					if (WIFSIGNALED(status)) {
-						global_sig_output("child %d (pid %d) exiting with signal %d%s\n", i, pid,
+						global_sig_output("test proc %d (pid %d) exiting with signal %d%s\n", i, pid,
 							WTERMSIG(info->si_signo), WCOREDUMP(status) ? " and dumped core" : "");
 					} else
-						global_sig_output("child %d (pid %d) exited without replicating the bug\n", i, pid);
+						global_sig_output("test proc %d (pid %d) exited without replicating the bug\n", i, pid);
 				}
 				globals.cpids[i] = 0;
 				globals.proc[i].pid = 0;
@@ -450,7 +453,7 @@ void hexdump(const char *pre, const char *addr, off_t start_offset, size_t len) 
 	}
 }
 
-int check_replicated(void) {
+off_t check_replicated(void) {
 	char *map, *ptr;
 	int ret = 0, fd;
 	struct stat st;
@@ -475,10 +478,9 @@ int check_replicated(void) {
 
 		proc_output("error: found zero bytes at offset 0x%08lx (%lu)\n", offset, offset);
 
-		if (dump_bytes > 0) {
+		if (dump_bytes > 0)
 			hexdump("", ptr - (DUMP_BYTE_COUNT>>1), offset - (DUMP_BYTE_COUNT>>1), dump_bytes);
-			ret = 1;
-		}
+		ret = offset;
 	} else {
 		proc_output("completed without replicating the bug\n");
 		ret = 0;
@@ -895,13 +897,16 @@ void setup_handlers(void) {
 
 int do_testing() {
 	sigset_t signal_mask;
-	int ret, i;
+	int ret = EXIT_FAILURE, i;
 
 	globals.total_write_count = (globals.filesize - globals.off0 + globals.buf_size - 1) / globals.buf_size; // total number of writes by all threads
 	// all threads will write at least (globals.total_write_count / globals.thread_count)
 	globals.extra_write_threads = globals.total_write_count % globals.thread_count;
 
-	global_output("file size will be %ld (0x%lx) bytes, and buffer size will be %lu (0x%lx)\n", globals.filesize, globals.filesize, globals.buf_size, globals.buf_size);
+	global_output("base directory for testing is '%s'\n", globals.canonical_base_dir_path);
+
+	global_output("file size will be 0x%lx (%lu) bytes, and buffer size will be 0x%lx (%lu)\n", globals.filesize, globals.filesize, globals.buf_size, globals.buf_size);
+	global_output("initial offset is 0x%lx (%ld)\n", globals.off0, globals.off0);
 	global_output("creating %d test processes, each having %d threads\n", globals.proc_count, globals.thread_count);
 
 	shared = mmap(NULL, sizeof(struct shared_struct), PROT_READ|PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
@@ -1012,17 +1017,19 @@ int do_testing() {
 	}
 
 	if (globals.replicated) {
-//		output("%s  [%d] exiting after replicating the bug %d time%s\n",
-//			tstamp(globals.tstamp_buf), globals.pid, globals.replicated, globals.replicated == 1 ? "" : "s");
-		global_output("exiting after replicating the bug %d time%s\n",
+		global_output("replicated the bug %d time%s\n",
 			globals.replicated, globals.replicated == 1 ? "" : "s");
-		ret = EXIT_SUCCESS;
-	} else {
-//		output("%s  [%d] exiting without replicating the bug\n", tstamp(globals.tstamp_buf), globals.pid);
-		global_output("exiting without replicating the bug\n");
-		ret = EXIT_FAILURE;
-	}
-
+		for (i = 0 ; i < globals.proc_count ; i++) {
+			if (check_proc_replicated(i)) {
+				global_output("test proc %d on test #%d with %s/testfiles/%s - device %d:%d inode %lu\n",
+					i, globals.proc[i].test_count, globals.canonical_base_dir_path, globals.proc[i].name,
+					globals.proc[i].major, globals.proc[i].minor, globals.proc[i].inode);
+				output("    replicated at offset 0x%lx (%lu)\n",
+					globals.proc[i].replicated_offset, globals.proc[i].replicated_offset);
+			}
+		}
+	} else
+		global_output("did not replicate the bug\n");
 out:
 	if (globals.testfile_dir_fd >= 0)
 		close(globals.testfile_dir_fd);
@@ -1144,7 +1151,9 @@ int parse_args(int argc, char *argv[]) {
 
 	if (optind >= argc)
 		return msg_usage(EXIT_FAILURE, "No path specified\n");
-	globals.base_dir_path = argv[optind];
+	globals.base_dir_path = argv[optind++];
+	if ((globals.canonical_base_dir_path = canonicalize_file_name(globals.base_dir_path)) == NULL)
+		return msg_usage(EXIT_FAILURE, "Unable to canonicalize '%s': %m\n", globals.base_dir_path);
 
 	return ret;
 }
@@ -1158,5 +1167,8 @@ int main(int argc, char *argv[]) {
 	ret = do_testing();
 
 out:
+	if (globals.canonical_base_dir_path)
+		free(globals.canonical_base_dir_path);
+
 	return ret;
 }
