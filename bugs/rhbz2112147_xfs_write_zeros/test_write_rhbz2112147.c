@@ -243,6 +243,12 @@ pid_t gettid(void) {
 #define PASTE(a,b) _PASTE(a,b)
 #define PASTE3(a,b,c) _PASTE3(a,b,c)
 
+#define free_str(addr) do { \
+	if (addr) { \
+		free(addr); \
+		addr = NULL; \
+	} \
+} while (0)
 
 #define output(args...) do { \
 	printf(args); \
@@ -489,6 +495,36 @@ off_t check_replicated(void) {
 out_close:
 	close(fd);
 
+	return ret;
+}
+
+void free_proc_paths(void) {
+	int i;
+
+	for (i = 0 ; i < globals.proc_count ; i++) {
+		free_str(globals.proc[i].name);
+		free_str(globals.proc[i].log_name);
+	}
+}
+int alloc_proc_paths(void) {
+	int ret = EXIT_FAILURE, i;
+
+	for (i = 0 ; i < globals.proc_count ; i++) {
+		if ((asprintf(&globals.proc[i].name, "test%d", i)) < 0) {
+			ret = errno;
+			globals.proc[i].name = NULL;
+			free_proc_paths();
+			goto out;
+		}
+		if ((asprintf(&globals.proc[i].log_name, "test%d.log", i)) < 0) {
+			ret = errno;
+			globals.proc[i].log_name = NULL;
+			free_proc_paths();
+			goto out;
+		}
+	}
+	ret = EXIT_SUCCESS;
+out:
 	return ret;
 }
 
@@ -817,8 +853,6 @@ int do_one_proc(int proc_num) {
 	}
 
 out:
-	free(proc_args->name);
-	free(proc_args->log_name);
 	if (proc_args->fd >= 0)
 		close(proc_args->fd);
 	if (proc_args->thread_args)
@@ -944,26 +978,10 @@ int do_testing() {
 		goto out;
 	}
 
-	for (i = 0 ; i < globals.proc_count ; i++) {
-		if ((asprintf(&globals.proc[i].name, "test%d", i)) < 0) {
-			int j;
-			global_output("error allocating memory for test file name 'test%d': %m\n", i);
-			for (j = 0 ; j < i ; j++) {
-				free(globals.proc[i].name);
-				free(globals.proc[i].log_name);
-			}
-			goto out;
-		}
-		if ((asprintf(&globals.proc[i].log_name, "test%d.log", i)) < 0) {
-			int j;
-			global_output("error allocating memory for log file name 'test%d.log': %m\n", i);
-			free(globals.proc[i].name);
-			for (j = 0 ; j < i ; j++) {
-				free(globals.proc[j].name);
-				free(globals.proc[j].log_name);
-			}
-			goto out;
-		}
+	if ((ret = alloc_proc_paths()) != EXIT_SUCCESS) {
+		global_output("error allocating memory for test process paths: %s\n", strerror(ret));
+		ret = EXIT_FAILURE;
+		goto out;
 	}
 
 	set_exit(false);
@@ -979,8 +997,6 @@ int do_testing() {
 			globals.proc[i].pid = cpid;
 			global_output("forked test proc %d as pid %d\n", i, globals.proc[i].pid);
 
-			free(globals.proc[i].name); // at least free in the parent process
-			free(globals.proc[i].log_name);
 		} else {
 			int j;
 
@@ -1038,8 +1054,10 @@ out:
 	if (globals.base_dir_fd >= 0)
 		close(globals.base_dir_fd);
 
-	if (globals.proc)
+	if (globals.proc) {
+		free_proc_paths();
 		munmap(globals.proc, sizeof(struct proc_args) * globals.proc_count);
+	}
 
 	return ret;
 }
