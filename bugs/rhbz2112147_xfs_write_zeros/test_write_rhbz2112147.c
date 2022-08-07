@@ -602,15 +602,18 @@ void *write_func(void *args_ptr) {
 		ssize_t written;
 
 		if (get_exit()) { // just skip to the end
+			thread_output("exiting early after writing %d times\n", thread_args->write_count);
+			goto out_wait;
+#if 0
 			off_t offset = thread_args->offset;
 
-			thread_output("exiting early after writing %d times\n", thread_args->write_count);
 			while (offset < globals.filesize) {
 				pthread_barrier_wait(&proc_args->bar);
 
 				offset += (globals.buf_size * globals.thread_count);
 			}
 			break;
+#endif
 		}
 
 		memset(thread_args->buf, fill_chars[thread_args->c], this_write_count);
@@ -628,7 +631,7 @@ void *write_func(void *args_ptr) {
 
 		if (written != this_write_count) {
 			thread_output("error writing to file: %m\n");
-			goto out;
+			goto out_error;
 		}
 
 		thread_args->size = thread_args->offset + this_write_count;
@@ -648,10 +651,12 @@ void *write_func(void *args_ptr) {
 				if (matched_chars != this_write_count) {
 					thread_output("re-read data does not match written data; mismatch at offset 0x%lx (%lu)\n",
 						thread_args->offset + matched_chars, thread_args->offset + matched_chars);
+					proc_args->replicated = true;
 					thread_args->offset += (globals.buf_size * globals.thread_count);
 					set_exit(true);
 
-					continue;	
+					goto out_wait;
+//					continue;	
 				}
 			}
 		}
@@ -670,6 +675,24 @@ out:
 	if (thread_args->buf)
 		free(thread_args->buf);
 	return NULL;
+
+out_error:
+	thread_output("exiting on error; waiting on all threads\n");
+	set_exit(true);
+
+out_wait: /* need to spin on the barrier until all threads get the message */
+	{
+		off_t offset = thread_args->offset;
+
+		while (offset < globals.filesize) {
+			pthread_barrier_wait(&proc_args->bar);
+
+			offset += (globals.buf_size * globals.thread_count);
+		}
+		if (thread_args->id >= globals.extra_write_threads) /* wait one extra time */
+			pthread_barrier_wait(&proc_args->bar);
+	}
+	goto out;
 }
 
 // if some of the threads got an extra write() in, need to reduce the file size to the largest size known to have been written by all threads
