@@ -77,12 +77,14 @@
 #include <string.h>
 #include <pthread.h>
 #include <syscall.h>
+#include <sys/syscall.h>
 #include <ctype.h>
 #include <signal.h>
 #include <errno.h>
 #include <math.h>
 #include <limits.h>
 #include <getopt.h>
+#include <dirent.h>
 #include <sys/stat.h>
 #include <sys/sysmacros.h>
 #include <sys/types.h>
@@ -90,6 +92,7 @@
 #include <sys/wait.h>
 #include <sys/time.h>
 #include <sys/utsname.h>
+#include <sys/vfs.h>
 
 #define DEFAULT_TEST_COUNT	(100)
 
@@ -122,6 +125,8 @@
 
 #define TSTAMP_BUF_SIZE		(32)
 #define DUMP_BYTE_COUNT		(128)
+
+#define GETDENTS_BUF_SIZE	(64ULL * KiB)
 
 #define FILL_CHARS "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789`~!@#$%^&*()-_=+[{]}\\|;:'\",<.>/?"
 static char fill_chars[] = FILL_CHARS;
@@ -247,7 +252,7 @@ pid_t gettid(void) {
 #define PASTE(a,b) _PASTE(a,b)
 #define PASTE3(a,b,c) _PASTE3(a,b,c)
 
-#define free_str(addr) do { \
+#define free_mem(addr) do { \
 	if (addr) { \
 		free(addr); \
 		addr = NULL; \
@@ -506,8 +511,8 @@ void free_proc_paths(void) {
 	int i;
 
 	for (i = 0 ; i < globals.proc_count ; i++) {
-		free_str(globals.proc[i].name);
-		free_str(globals.proc[i].log_name);
+		free_mem(globals.proc[i].name);
+		free_mem(globals.proc[i].log_name);
 	}
 }
 int alloc_proc_paths(void) {
@@ -671,9 +676,9 @@ void *write_func(void *args_ptr) {
 		pthread_barrier_wait(&proc_args->bar);
 	} else
 		thread_output("writes complete\n");
+
 out:
-	if (thread_args->buf)
-		free(thread_args->buf);
+	free_mem(thread_args->buf);
 	return NULL;
 
 out_error:
@@ -774,7 +779,7 @@ int do_one_test(void) {
 		globals.base_dir_path, proc_args->name, major(st.st_dev), minor(st.st_dev), st.st_ino);
 
 	{ // fill the first off0 bytes so that the only 0-byte contents are actually the bug
-		char *buf;
+		char *buf = NULL;
 		int ret2;
 		if ((buf = malloc(globals.off0)) == NULL) {
 			proc_output("error allocating memory to write initial off0 bytes to test file: %m\n");
@@ -783,7 +788,7 @@ int do_one_test(void) {
 		memset(buf, fill_chars[FILL_LEN - 1], globals.off0);
 		if ((ret2 = pwrite(proc_args->fd, buf, globals.off0, 0)) != globals.off0)
 			proc_output("error writing initial off0 bytes to test file: %m\n");
-		free(buf);
+		free_mem(buf);
 		if (ret2 != globals.off0)
 			goto out;
 	}
@@ -897,8 +902,7 @@ int do_one_proc(int proc_num) {
 out:
 	if (proc_args->fd >= 0)
 		close(proc_args->fd);
-	if (proc_args->thread_args)
-		free(proc_args->thread_args);
+	free_mem(proc_args->thread_args);
 
 	dup3(globals.stdout_fd, fileno(stdout), 0); // restore stdout, close log
 	dup3(globals.stderr_fd, fileno(stderr), 0); // restore stderr
@@ -1230,8 +1234,7 @@ int main(int argc, char *argv[]) {
 	ret = do_testing();
 
 out:
-	if (globals.canonical_base_dir_path)
-		free(globals.canonical_base_dir_path);
+	free_mem(globals.canonical_base_dir_path);
 
 	return ret;
 }
