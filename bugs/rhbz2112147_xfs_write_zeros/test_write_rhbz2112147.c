@@ -1019,6 +1019,9 @@ void setup_handlers(void) {
 int do_testing() {
 	sigset_t signal_mask;
 	int ret = EXIT_FAILURE, i;
+	off_t total_disk_required;
+	char *total_disk_required_str = NULL;
+	struct statfs stfs;
 
 	globals.total_write_count = (globals.filesize - globals.off0 + globals.buf_size - 1) / globals.buf_size; // total number of writes by all threads
 	// all threads will write at least (globals.total_write_count / globals.thread_count)
@@ -1030,6 +1033,10 @@ int do_testing() {
 	global_output("file size will be 0x%lx (%lu) bytes, and buffer size will be 0x%lx (%lu)\n", globals.filesize, globals.filesize, globals.buf_size, globals.buf_size);
 	global_output("initial offset is 0x%lx (%ld)\n", globals.off0, globals.off0);
 	global_output("creating %d test processes, each having %d threads\n", globals.proc_count, globals.thread_count);
+
+	total_disk_required_str = byte_units(total_disk_required);
+	global_output("tests will require approximately %lu bytes (%s) in the test directory (%s/testfiles)\n",
+		total_disk_required, total_disk_required_str, globals.canonical_base_dir_path);
 
 	shared = mmap(NULL, sizeof(struct shared_struct), PROT_READ|PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
 	shared->exit_test = false;
@@ -1056,6 +1063,41 @@ int do_testing() {
 		global_output("error opening testfile dir '%s/testfiles': %m\n", globals.canonical_base_dir_path);
 		goto out;
 	}
+
+	/* make sure we have enough disk space on this puppy */
+	if ((fstatfs(globals.testfile_dir_fd, &stfs)) < 0) {
+		global_output("error calling fstatfs() to verify free space: %m\n");
+		goto out;
+	}
+	if (total_disk_required > stfs.f_blocks * stfs.f_bsize) { /* can't even reclaim and have enough */
+		char *size_total = NULL;
+
+		size_total = byte_units(stfs.f_blocks * stfs.f_bsize);
+
+		global_output("error: disk space required (%lu - %s) exceeds total disk space (%lu - %s) at that location (%s)\n",
+			total_disk_required, total_disk_required_str, stfs.f_blocks * stfs.f_bsize, size_total,
+			globals.canonical_base_dir_path);
+
+		free_mem(size_total);
+		goto out;
+	}
+	if ((fstatfs(globals.testfile_dir_fd, &stfs)) < 0) {
+		global_output("error calling fstatfs() to verify free space: %m\n");
+		goto out;
+	}
+	if (total_disk_required > stfs.f_bfree * stfs.f_bsize) {
+		char *size_avail = NULL, *size_short = NULL;
+
+		size_avail = byte_units(stfs.f_bfree * stfs.f_bsize);
+		size_short = byte_units(total_disk_required - (stfs.f_bfree * stfs.f_bsize));
+
+		global_output("WARNING: disk space required (%lu - %s) exceeds available disk space (%lu - %s) at that location (%s) by at least %lu (%s)\n",
+			total_disk_required, total_disk_required_str, stfs.f_bfree * stfs.f_bsize, size_avail, globals.canonical_base_dir_path,
+			total_disk_required - (stfs.f_bfree * stfs.f_bsize), size_short);
+
+		free_mem(size_avail);
+		free_mem(size_short);
+
 		goto out;
 	}
 
@@ -1143,6 +1185,8 @@ out:
 		close(globals.log_dir_fd);
 	if (globals.base_dir_fd >= 0)
 		close(globals.base_dir_fd);
+
+	free_mem(total_disk_required_str);
 
 	if (globals.proc) {
 		free_proc_paths();
