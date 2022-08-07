@@ -1016,6 +1016,122 @@ void setup_handlers(void) {
 	sigaction(SIGCHLD, &sa, NULL);
 }
 
+struct linux_dirent64 {
+	ino64_t		d_ino;    /* 64-bit inode number */
+	off64_t		d_off;    /* 64-bit offset to next structure */
+	unsigned short	d_reclen; /* Size of this dirent */
+	unsigned char	d_type;   /* File type */
+	char		d_name[]; /* Filename (null-terminated) */
+};
+
+size_t reclaim_disk(int _dfd) {
+	struct linux_dirent64 *de;
+	char *getdents_buf = NULL, *bpos;
+	int nread;
+	size_t reclaimable = 0, reclaimed = 0, reclaimed_reuse = 0, reclaim_failed = 0;
+	int unreclaimable_objects = 0, dfd;
+	struct stat st;
+
+	global_output("attempting to reclaim disk space in the test directory '%s/testfiles'\n",
+		globals.canonical_base_dir_path);
+
+	if ((getdents_buf = malloc(GETDENTS_BUF_SIZE)) == NULL) {
+		global_output("error allocating memory: %m\n");
+		return 0;
+	}
+
+	if ((dfd = dup(_dfd)) < 0) {
+		global_output("error duplicating the directory file descriptor: %m\n");
+		goto out;
+	}
+	while (42) {
+		if ((nread = syscall(SYS_getdents64, dfd, getdents_buf, GETDENTS_BUF_SIZE)) < 0)
+			goto out;
+		if (nread == 0)
+			break;
+
+		bpos = getdents_buf;
+		while (bpos < getdents_buf + nread) {
+			de = (struct linux_dirent64 *)bpos;
+
+			bpos += de->d_reclen;
+
+			if (!strcmp(de->d_name, ".") || !strcmp(de->d_name, ".."))
+				continue;
+
+			if (de->d_type != DT_REG) { /* only care about files */
+				unreclaimable_objects++;
+				continue;
+			}
+			fstatat(dfd, de->d_name, &st, AT_NO_AUTOMOUNT|AT_SYMLINK_NOFOLLOW);
+
+			if (strncmp(de->d_name, "test", 4) || strlen(de->d_name) <= 4) { /* doesn't start with test, or only contains test */
+				reclaimable += st.st_size; /* could be reclaimed, but we're not doing so, since we don't know what it is */
+			} else {
+				char *p;
+				uint32_t filenum = strtoul(de->d_name + 4, &p, 10);
+
+				if ((filenum == ULONG_MAX && errno == ERANGE) || (*p != '\0')) {
+global_output("here1 - p: '%s'\n", p);
+					/* overflow or filename contains something after test### */
+					reclaimable += st.st_size; /* could be reclaimed, but we're not doing so, since we don't know what it is */
+					continue;
+				}
+global_output("deleting %s\n", de->d_name);
+				if ((unlinkat(dfd, de->d_name, 0)) < 0) {
+					global_output("error removing file '%s': %m\n", de->d_name);
+					reclaim_failed += st.st_size;
+					continue;
+				}
+				if (filenum >= globals.proc_count) /* not used on this run - pure reclaim */
+					reclaimed += st.st_size;
+				else
+					reclaimed_reuse += st.st_size;
+			}
+		}
+	}
+
+	if (reclaimed_reuse) {
+		char *reclaimed_reuse_str = byte_units(reclaimed_reuse);
+
+		if (!reclaimed)
+			global_output("reclaimed %lu bytes (%s), all of which can or will be reused in this test run\n",
+				reclaimed_reuse, reclaimed_reuse_str);
+		else {
+			char *reclaimed_str = byte_units(reclaimed + reclaimed_reuse);
+			global_output("reclaimed %lu bytes (%s), %lu (%s) of which can or will be reused in this test run\n",
+				reclaimed + reclaimed_reuse, reclaimed_str, reclaimed_reuse, reclaimed_reuse_str);
+			free_mem(reclaimed_str);
+		}
+		free_mem(reclaimed_reuse_str);
+	} else if (reclaimed) {
+		char *reclaimed_str = byte_units(reclaimed);
+		global_output("reclaimed %lu bytes (%s)\n", reclaimed, reclaimed_str);
+
+		free_mem(reclaimed_str);
+	}
+	if (reclaim_failed) {
+		char *reclaim_failed_str = byte_units(reclaim_failed);
+		global_output("tried to reclaim %lu bytes (%s), but failed with errors\n", reclaim_failed, reclaim_failed_str);
+		free_mem(reclaim_failed_str);
+	}
+	if (reclaimable) {
+		char *reclaimable_str = byte_units(reclaimable);
+		global_output("test directory contains %lu bytes (%s) in unknown files, which could be reclaimed\n",
+			reclaimable, reclaimable_str);
+		free_mem(reclaimable_str);
+	}
+	if (unreclaimable_objects)
+		global_output("test directory also contains at least %d of other entries (directories, etc.), which may be reclaimable\n",
+			unreclaimable_objects);
+
+out:
+	free_mem(getdents_buf);
+	if (dfd >= 0)
+		close(dfd);
+	return reclaimed + reclaimed_reuse;
+}
+
 int do_testing() {
 	sigset_t signal_mask;
 	int ret = EXIT_FAILURE, i;
@@ -1026,6 +1142,7 @@ int do_testing() {
 	globals.total_write_count = (globals.filesize - globals.off0 + globals.buf_size - 1) / globals.buf_size; // total number of writes by all threads
 	// all threads will write at least (globals.total_write_count / globals.thread_count)
 	globals.extra_write_threads = globals.total_write_count % globals.thread_count;
+	total_disk_required = globals.filesize * globals.proc_count;
 
 	global_output("test running on '%s' arch '%s' kernel '%s'\n", globals.uts.nodename, globals.uts.machine, globals.uts.release);
 	global_output("base directory for testing is '%s'\n", globals.canonical_base_dir_path);
@@ -1081,6 +1198,10 @@ int do_testing() {
 		free_mem(size_total);
 		goto out;
 	}
+
+	/* remove existing testfiles */
+	reclaim_disk(globals.testfile_dir_fd);
+
 	if ((fstatfs(globals.testfile_dir_fd, &stfs)) < 0) {
 		global_output("error calling fstatfs() to verify free space: %m\n");
 		goto out;
