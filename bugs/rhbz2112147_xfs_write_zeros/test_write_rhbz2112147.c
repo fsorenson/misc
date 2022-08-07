@@ -379,6 +379,41 @@ void show_progress(int sig) {
 		globals.proc_count, running_count, test_count, replicated_count);
 }
 
+
+uint64_t l1024(uint64_t x) {
+	uint64_t r = __builtin_clzll(x);
+
+	if (x < 1024)
+		return 0;
+	if (r == (sizeof(x) * 8UL))
+		return 0;
+	return ((sizeof(x) * 8UL) - 1 - r) / 10;
+}
+#define units_base 1024
+static char *unit_strings[] = { " bytes", "KiB", "MiB", "GiB", "GiB", "GiB", "EiB", "ZiB", "YiB" };
+char *byte_units(uint64_t size) {
+	char *ret;
+	uint64_t divider;
+	uint64_t d, rem;
+
+	if (size < units_base) {
+		asprintf(&ret, "%" PRIu64 " bytes", size);
+	} else {
+		int i = l1024(size);
+		if (i > (sizeof(unit_strings)/sizeof(unit_strings[0])))
+			i = sizeof(unit_strings)/sizeof(unit_strings[0]);
+
+		divider = 1UL << (i * 10UL);
+
+		d = size / divider;
+		rem = size - (d * divider);
+		rem = (rem * 100) / divider;
+
+		asprintf(&ret, "%" PRIu64 ".%02" PRIu64 " %s", d, rem, unit_strings[i]);
+	}
+	return ret;
+}
+
 /* returns a size in bytes */
 uint64_t parse_size(const char *size_str) {
 	uint64_t uint_size = 0, ret;
