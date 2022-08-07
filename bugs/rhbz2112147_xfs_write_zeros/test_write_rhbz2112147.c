@@ -227,6 +227,8 @@ struct globals {
 
 	struct proc_args *proc;
 
+	int log_fd;
+	FILE *log_FILE;
 	int stdout_fd;
 	int stderr_fd;
 
@@ -281,6 +283,15 @@ pid_t gettid(void) {
 	fflush(stdout); \
 } while (0)
 
+#define output_global_log_and_stdout(args...) do { \
+	if (globals.log_fd >= 0) { \
+		dprintf(globals.log_fd, args); \
+		if (globals.log_FILE) \
+			fflush(globals.log_FILE); \
+	} \
+	output(args); \
+} while (0)
+
 #define thread_output(_thread_output_fmt, ...) \
 	output("%s  [%d / test proc %d / thread %d] " _thread_output_fmt, tstamp(thread_args->tstamp_buf), thread_args->tid, proc_args->proc_num, thread_args->id, ##__VA_ARGS__)
 
@@ -288,7 +299,7 @@ pid_t gettid(void) {
 	output("%s  [%d / test proc %d] " _proc_output_fmt, tstamp(proc_args->tstamp_buf), proc_args->pid, proc_args->proc_num, ##__VA_ARGS__)
 
 #define global_output(_global_output_fmt, ...) \
-	output("%s  [%d] " _global_output_fmt, tstamp(globals.tstamp_buf), globals.pid, ##__VA_ARGS__)
+	output_global_log_and_stdout("%s  [%d] " _global_output_fmt, tstamp(globals.tstamp_buf), globals.pid, ##__VA_ARGS__)
 
 #define global_sig_output(_global_output_fmt, ...) /* expected to have our own buffer */ \
 	output("%s  [%d] " _global_output_fmt, tstamp(tstamp_buf), globals.pid, ##__VA_ARGS__)
@@ -1145,6 +1156,26 @@ int do_testing() {
 	char *size1 = NULL, *size2 = NULL;
 	struct statfs stfs;
 
+
+	globals.stdout_fd = dup(fileno(stdout));
+	globals.stderr_fd = dup(fileno(stderr));
+
+	if ((mkdir(globals.canonical_base_dir_path, 0777)) && errno != EEXIST) {
+		global_output("error creating base dir '%s': %m\n", globals.canonical_base_dir_path);
+		goto out;
+	}
+	if ((globals.base_dir_fd = open(globals.canonical_base_dir_path, O_RDONLY|O_DIRECTORY)) < 0) {
+		global_output("error opening base dir '%s': %m\n", globals.canonical_base_dir_path);
+		goto out;
+	}
+	if ((globals.log_fd = openat(globals.base_dir_fd, "log.out", O_CREAT|O_TRUNC|O_WRONLY, 0644)) < 0) {
+		global_output("error opening global logfile '%s/log.out': %m\n",
+			globals.canonical_base_dir_path); /* I suppose we don't have to consider this fatal */
+	} else {
+		if ((globals.log_FILE = fdopen(globals.log_fd, "a")) == NULL)
+			global_output("unable to reopen log fd: %m\n"); /* not super fatal either */
+	}
+
 	globals.total_write_count = (globals.filesize - globals.off0 + globals.buf_size - 1) / globals.buf_size; // total number of writes by all threads
 	// all threads will write at least (globals.total_write_count / globals.thread_count)
 	globals.extra_write_threads = globals.total_write_count % globals.thread_count;
@@ -1172,17 +1203,6 @@ int do_testing() {
 
 	globals.proc = mmap(NULL, sizeof(struct proc_args) * globals.proc_count, PROT_READ|PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
 
-	globals.stdout_fd = dup(fileno(stdout));
-	globals.stderr_fd = dup(fileno(stderr));
-
-	if ((mkdir(globals.canonical_base_dir_path, 0777)) && errno != EEXIST) {
-		global_output("error creating base dir '%s': %m\n", globals.canonical_base_dir_path);
-		goto out;
-	}
-	if ((globals.base_dir_fd = open(globals.canonical_base_dir_path, O_RDONLY|O_DIRECTORY)) < 0) {
-		global_output("error opening base dir '%s': %m\n", globals.canonical_base_dir_path);
-		goto out;
-	}
 
 	if ((mkdirat(globals.base_dir_fd, "testfiles", 0777)) && errno != EEXIST) {
 		global_output("error creating testfile dir '%s/testfiles': %m\n", globals.canonical_base_dir_path);
@@ -1339,6 +1359,7 @@ void do_init(char *exe) {
 	globals.buf_size = DEFAULT_BUF_SIZE;
 	globals.off0 = DEFAULT_OFF_0;
 
+	globals.log_fd = -1;
 	globals.base_dir_fd = -1;
 	globals.testfile_dir_fd = -1;
 	globals.log_dir_fd = -1;
