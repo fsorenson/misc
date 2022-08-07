@@ -58,7 +58,7 @@
 	 D. examine the process's flag which denotes whether reproduction was successful
 	   1. if bug is reproduced:
 	     a. sets a global flag to indicate that all processes and threads should exit
-         E. wait for all test processes to exit
+	 E. wait for all test processes to exit
 	 F. count the number of successful tests
 
 
@@ -210,42 +210,42 @@ struct proc_args {
 } *proc_args;
 
 struct globals {
-        pid_t cpids[MAX_PROC_COUNT];
-        char tstamp_buf[TSTAMP_BUF_SIZE]; // may only be used by the main controlling process
+	pid_t cpids[MAX_PROC_COUNT];
+	char tstamp_buf[TSTAMP_BUF_SIZE]; // may only be used by the main controlling process
 
 	struct utsname uts;
 
-        struct timeval update_timer;
+	struct timeval update_timer;
 
-        char *exe;
-        char *base_dir_path;
+	char *exe;
+	char *base_dir_path;
 	char *canonical_base_dir_path;
 
-        size_t filesize;
-        size_t buf_size;
-        off_t off0;
+	size_t filesize;
+	size_t buf_size;
+	off_t off0;
 
-        struct proc_args *proc;
+	struct proc_args *proc;
 
-        int stdout_fd;
-        int stderr_fd;
+	int stdout_fd;
+	int stderr_fd;
 
-        pid_t pid;
-        int base_dir_fd;
-        int testfile_dir_fd;
-        int log_dir_fd;
+	pid_t pid;
+	int base_dir_fd;
+	int testfile_dir_fd;
+	int log_dir_fd;
 
-        verify_mode verify_mode;
+	verify_mode verify_mode;
 
-        int proc_count;
-        int running_proc_count;
-        int test_count;
-        int thread_count;
+	int proc_count;
+	int running_proc_count;
+	int test_count;
+	int thread_count;
 
-        int total_write_count; // total number of writes required to fill the file
-        int extra_write_threads; // number of threads which will write an extra time
+	int total_write_count; // total number of writes required to fill the file
+	int extra_write_threads; // number of threads which will write an extra time
 
-        int replicated;
+	int replicated;
 } globals;
 
 
@@ -380,7 +380,7 @@ void handle_child_exit(int sig, siginfo_t *info, void *ucontext) {
 }
 void show_progress(int sig) {
 	char tstamp_buf[TSTAMP_BUF_SIZE];
-        int test_counts[MAX_PROC_COUNT];
+	int test_counts[MAX_PROC_COUNT];
 	int replicated_count = 0, running_count = 0, test_count = 0, i;
 
 	mb();
@@ -976,7 +976,7 @@ int usage(int ret) {
 		}
 		output("\t-u | --update_frequency=<seconds>\t(default: %d.%0*d seconds)\n", DEFAULT_UPDATE_DELAY_S, 6 - rzero, usec);
 	} else
-                output("\t-u | --update_frequency=<seconds>\t(default: %d seconds)\n", DEFAULT_UPDATE_DELAY_S);
+		output("\t-u | --update_frequency=<seconds>\t(default: %d seconds)\n", DEFAULT_UPDATE_DELAY_S);
 
 	output("\t-v | --verify_end\t\t\tverify the file after all writes\n");
 	output("\t-V | --verify_continuous\t\tverify the file after each write\n");
@@ -995,7 +995,7 @@ int usage(int ret) {
 
 void setup_handlers(void) {
 //        struct itimerval timer = { .it_value = globals.update_timer, .it_interval = globals.update_timer };
-        struct itimerval timer;
+	struct itimerval timer;
 	struct sigaction sa;
 
 	memset(&sa, 0, sizeof(sa));
