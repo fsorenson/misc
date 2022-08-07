@@ -137,7 +137,13 @@ static char fill_chars[] = FILL_CHARS;
 #define PAGE_SIZE (4096)
 #endif
 
+#if __x86_64__
 #define mb()	__asm__ __volatile__("mfence" ::: "memory")
+#elif __aarch64__
+#define mb()	__asm__ __volatile__("dmb ish" ::: "memory") /* or should this be dsb ? */
+#else
+#error "Need to add memory barrier for this arch"
+#endif
 
 
 #define min(a,b) ({ \
