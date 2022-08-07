@@ -1039,30 +1039,32 @@ int do_testing() {
 	globals.stdout_fd = dup(fileno(stdout));
 	globals.stderr_fd = dup(fileno(stderr));
 
-	if ((mkdir(globals.base_dir_path, 0777)) && errno != EEXIST) {
-		global_output("error creating base dir '%s': %m\n", globals.base_dir_path);
+	if ((mkdir(globals.canonical_base_dir_path, 0777)) && errno != EEXIST) {
+		global_output("error creating base dir '%s': %m\n", globals.canonical_base_dir_path);
 		goto out;
 	}
-	if ((globals.base_dir_fd = open(globals.base_dir_path, O_RDONLY|O_DIRECTORY)) < 0) {
-		global_output("error opening base  dir '%s': %m\n", globals.base_dir_path);
+	if ((globals.base_dir_fd = open(globals.canonical_base_dir_path, O_RDONLY|O_DIRECTORY)) < 0) {
+		global_output("error opening base dir '%s': %m\n", globals.canonical_base_dir_path);
 		goto out;
 	}
 
 	if ((mkdirat(globals.base_dir_fd, "testfiles", 0777)) && errno != EEXIST) {
-		global_output("error creating testfile dir '%s/testfiles': %m\n", globals.base_dir_path);
+		global_output("error creating testfile dir '%s/testfiles': %m\n", globals.canonical_base_dir_path);
 		goto out;
 	}
 	if ((globals.testfile_dir_fd = openat(globals.base_dir_fd, "testfiles", O_RDONLY|O_DIRECTORY)) < 0) {
-		global_output("error opening testfile dir '%s/testfiles': %m\n", globals.base_dir_path);
+		global_output("error opening testfile dir '%s/testfiles': %m\n", globals.canonical_base_dir_path);
+		goto out;
+	}
 		goto out;
 	}
 
 	if ((mkdirat(globals.base_dir_fd, "logs", 0777)) && errno != EEXIST) {
-		global_output("error creating log dir '%s/logs': %m\n", globals.base_dir_path);
+		global_output("error creating log dir '%s/logs': %m\n", globals.canonical_base_dir_path);
 		goto out;
 	}
 	if ((globals.log_dir_fd = openat(globals.base_dir_fd, "logs", O_RDONLY|O_DIRECTORY)) < 0) {
-		global_output("error opening log dir '%s/logs': %m\n", globals.base_dir_path);
+		global_output("error opening log dir '%s/logs': %m\n", globals.canonical_base_dir_path);
 		goto out;
 	}
 
