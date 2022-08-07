@@ -1137,6 +1137,7 @@ int do_testing() {
 	int ret = EXIT_FAILURE, i;
 	off_t total_disk_required;
 	char *total_disk_required_str = NULL;
+	char *size1 = NULL, *size2 = NULL;
 	struct statfs stfs;
 
 	globals.total_write_count = (globals.filesize - globals.off0 + globals.buf_size - 1) / globals.buf_size; // total number of writes by all threads
@@ -1147,7 +1148,13 @@ int do_testing() {
 	global_output("test running on '%s' arch '%s' kernel '%s'\n", globals.uts.nodename, globals.uts.machine, globals.uts.release);
 	global_output("base directory for testing is '%s'\n", globals.canonical_base_dir_path);
 
-	global_output("file size will be 0x%lx (%lu) bytes, and buffer size will be 0x%lx (%lu)\n", globals.filesize, globals.filesize, globals.buf_size, globals.buf_size);
+	size1 = byte_units(globals.filesize);
+	size2 = byte_units(globals.buf_size);
+	global_output("size of each testfile is 0x%lx (%lu - %s) bytes, and buffer size will be 0x%lx (%lu - %s)\n",
+		globals.filesize, globals.filesize, size1, globals.buf_size, globals.buf_size, size2);
+	free_mem(size1);
+	free_mem(size2);
+
 	global_output("initial offset is 0x%lx (%ld)\n", globals.off0, globals.off0);
 	global_output("creating %d test processes, each having %d threads\n", globals.proc_count, globals.thread_count);
 
