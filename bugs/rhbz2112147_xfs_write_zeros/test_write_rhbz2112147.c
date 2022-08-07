@@ -253,6 +253,9 @@ pid_t gettid(void) {
 	return syscall(SYS_gettid);
 }
 
+#define _STR(s)	#s
+#define STR(s) _STR(s)
+
 #define _PASTE(a,b) a##b
 #define _PASTE3(a,b,c) a##b##c
 #define PASTE(a,b) _PASTE(a,b)
@@ -262,6 +265,14 @@ pid_t gettid(void) {
 	if (addr) { \
 		free(addr); \
 		addr = NULL; \
+	} \
+} while (0)
+#define close_fd(fd) do { \
+	if (fd >= 0) { \
+		if ((close(fd)) < 0) \
+			output("error closing fd '%s': %m\n", \
+				STR(fd)); \
+		fd = -1; \
 	} \
 } while (0)
 
@@ -511,7 +522,7 @@ void hexdump(const char *pre, const char *addr, off_t start_offset, size_t len) 
 
 off_t check_replicated(void) {
 	char *map, *ptr;
-	int ret = 0, fd;
+	int ret = 0, fd = -1;
 	struct stat st;
 
 	if ((fd = openat(globals.testfile_dir_fd, proc_args->name, O_RDONLY|O_DIRECT)) < 0) {
@@ -543,7 +554,7 @@ off_t check_replicated(void) {
 	}
 	munmap(map, st.st_size);
 out_close:
-	close(fd);
+	close_fd(fd);
 
 	return ret;
 }
@@ -866,8 +877,7 @@ int do_one_test(void) {
 	// if some of the threads got an extra write() in, need to reduce the file size to the largest size known to have been written by all threads
 	truncate_test_file();
 
-	close(proc_args->fd);
-	proc_args->fd = -1;
+	close_fd(proc_args->fd);
 
 	if (globals.verify_mode == verify_mode_end) {
 		proc_output("test #%d verifying file contents\n", proc_args->test_count);
@@ -881,10 +891,7 @@ out:
 	if ((pthread_barrier_initialized && pthread_barrier_destroy(&proc_args->bar)))
 		proc_output("error calling pthread_barrier_destroy(): %m\n"); // don't consider this fatal
 
-	if (proc_args->fd >= 0) {
-		if (close(proc_args->fd))
-			proc_output("error closing file: %m\n");
-	}
+	close_fd(proc_args->fd);
 
 	return ret == EXIT_SUCCESS ? EXIT_SUCCESS : EXIT_FAILURE;
 }
@@ -941,8 +948,7 @@ int do_one_proc(int proc_num) {
 	}
 
 out:
-	if (proc_args->fd >= 0)
-		close(proc_args->fd);
+	close_fd(proc_args->fd);
 	free_mem(proc_args->thread_args);
 
 	dup3(globals.stdout_fd, fileno(stdout), 0); // restore stdout, close log
@@ -1127,8 +1133,7 @@ global_output("deleting %s\n", de->d_name);
 
 out:
 	free_mem(getdents_buf);
-	if (dfd >= 0)
-		close(dfd);
+	close_fd(dfd);
 	return reclaimed + reclaimed_reuse;
 }
 
@@ -1307,12 +1312,10 @@ int do_testing() {
 	} else
 		global_output("did not replicate the bug\n");
 out:
-	if (globals.testfile_dir_fd >= 0)
-		close(globals.testfile_dir_fd);
-	if (globals.log_dir_fd >= 0)
-		close(globals.log_dir_fd);
-	if (globals.base_dir_fd >= 0)
-		close(globals.base_dir_fd);
+	close_fd(globals.testfile_dir_fd);
+	close_fd(globals.log_dir_fd);
+	close_fd(globals.base_dir_fd);
+	close_fd(globals.log_fd);
 
 	free_mem(total_disk_required_str);
 
