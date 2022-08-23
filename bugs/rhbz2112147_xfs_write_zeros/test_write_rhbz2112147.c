@@ -340,12 +340,12 @@ pid_t gettid(void) {
 #define PASTE(a,b) _PASTE(a,b)
 #define PASTE3(a,b,c) _PASTE3(a,b,c)
 
-#define free_mem(addr) do { \
+#define free_mem(addr) ({ \
 	if (addr) { \
 		free(addr); \
 		addr = NULL; \
 	} \
-} while (0)
+	addr; })
 
 #define close_fd(fd)  ({ \
 	int rc = 0; \
@@ -460,7 +460,7 @@ pid_t gettid(void) {
 
 #define WHICH_PAGE(offset) ({ \
 	(offset / PAGE_SIZE_4K; })
-	
+
 #define BYTE_OF_WRITE(offset) ({ \
 	(offset - globals.off0) % globals.buf_size; })
 
@@ -741,14 +741,11 @@ int check_under_oom(void) {
 		if ((read(fd, buf, sizeof(buf))) < 0)
 			goto out_error;
 		if (buf[29] == '0')
-			global_output("not under oom\n");
+			;
 		else if (buf[29] == '1')
-			global_output("under oom\n");
-
+			ret = 1;
 		else {
 			global_output("oom character: '%c'\n", buf[30]);
-buf[sizeof(buf)-1] = '\0';
-global_output("full oom file contents: %s\n", buf);
 		}
 		goto out;
 	}
@@ -769,7 +766,7 @@ void show_progress(int sig) {
 		__atomic_load_n(&globals.shared->verifying_count, __ATOMIC_SEQ_CST),
 		__atomic_load_n(&globals.shared->test_count, __ATOMIC_SEQ_CST),
 		mem_pressure_str,
-		under_oom ? " " : "not ",
+		under_oom ? "" : "not ",
 		__atomic_load_n(&globals.shared->replicated_count, __ATOMIC_SEQ_CST));
 
 	free_mem(mem_pressure_str);
@@ -1620,7 +1617,6 @@ int do_one_test(void) {
 	struct stat st;
 	int pthread_tbarrier_initialized = 0;
 
-
 	proc_output("starting test #%d\n", proc_args->test_count);
 
 	if ((unlinkat(globals.testfile_dir_fd, proc_args->name, 0)) < 0 && errno != ENOENT) {
@@ -1777,17 +1773,16 @@ int do_one_proc(int proc_num) {
 	proc_args = &globals.proc[proc_num];
 	proc_args->pid = getpid();
 
+	pthread_setspecific(proc_args->thread_id_key, (void *)&minusone);
+	pthread_setspecific(globals.process_args_key, (void *)proc_args);
 
 	reduce_prio();
 	if (enter_cgroup() != EXIT_SUCCESS) {
 		proc_output("exiting due to failure to join cgroup\n");
-		goto out;
+		goto out; // yeah, this is kinda important to make the test work
 	}
 
 	alloc_proc_paths(proc_num);
-
-	pthread_setspecific(proc_args->thread_id_key, (void *)&minusone);
-	pthread_setspecific(globals.process_args_key, (void *)proc_args);
 
 
 	for (i = 0 ; i < proc_num ; i++) /* only need to close the ones opened before we were forked */
@@ -1805,9 +1800,9 @@ int do_one_proc(int proc_num) {
 	if ((proc_args->log_FILE = fdopen(proc_args->log_fd, "a")) == NULL)
 		proc_output("unable to reopen log fd: %m\n");
 	else
-                if ((globals.log_FILE = fdopen(globals.log_fd, "a")) == NULL)
-                        global_output("unable to reopen log fd: %m\n");
-                else
+		if ((globals.log_FILE = fdopen(globals.log_fd, "a")) == NULL)
+			global_output("unable to reopen log fd: %m\n");
+		else
 			setvbuf(proc_args->log_FILE, NULL, _IONBF, 0); // try going commando
 
 	if ((dup3(proc_args->log_fd, fileno(stdout), 0)) < 0) {
