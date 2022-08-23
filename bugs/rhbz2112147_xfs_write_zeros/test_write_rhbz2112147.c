@@ -909,7 +909,18 @@ int enter_cgroup(void) {
 	output("error entering cgroup\n");
 	return EXIT_FAILURE;
 }
+void reduce_prio(void) { // not much we can do if these shenanigans fail
+	int prio;
 
+	errno = 0;
+	prio = getpriority(PRIO_PROCESS, 0);
+	if (errno) {
+		output("error calling getpriority(): %m\n");
+	} else {
+		if ((setpriority(PRIO_PROCESS, 0, prio + 5)) < 0)
+			output("error calling setpriority(): %m\n");
+	}
+}
 
 int set_sysctl(const char *path, const char *val) {
 	int ret = EXIT_FAILURE, fd;
@@ -952,6 +963,8 @@ int do_memory_pressure(void) {
 	uint64_t new_alloc_KiB;
 	pid_t pid = getpid();
 	void *mem = NULL, *new_ptr = NULL;
+
+	reduce_prio();
 
 	if (enter_cgroup() != EXIT_SUCCESS) {
 		pressure_output("exiting due to failure to join cgroup\n");
@@ -1432,6 +1445,7 @@ void *do_one_thread(void *args_ptr) {
 			if (thread_args->offset > globals.filesize)
 				thread_args->offset = globals.filesize;
 		}
+		sched_yield();
 	}
 
 out:
@@ -1713,6 +1727,7 @@ int do_one_test(void) {
 //			proc_args->exit_test = true;
 		if (proc_args->current_size >= globals.filesize)
 			__atomic_store_n(&proc_args->exit_test, true,  __ATOMIC_SEQ_CST);
+		sched_yield();
 	}
 
 
@@ -1774,6 +1789,8 @@ int do_one_proc(int proc_num) {
 	proc_args = &globals.proc[proc_num];
 	proc_args->pid = getpid();
 
+
+	reduce_prio();
 	if (enter_cgroup() != EXIT_SUCCESS) {
 		proc_output("exiting due to failure to join cgroup\n");
 		goto out;
@@ -2241,6 +2258,8 @@ int do_testing() {
 	sigset_t signal_mask;
 	int ret = EXIT_FAILURE, i;
 	pid_t cpid;
+
+	setpriority(PRIO_PROCESS, 0, -10);
 
 	globals.stdout_fd = dup(fileno(stdout));
 	globals.stderr_fd = dup(fileno(stderr));
