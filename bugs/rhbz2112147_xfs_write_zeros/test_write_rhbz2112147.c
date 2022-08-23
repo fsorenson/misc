@@ -1058,7 +1058,6 @@ new_mapping:
 off_t proc_verify_file(off_t verify_start_offset, size_t verify_start_size) {
 	size_t expected_size = verify_start_offset + verify_start_size;
 	void *map = MAP_FAILED, *ptr;
-	size_t map_size;
 
 	off_t verify_offset = verify_start_offset;
 	size_t verify_size = verify_start_size;
@@ -1069,20 +1068,10 @@ off_t proc_verify_file(off_t verify_start_offset, size_t verify_start_size) {
 	struct bug_result result;
 
 	struct stat st;
-	int fd = -1;
 
-	if ((fd = openat(globals.testfile_dir_fd, proc_args->name, O_RDONLY)) < 0) {
-		proc_output("unable to open file for verification: %m\n");
-		goto out;
-	}
+	fstat(proc_args->fd, &st);
 
-	fstat(fd, &st);
-
-
-	map_size = st.st_size;
-
-	/* file size is expected to be offset + size */
-	if (st.st_size != expected_size) {
+	if (st.st_size != expected_size) { // file size is expected to be offset + size
 		proc_output("error with file size; expected 0x%lx (%lu), but size is 0x%lx (%lu)\n",
 			expected_size, expected_size, st.st_size, st.st_size);
 
@@ -1097,12 +1086,12 @@ off_t proc_verify_file(off_t verify_start_offset, size_t verify_start_size) {
 
 
 	proc_output("verifying writes...  start offset: 0x%lx (%lu), size: 0x%lx (%lu), map length %lu\n",
-		verify_offset, verify_offset, verify_size, verify_size, map_size);
+		verify_offset, verify_offset, verify_size, verify_size, st.st_size);
 
-
-	if ((map = mmap(NULL, st.st_size, PROT_READ, MAP_SHARED, fd, 0)) == MAP_FAILED) {
+	// just map the entire file, rather than from the page boundary before the verify offset and tracking offset offsets, etc.
+	if ((map = mmap(NULL, st.st_size, PROT_READ, MAP_SHARED, proc_args->fd, 0)) == MAP_FAILED) {
 		proc_output("mmap failed while verifying recently-written file contents: %m\n");
-		globals.verify_frequency = 0; /* just verify at the end */
+		globals.verify_frequency = 0; // just verify at the end
 		goto out;
 	}
 
@@ -1163,9 +1152,8 @@ check_for_evil:
 			verify_offset, verify_offset, verify_size, verify_size);
 
 out:
-	if (map != MAP_FAILED && (munmap(map, map_size)) < 0)
+	if (map != MAP_FAILED && (munmap(map, st.st_size)) < 0)
 		proc_output("munmap returned an error after verifying contents: %m\n");
-	close_fd(fd);
 
 	return proc_args->replicated;
 }
