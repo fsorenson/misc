@@ -948,8 +948,7 @@ out:
 #define PROC_RESTART_HOLDOFF (struct timespec){ .tv_sec = 3, .tv_nsec = MSEC_TO_NSEC(0) }
 
 int do_memory_pressure(void) {
-	struct timespec sleep_time = MEMORY_PRESSURE_SLEEP;
-	uint64_t current_pressure_increment = 0;
+	struct timespec sleep_time = MEMORY_PRESSURE_INITIAL_DELAY;
 	uint64_t new_alloc_KiB;
 	pid_t pid = getpid();
 	void *mem = NULL, *new_ptr = NULL;
@@ -969,19 +968,22 @@ int do_memory_pressure(void) {
 
 
 new_mapping:
+	sleep_time = MEMORY_PRESSURE_SLEEP;
 	globals.shared->pressure_KiB = 0;
+	new_alloc_KiB = MEMORY_PRESSURE_INCREMENT;
 
 	if ((mem = mmap(NULL, new_alloc_KiB * KiB, PROT_READ|PROT_WRITE,
-		MAP_PRIVATE|MAP_ANONYMOUS|MAP_POPULATE, MAP_ANONYMOUS, 0)) == MAP_FAILED) {
+		MAP_PRIVATE|MAP_ANONYMOUS|MAP_POPULATE, -1, 0)) == MAP_FAILED) {
 
-		pressure_output("couldn't allocate even minimum size (%lu KiB): %m\n", MEMORY_PRESSURE_START_INCREMENT);
-		return 1;
+		pressure_output("couldn't allocate even minimum size (%lu KiB): %m\n", MEMORY_PRESSURE_INCREMENT);
+
+		sleep_time = MEMORY_PRESSURE_INITIAL_FAILURE_SLEEP;
+		nanosleep(&sleep_time, NULL);
+		goto new_mapping;
 	}
 	globals.shared->pressure_KiB = new_alloc_KiB;
 
 	sleep_time = MEMORY_PRESSURE_SLEEP;
-
-//		nanosleep(&sleep_time, NULL);
 
 	while (42) {
 		if (__atomic_load_n(&globals.shared->exit_test, __ATOMIC_SEQ_CST) > exit_after_test)
@@ -1003,9 +1005,8 @@ new_mapping:
 				sleep_time = MEMORY_PRESSURE_SLEEP_AT_MAX;
 				nanosleep(&sleep_time, NULL);
 
-				sleep_time = MEMORY_PRESSURE_SLEEP_AT_MAX;
+				pressure_output("freeing allocated memory of %s\n", max_usage_str);
 
-				pressure_output("memory pressure hit max of %s; freeing and reapplying\n", max_usage_str);
 				free_mem(max_usage_str);
 				munmap(mem, globals.shared->pressure_KiB * KiB);
 				globals.shared->pressure_KiB = 0;
@@ -1013,22 +1014,30 @@ new_mapping:
 
 				nanosleep(&sleep_time, NULL);
 				goto new_mapping;
-			
 
 			} else { // end error path, success starts here
-//				pressure_output("mremap(%p, %lu, %lu)  returned %p\n", mem, current_alloc_KiB, new_alloc_KiB, new_ptr);
-
 				mem = new_ptr;
 				globals.shared->pressure_KiB = new_alloc_KiB;
 			}
-		} // 'more pressure' called for
+		} else { // else ! ->apply pressure
+
+			if (mem && mem != MAP_FAILED && munmap(mem, globals.shared->pressure_KiB * KiB) != 0) {
+				char *mem_usage_str = byte_units(globals.shared->pressure_KiB * KiB);
+
+				pressure_output("releasing memory of %s\n", mem_usage_str);
+				free_mem(mem_usage_str);
+				munmap(mem, globals.shared->pressure_KiB * KiB);
+				globals.shared->pressure_KiB = 0;
+				mem = 0;
+			}
+			goto new_mapping;
+		}
 		if (__atomic_load_n(&globals.shared->exit_test, __ATOMIC_SEQ_CST) > exit_after_test)
 			break;
 
-//		nanosleep(&sleep_time, NULL);
-		sched_yield();
+		sleep_time = MEMORY_PRESSURE_SLEEP;
+		nanosleep(&sleep_time, NULL);
 	}
-//out:
 	pressure_output("exiting\n");
 	return 1;
 }
