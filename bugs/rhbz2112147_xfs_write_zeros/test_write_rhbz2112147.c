@@ -6,9 +6,12 @@
 	replicates a bug where simultaneous writes to a page may end up with
 	zero-byte data
 
+
 	# gcc -Wall -lpthread -lm -g test_write_rhbz2112147.c -o test_write_rhbz2112147
 
-	# ./test_write_rhbz2112147 <path_to_test_directory> [<options>]
+	# ./test_write_rhbz2112147 [<options>] <path_to_test_directory>
+
+
 
 	(execute without options to see the usage message)
 
@@ -631,7 +634,7 @@ void handle_child_exit(int sig, siginfo_t *info, void *ucontext) {
 
 		if (pid == globals.pressure_pid) {
 			globals.pressure_pid = 0;
-			__atomic_store_n(&globals.shared->pressure_KiB, 0, __ATOMIC_SEQ_CST);
+			globals.shared->pressure_KiB = 0;
 			global_output("memory pressure pid exited\n");
 			continue;
 		}
@@ -757,7 +760,7 @@ out:
 }
 
 void show_progress(int sig) {
-	char *mem_pressure_str = byte_units(__atomic_load_n(&globals.shared->pressure_KiB, __ATOMIC_SEQ_CST) * KiB);
+	char *mem_pressure_str = byte_units(globals.shared->pressure_KiB * KiB);
 	int under_oom = check_under_oom();
 
 	global_output("%d/%d running, writing: %d, verifying: %d, %lu tests started, memory pressure: %s %sOOM, replicated: %d\n",
@@ -1154,9 +1157,6 @@ out:
 
 	return proc_args->replicated;
 }
-bool need_barrier(void) {
-	return true;
-}
 bool need_verify(void) {
 	int elapsed_rounds;
 
@@ -1362,11 +1362,11 @@ bool pthread_tbarrier_get_cancel(pthread_tbarrier_t *tbar) {
 bool proc_exit_test(void) {
 	if (my_thread_id() == -1) {
 		if (__atomic_load_n(&proc_args->children_exited, __ATOMIC_SEQ_CST))
-			__atomic_store_n(&proc_args->exit_test, true,  __ATOMIC_SEQ_CST);
+			proc_args->exit_test = true;
 
 	}
 
-	return proc_args ? __atomic_load_n(&proc_args->exit_test, __ATOMIC_SEQ_CST) : false;
+	return proc_args ? proc_args->exit_test : false;
 }
 
 void *do_one_thread(void *args_ptr) {
@@ -1474,7 +1474,7 @@ out:
 int reap_threads(int low, int high) { // inclusive
 	int ret = EXIT_SUCCESS, i;
 
-	__atomic_store_n(&proc_args->exit_test, true, __ATOMIC_SEQ_CST);
+	proc_args->exit_test = true;
 
 	while (42) {
 		int live_threads = 0;
@@ -1508,7 +1508,6 @@ int launch_threads(void) {
 		if ((ret = pthread_create(&proc_args->thread_args[i].thread, NULL, do_one_thread, &proc_args->thread_args[i])) != 0) {
 			proc_output("pthread_create(%d) failed: %s\n", i, strerror(ret));
 			proc_args->thread_args[i].thread = 0;
-//			__atomic_add_fetch(&globals.shared->error_count, 1, __ATOMIC_SEQ_CST);
 
 			proc_output("canceling all threads\n");
 			goto out_cancel;
@@ -1660,7 +1659,7 @@ int do_one_test(void) {
 
 	memset(proc_args->thread_args, 0, sizeof(struct thread_args) * globals.thread_count);
 	__atomic_store_n(&proc_args->children_exited, 0, __ATOMIC_SEQ_CST);
-	__atomic_store_n(&proc_args->exit_test, false, __ATOMIC_SEQ_CST);
+	proc_args->exit_test = false;
 
 
 	if ((pthread_tbarrier_init(&proc_args->tbar1, NULL, globals.thread_count + 1, &proc_exit_test, NULL))) {
@@ -1684,7 +1683,7 @@ int do_one_test(void) {
 
 		__atomic_add_fetch(&globals.shared->writing_count, 1, __ATOMIC_SEQ_CST);
 		pthread_tbarrier_wait(&proc_args->tbar1);
-		if (__atomic_load_n(&proc_args->exit_test, __ATOMIC_SEQ_CST)) {
+		if (proc_args->exit_test) {
 			__atomic_sub_fetch(&globals.shared->writing_count, 1, __ATOMIC_SEQ_CST);
 			break;
 		}
@@ -1693,7 +1692,7 @@ int do_one_test(void) {
 		__atomic_sub_fetch(&globals.shared->writing_count, 1, __ATOMIC_SEQ_CST);
 
 		if (__atomic_load_n(&proc_args->write_errors, __ATOMIC_SEQ_CST)) { // write errors
-			__atomic_store_n(&proc_args->exit_test, true,  __ATOMIC_SEQ_CST);
+			proc_args->exit_test = true;
 		} else { // no write errors
 			proc_args->write_round++;
 			proc_args->current_size += this_write_size;
@@ -1702,15 +1701,15 @@ int do_one_test(void) {
 				
 		}
 		if (proc_args->replicated)
-			__atomic_store_n(&proc_args->exit_test, true,  __ATOMIC_SEQ_CST);
+			proc_args->exit_test = true;
 
 		if (__atomic_load_n(&globals.shared->exit_test, __ATOMIC_SEQ_CST) == exit_now)
-			__atomic_store_n(&proc_args->exit_test, true,  __ATOMIC_SEQ_CST);
+			proc_args->exit_test = true;
 		
 //		if (__atomic_load_n(&proc_args->interrupted, __ATOMIC_SEQ_CST) || proc_args->current_size >= globals.filesize)
 //			proc_args->exit_test = true;
 		if (proc_args->current_size >= globals.filesize)
-			__atomic_store_n(&proc_args->exit_test, true,  __ATOMIC_SEQ_CST);
+			proc_args->exit_test = true;
 		sched_yield();
 	}
 
@@ -1839,7 +1838,7 @@ retry_test:
 		proc_args->last_verify_round = 0;
 		proc_args->last_verified_size = 0;
 		proc_args->replicated = 0;
-		proc_args->exit_test = no_exit;
+		proc_args->exit_test = false;
 		proc_args->write_errors = 0;
 		proc_args->children_exited = 0;
 		proc_args->interrupted = 0;
@@ -2200,7 +2199,7 @@ int check_free_disk(void) {
 
 		goto out;
 	}
-	output("\n");
+	log_and_output("\n");
 
 	ret = EXIT_SUCCESS;
 
