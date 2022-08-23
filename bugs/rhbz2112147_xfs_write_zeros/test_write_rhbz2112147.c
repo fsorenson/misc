@@ -302,6 +302,7 @@ struct globals {
 	struct timespec start_time;
 	struct timespec end_time;
 	long page_size;
+	int online_cpus;
 
 	int log_fd;
 	FILE *log_FILE;
@@ -1911,7 +1912,7 @@ int usage(int ret) {
 	output("\t-s | --file_size=<size>\t\t(default: %llu, min: %llu, max: %llu)\n", DEFAULT_FILE_SIZE, MIN_FILE_SIZE, MAX_FILE_SIZE);
 
 	output("\t-b | --buffer_size=<size>\t\t(default: %llu, min: %llu, max: %llu)\n", DEFAULT_BUF_SIZE, MIN_BUF_SIZE, MAX_BUF_SIZE);
-	output("\t-p | --processes=<process_count>\t(default: %d, max: %d)\n", DEFAULT_PROC_COUNT, MAX_PROC_COUNT);
+	output("\t-p | --processes=<process_count>\t(default - number of online cpus: %d, max: %d)\n", globals.online_cpus, MAX_PROC_COUNT);
 	output("\t-t | --threads=<thread_count>\t\t(default: %d, max: %d)\n", DEFAULT_THREAD_COUNT, MAX_THREAD_COUNT);
 
 	output("\t-c | --test_count=<test_count>\t\t(default: %d)\n", DEFAULT_TEST_COUNT);
@@ -2522,9 +2523,10 @@ void do_global_init(char *exe) {
 	memset(&globals, 0, sizeof(globals));
 
 	globals.page_size = sysconf(_SC_PAGESIZE);
+	globals.online_cpus = sysconf(_SC_NPROCESSORS_ONLN);
 
 	globals.exe = exe;
-	globals.proc_count = DEFAULT_PROC_COUNT;
+	globals.proc_count = globals.online_cpus;
 	globals.thread_count = DEFAULT_THREAD_COUNT;
 	globals.test_count = DEFAULT_TEST_COUNT;
 	globals.pid = getpid();
