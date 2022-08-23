@@ -303,6 +303,60 @@ pid_t gettid(void) {
 
 #define global_sig_output(_global_output_fmt, ...) /* expected to have our own buffer */ \
 	output("%s  [%d] " _global_output_fmt, tstamp(tstamp_buf), globals.pid, ##__VA_ARGS__)
+union multi_access {
+	uint64_t u64[1];
+	uint32_t u32[2];
+	uint16_t u16[4];
+	uint8_t u8[8];
+};
+
+#define DEFINE_MATCHLEN_FUNC(len) \
+	__attribute__ ((gnu_inline)) inline \
+	off_t PASTE(matchlen_u, len)(uint8_t *_a, uint8_t *_b) { \
+		union multi_access *a = (union multi_access *)_a, *b = (union multi_access *)_b; \
+		union multi_access d = { .u64[0] = 0 }; \
+		\
+		d.PASTE(u, len)[0] = a->PASTE(u, len)[0] ^ b->PASTE(u, len)[0]; \
+		int clz = sizeof(PASTE3(uint, len, _t)); \
+		\
+		if (d.PASTE(u, len)[0]) \
+			clz = __builtin_clzl(htobe64(d.PASTE(u, len)[0])) / 8; \
+		\
+		return clz; \
+	}
+
+#pragma GCC push_options
+//#pragma GCC optimize("O3")
+
+DEFINE_MATCHLEN_FUNC(8)
+DEFINE_MATCHLEN_FUNC(16)
+DEFINE_MATCHLEN_FUNC(32)
+DEFINE_MATCHLEN_FUNC(64)
+#define compare_mem_try_match(bits, a, b, len) do { \
+	int ret; \
+	if (len >= (bits/8)) { \
+		if ((ret = PASTE(matchlen_u, bits)(a, b)) == (bits/8)) { \
+			len -= (bits/8); \
+			a += (bits/8); \
+			b += (bits/8); \
+			continue; \
+		} \
+		return (a - _a) + ret; \
+	} \
+} while (0)
+
+off_t compare_mem(void *_a, void *_b, size_t len) {
+	void *a = _a, *b = _b;
+	while (len > 0) {
+		compare_mem_try_match(64, a, b, len);
+		compare_mem_try_match(32, a, b, len);
+		compare_mem_try_match(16, a, b, len);
+		compare_mem_try_match(8, a, b, len);
+	}
+	return (a - _a);
+}
+#pragma GCC pop_options
+
 
 char *tstamp(char *buf) { // buf must be at least TSTAMP_BUF_SIZE in size
 	struct timespec ts;
