@@ -97,18 +97,14 @@
 #define DEFAULT_TEST_COUNT	(100)
 
 #define DEFAULT_PROC_COUNT	(40)
-#define MAX_PROC_COUNT		(100)
+#define MAX_PROC_COUNT		(1000)
 
 #define DEFAULT_THREAD_COUNT	(3)
 #define MAX_THREAD_COUNT	(1000)
 
-
-#define OFF_0			(768UL)
-
 #define KiB			(1024ULL)
 #define MiB			(KiB * KiB)
 #define GiB			(KiB * KiB * KiB)
-
 
 #define DEFAULT_OFF_0		(768UL)
 
@@ -128,14 +124,10 @@
 
 #define GETDENTS_BUF_SIZE	(64ULL * KiB)
 
+
 #define FILL_CHARS "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789`~!@#$%^&*()-_=+[{]}\\|;:'\",<.>/?"
 static char fill_chars[] = FILL_CHARS;
 #define FILL_LEN (sizeof(FILL_CHARS) - 1)
-
-
-#ifndef PAGE_SIZE
-#define PAGE_SIZE (4096)
-#endif
 
 #if __x86_64__
 #define mb()	__asm__ __volatile__("mfence" ::: "memory")
@@ -144,7 +136,6 @@ static char fill_chars[] = FILL_CHARS;
 #else
 #error "Need to add memory barrier for this arch"
 #endif
-
 
 #define min(a,b) ({ \
 	typeof(a) _a = (a); \
@@ -162,11 +153,12 @@ typedef enum { verify_mode_end, verify_mode_ongoing } verify_mode;
 
 struct shared_struct {
 	bool exit_test;
-	int filler[4];
-	int test_counts[MAX_PROC_COUNT];
-	int replicated[MAX_PROC_COUNT];
+	uint64_t test_count;
+	int running_count;
+	int replicated_count;
+	int verifying_count;
+	uint64_t test_counts[0];
 };
-struct shared_struct *shared;
 
 struct thread_args {
 	char tstamp_buf[TSTAMP_BUF_SIZE]; // may only be used by a thread
@@ -180,8 +172,9 @@ struct thread_args {
 	pid_t tid;
 	int id;
 	int write_count;
-
+	int waited_count;
 	unsigned char c;
+	bool acked_exit;
 };
 
 struct proc_args {
@@ -203,10 +196,16 @@ struct proc_args {
 	int log_fd;
 	pthread_barrier_t bar;
 
+	int stop_waited_count;
+
 	int test_count;
-	bool replicated;
+	int verifying;
+	int replicated;
 
 	pthread_mutex_t state_mutex;
+	bool exit_test;
+	bool interrupted;
+	int exit_acked;
 } *proc_args;
 
 struct globals {
@@ -226,6 +225,8 @@ struct globals {
 	off_t off0;
 
 	struct proc_args *proc;
+	struct shared_struct *shared;
+	long page_size;
 
 	int log_fd;
 	FILE *log_FILE;
@@ -247,7 +248,7 @@ struct globals {
 	int total_write_count; // total number of writes required to fill the file
 	int extra_write_threads; // number of threads which will write an extra time
 
-	int replicated;
+//	int replicated;
 } globals;
 
 
@@ -303,6 +304,9 @@ pid_t gettid(void) {
 
 #define global_sig_output(_global_output_fmt, ...) /* expected to have our own buffer */ \
 	output("%s  [%d] " _global_output_fmt, tstamp(tstamp_buf), globals.pid, ##__VA_ARGS__)
+#define proc_sig_output(_output_fmt, ...) \
+	output("%s  [%d / test proc %d] " _output_fmt, tstamp(tstamp_buf), proc_args->pid, proc_args->proc_num, ##__VA_ARGS__)
+
 union multi_access {
 	uint64_t u64[1];
 	uint32_t u32[2];
@@ -370,32 +374,95 @@ char *tstamp(char *buf) { // buf must be at least TSTAMP_BUF_SIZE in size
 
 	return buf;
 }
+/*
+	returns whether we need to still wait
+		false - all threads (including us) have acked, and we've waited enough times - no more waiting
+		true  - we still need to wait
+*/
+bool wait_all_threads(struct thread_args *thread_args) {
+	int min_waited_count = INT_MAX, max_waited_count = 0;
+	bool ret = true;
+	int i;
+
+	pthread_mutex_lock(&proc_args->state_mutex);
+
+
+	if (! thread_args->acked_exit) { /* ack, if we haven't already */
+		thread_args->acked_exit = true;
+		proc_args->exit_acked++;
+
+//		thread_output("acked exit; write count: %d, wait count: %d, ack count: %d\n", thread_args->write_count, thread_args->waited_count, proc_args->exit_acked);
+
+		if (proc_args->exit_acked == globals.thread_count) { /* we must have been the last to ack */
+
+			for (i = 0 ; i < globals.thread_count ; i++) {
+				min_waited_count = min(min_waited_count, proc_args->thread_args[i].waited_count);
+				max_waited_count = max(max_waited_count, proc_args->thread_args[i].waited_count);
+			}
+
+			proc_args->stop_waited_count = max_waited_count + 1;
+//			thread_output("set stop_waited_count to %d (min: %d, max: %d)\n",
+//				proc_args->stop_waited_count, min_waited_count, max_waited_count);
+		}
+	}
+
+	if (proc_args->exit_acked >= globals.thread_count) { /* everyone has acked... only wait if WE are behind still */
+		if (thread_args->waited_count >= proc_args->stop_waited_count) /* no more need to wait */
+			ret = false;
+
+
+//		thread_output("waited count: %d, stop_waited_count: %d, %s\n",
+//			thread_args->waited_count, proc_args->stop_waited_count,
+//			ret == false ? "exiting" : "waiting");
+	} else {
+
+//		thread_output("waited count: %d, acked: %d/%d, waiting\n",
+//			thread_args->waited_count, proc_args->exit_acked, globals.thread_count);
+	}
+
+	pthread_mutex_unlock(&proc_args->state_mutex);
+
+	return ret;
+}
+
+//uint64_t incr_waited_count(struct thread_args *thread_args) {
+//	return __sync_add_and_fetch(&thread_args->waited_count, 1);
+//	pthread_mutex_lock(&proc_args->state_mutex);
+//	thread_args->waited_count++;
+//	pthread_mutex_unlock(&proc_args->state_mutex);
+//	mb();
+//}
+#define do_thread_wait(thread_args) ({ \
+	pthread_barrier_wait(&proc_args->bar); \
+	__sync_add_and_fetch(&thread_args->waited_count, 1); \
+})
+
+uint64_t incr_write_count(struct thread_args *thread_args) {
+	return __sync_add_and_fetch(&thread_args->write_count, 1);
+//	mb();
+}
 void set_exit(bool value) {
-	mb();
-	shared->exit_test = value;
+	
+//	mb();
+	globals.shared->exit_test = value;
 	mb();
 }
 bool get_exit(void) {
 	mb();
-	return shared->exit_test;
+	if (globals.shared->exit_test)
+		return true;
+
+	if (proc_args)
+		return proc_args->exit_test;
+
+	return false;
 }
 bool check_proc_replicated(int proc_num) {
 	bool value;
 	mb();
-	value = shared->replicated[proc_num];
-	mb();
+	value = globals.proc[proc_num].replicated;
+//	mb();
 	return value;
-}
-void set_proc_replicated(int proc_num, bool value) {
-	mb();
-	shared->replicated[proc_num] = value;
-	mb();
-}
-
-void incr_test_count(int proc_num) {
-	mb();
-	shared->test_counts[proc_num]++;
-	mb();
 }
 
 void handle_sig(int sig) {
@@ -422,7 +489,7 @@ void handle_child_exit(int sig, siginfo_t *info, void *ucontext) {
 						i, pid, globals.proc[i].test_count, globals.proc[i].major, globals.proc[i].minor, globals.proc[i].inode,
 						globals.proc[i].replicated_offset, globals.proc[i].replicated_offset);
 
-					globals.replicated++;
+//					globals.replicated++;
 					set_exit(true); // tell everyone else to exit
 				} else {
 					if (WIFSIGNALED(status)) {
@@ -434,6 +501,7 @@ void handle_child_exit(int sig, siginfo_t *info, void *ucontext) {
 				globals.cpids[i] = 0;
 				globals.proc[i].pid = 0;
 
+				__sync_sub_and_fetch(&globals.shared->running_count, 1);
 				i = globals.proc_count;
 				found = true;
 			}
@@ -445,20 +513,45 @@ void handle_child_exit(int sig, siginfo_t *info, void *ucontext) {
 }
 void show_progress(int sig) {
 	char tstamp_buf[TSTAMP_BUF_SIZE];
-	int test_counts[MAX_PROC_COUNT];
-	int replicated_count = 0, running_count = 0, test_count = 0, i;
+//	int test_counts[MAX_PROC_COUNT];
+//	int replicated_count = 0, running_count = 0, test_count = 0, i;
+	int i;
 
 	mb();
-	memcpy(test_counts, shared->test_counts, sizeof(int) * globals.proc_count);
+//	memcpy(test_counts, globals.shared->test_counts, sizeof(int) * globals.proc_count);
 	for (i = 0 ; i < globals.proc_count ; i++) {
-		test_count += test_counts[i];
-		if (globals.cpids[i])
-			running_count++;
-		if (check_proc_replicated(i))
-			replicated_count++;
+//		test_count += test_counts[i];
+//		if (globals.cpids[i])
+//			running_count++;
+//		if (check_proc_replicated(i))
+//			replicated_count++;
 	}
-	global_sig_output("%d test processes started, %d test processes running, %d tests started, bug replicated: %d\n",
-		globals.proc_count, running_count, test_count, replicated_count);
+	if (42) {
+		global_sig_output("%d/%d processes running; replicated: %d; tests started: %lu\n",
+			__sync_add_and_fetch(&globals.shared->running_count, 0), globals.proc_count,
+			__sync_add_and_fetch(&globals.shared->replicated_count, 0),
+			__sync_add_and_fetch(&globals.shared->test_count, 0));
+
+	}
+
+#if 0
+	if (globals.verify_mode == verify_mode_end) {
+		global_sig_output("%d test processes started, %d test processes running, %lu tests started, verifying: %d, bug replicated: %d\n",
+//			globals.proc_count, running_count, test_count, 
+			globals.proc_count,
+			__sync_add_and_fetch(&globals.shared->running_count, 0),
+			__sync_add_and_fetch(&globals.shared->test_count, 0),
+			__sync_add_and_fetch(&globals.shared->verifying_count, 0),
+			__sync_add_and_fetch(&globals.shared->replicated_count, 0));
+	} else {
+		global_sig_output("%d test processes started, %d test processes running, %lu tests started, bug replicated: %d\n",
+//			globals.proc_count, running_count, test_count, replicated_count);
+			globals.proc_count,
+			__sync_add_and_fetch(&globals.shared->running_count, 0),
+			__sync_add_and_fetch(&globals.shared->test_count, 0),
+			__sync_add_and_fetch(&globals.shared->replicated_count, 0));
+	}
+#endif
 }
 
 
@@ -585,22 +678,22 @@ void hexdump(const char *pre, const char *addr, off_t start_offset, size_t len) 
 	}
 }
 
-off_t check_replicated(void) {
+off_t proc_verify_file(void) {
 	char *map, *ptr;
-	int ret = 0, fd = -1;
+	off_t ret = -1;
+	int fd = -1;
 	struct stat st;
 
 	if ((fd = openat(globals.testfile_dir_fd, proc_args->name, O_RDONLY|O_DIRECT)) < 0) {
 		proc_output("unable to open file for verification: %m\n");
-		return 0;
+		goto out_close;
 	}
 
 	fstat(fd, &st);
 
 	//map = mmap(NULL, globals.filesize, PROT_READ, MAP_SHARED, proc_args->fd, 0);
 	if ((map = mmap(NULL, st.st_size, PROT_READ, MAP_SHARED, fd, 0)) == MAP_FAILED) { // only map the actual size, in case the file is incomplete
-		proc_output("mmap failed while verifying file contents: %m\n");
-		ret = 0;
+		proc_output("mmap failed while verifying file contents: %m\nmmap args were size: %lu, READ, MAP_SHARED, fd: %d, 0\n", st.st_size, fd);
 		goto out_close;
 	}
 
@@ -610,12 +703,18 @@ off_t check_replicated(void) {
 
 		proc_output("error: found zero bytes at offset 0x%08lx (%lu)\n", offset, offset);
 
-		if (dump_bytes > 0)
-			hexdump("", ptr - (DUMP_BYTE_COUNT>>1), offset - (DUMP_BYTE_COUNT>>1), dump_bytes);
+		if (dump_bytes > 0) {
+			char *hdr_str = NULL;
+			asprintf(&hdr_str, "\t[%d / test proc %d] ", proc_args->pid, proc_args->proc_num);
+
+			hexdump(hdr_str, ptr - (DUMP_BYTE_COUNT>>1), offset - (DUMP_BYTE_COUNT>>1), dump_bytes);
+			free(hdr_str);
+		}
+
+
 		ret = offset;
 	} else {
 		proc_output("completed without replicating the bug\n");
-		ret = 0;
 	}
 	munmap(map, st.st_size);
 out_close:
@@ -623,6 +722,79 @@ out_close:
 
 	return ret;
 }
+off_t thread_verify_file(struct thread_args *thread_args, size_t this_write_size) {
+	uint32_t page_offset = thread_args->offset & (globals.page_size - 1);
+	off_t map_offset = thread_args->offset & ~(globals.page_size - 1);
+	off_t replicated_offset = -1;
+	size_t map_size = this_write_size + page_offset;
+	void *map;
+
+
+	thread_output("verifying... page_offset: %d, write offset: 0x%lx (%lu), offset of page start: 0x%lx (%lu)\n",
+		page_offset, thread_args->offset, thread_args->offset,
+		map_offset, map_offset);
+
+	if ((map = mmap(NULL, map_size, PROT_READ, MAP_SHARED,
+			proc_args->fd, thread_args->offset - page_offset)) == MAP_FAILED) {
+		thread_output("mmap failed while verifying recently-written file contents: %m\n");
+//				globals.verify_mode = verify_mode_end; // will this even take?
+	} else {
+		size_t matched_chars = compare_mem(thread_args->buf, map + page_offset, this_write_size);
+
+		if (matched_chars != this_write_size) {
+			int dump_bytes = min(DUMP_BYTE_COUNT, thread_args->offset + this_write_size - matched_chars + (DUMP_BYTE_COUNT>>1));
+
+			replicated_offset = thread_args->offset + matched_chars;
+			thread_output("re-read data does not match written data; mismatch at offset 0x%lx (%lu) (matched chars: %lu\n",
+				replicated_offset, replicated_offset, matched_chars);
+
+			if (dump_bytes > 0) {
+				char *hdr_str = NULL;
+				asprintf(&hdr_str, "\t[%d / test proc %d / thread %d] ", thread_args->tid, proc_args->proc_num, thread_args->id);
+		
+				hexdump(hdr_str, map + page_offset + matched_chars  - (DUMP_BYTE_COUNT>>1), thread_args->offset + matched_chars - (DUMP_BYTE_COUNT>>1), dump_bytes);
+				free(hdr_str);
+			}
+
+
+			goto out;
+		} else {
+			thread_output("data at offset 0x%lx (%lu) (length 0x%lx / %lu) matches data written ('%c')\n",
+				thread_args->offset, thread_args->offset, this_write_size, this_write_size, fill_chars[thread_args->c]);
+		}
+	}
+out:
+	if (map != MAP_FAILED && (munmap(map, map_size)) < 0)
+		thread_output("munmap returned an error after verifying file contents for write: %m\n");
+
+	return replicated_offset;
+}
+off_t verify_file(void *ptr, off_t offset) {
+	off_t replicated_offset = -1;
+
+//	if ((__sync_add_and_fetch(&proc_args->verifying, 1)) == 1)
+//		__sync_add_and_fetch(&globals.shared->verifying_count, 1);
+
+	if (ptr)
+		replicated_offset = thread_verify_file(ptr, offset);
+	else
+		replicated_offset = proc_verify_file();
+
+	if  (replicated_offset != -1) {
+		if (__sync_add_and_fetch(&proc_args->replicated, 1) == 1) {
+			proc_args->replicated_offset = replicated_offset;
+			__sync_add_and_fetch(&globals.shared->replicated_count, 1);
+		}
+
+		set_exit(true);
+	}
+
+//	if ((__sync_sub_and_fetch(&proc_args->verifying, 1)) == 0)
+//		__sync_sub_and_fetch(&globals.shared->verifying_count, 1);
+
+	return replicated_offset;
+}
+		
 
 void free_proc_paths(void) {
 	int i;
@@ -654,60 +826,6 @@ out:
 	return ret;
 }
 
-union multi_access {
-	uint64_t u64[1];
-	uint32_t u32[2];
-	uint16_t u16[4];
-	uint8_t u8[8];
-};
-
-#define DEFINE_MATCHLEN_FUNC(len) \
-	__attribute__ ((gnu_inline)) inline \
-	off_t PASTE(matchlen_u, len)(uint8_t *_a, uint8_t *_b) { \
-		union multi_access *a = (union multi_access *)_a, *b = (union multi_access *)_b; \
-		union multi_access d = { .u64[0] = 0 }; \
-		\
-		d.PASTE(u, len)[0] = a->PASTE(u, len)[0] ^ b->PASTE(u, len)[0]; \
-		int clz = sizeof(PASTE3(uint, len, _t)); \
-		\
-		if (d.PASTE(u, len)[0]) \
-			clz = __builtin_clzl(htobe64(d.PASTE(u, len)[0])) / 8; \
-		\
-		return clz; \
-	}
-
-#pragma GCC push_options
-//#pragma GCC optimize("O3")
-
-DEFINE_MATCHLEN_FUNC(8)
-DEFINE_MATCHLEN_FUNC(16)
-DEFINE_MATCHLEN_FUNC(32)
-DEFINE_MATCHLEN_FUNC(64)
-#define compare_mem_try_match(bits, a, b, len) do { \
-	int ret; \
-	if (len >= (bits/8)) { \
-		if ((ret = PASTE(matchlen_u, bits)(a, b)) == (bits/8)) { \
-			len -= (bits/8); \
-			a += (bits/8); \
-			b += (bits/8); \
-			continue; \
-		} \
-		return (a - _a) + ret; \
-	} \
-} while (0)
-
-off_t compare_mem(void *_a, void *_b, size_t len) {
-	void *a = _a, *b = _b;
-	while (len > 0) {
-		compare_mem_try_match(64, a, b, len);
-		compare_mem_try_match(32, a, b, len);
-		compare_mem_try_match(16, a, b, len);
-		compare_mem_try_match(8, a, b, len);
-	}
-	return (a - _a);
-}
-#pragma GCC pop_options
-
 void *write_func(void *args_ptr) {
 	struct thread_args *thread_args = (struct thread_args *)args_ptr;
 
@@ -720,7 +838,8 @@ void *write_func(void *args_ptr) {
 	}
 
 	do {
-		size_t this_write_count = min(globals.buf_size, globals.filesize - thread_args->offset);
+		size_t this_write_size = min(globals.buf_size, globals.filesize - thread_args->offset);
+//		off_t replicated_offset;
 		ssize_t written;
 
 		if (get_exit()) { // just skip to the end
@@ -738,48 +857,35 @@ void *write_func(void *args_ptr) {
 #endif
 		}
 
-		memset(thread_args->buf, fill_chars[thread_args->c], this_write_count);
-		pthread_barrier_wait(&proc_args->bar);
+
+		memset(thread_args->buf, fill_chars[thread_args->c], this_write_size);
+		do_thread_wait(thread_args);
+//		pthread_barrier_wait(&proc_args->bar);
+//		incr_waited_count(thread_args);
 
 		thread_output("write %d, offset 0x%lx (%lu), count 0x%lx (%lu), '%c' starting write\n",
 			thread_args->write_count + 1, thread_args->offset, thread_args->offset,
-			this_write_count, this_write_count, fill_chars[thread_args->c]);
+			this_write_size, this_write_size, fill_chars[thread_args->c]);
 
-		written = pwrite(proc_args->fd, thread_args->buf, this_write_count, thread_args->offset);
+		written = pwrite(proc_args->fd, thread_args->buf, this_write_size, thread_args->offset);
 
 		thread_output("write %d, offset 0x%lx (%lu), count 0x%lx (%lu), '%c' complete (0x%lx (%lu) written)\n",
 			thread_args->write_count + 1, thread_args->offset, thread_args->offset,
-			this_write_count, this_write_count, fill_chars[thread_args->c], written, written);
+			this_write_size, this_write_size, fill_chars[thread_args->c], written, written);
 
-		if (written != this_write_count) {
+		if (written != this_write_size) {
 			thread_output("error writing to file: %m\n");
 			goto out_error;
 		}
 
-		thread_args->size = thread_args->offset + this_write_count;
-		thread_args->write_count++;
+		thread_args->size = thread_args->offset + this_write_size;
+		incr_write_count(thread_args);
 
-		if (globals.verify_mode == verify_mode_ongoing) {
-			void *map;
+		if (globals.verify_mode == verify_mode_ongoing && !proc_args->interrupted) {
+			off_t replicated_offset = verify_file(thread_args, this_write_size);
 
-			if ((map = mmap(NULL, this_write_count, PROT_READ, MAP_SHARED, proc_args->fd, thread_args->offset)) == MAP_FAILED) {
-				thread_output("mmap failed while verifying file contents: %m\n");
-				globals.verify_mode = verify_mode_end; // will this even take?
-			} else {
-				size_t matched_chars = compare_mem(thread_args->buf, map, this_write_count);
-				if ((munmap(map, this_write_count)) < 0)
-					thread_output("munmap returned an error after verifying file contents: %m\n");
-
-				if (matched_chars != this_write_count) {
-					thread_output("re-read data does not match written data; mismatch at offset 0x%lx (%lu)\n",
-						thread_args->offset + matched_chars, thread_args->offset + matched_chars);
-					proc_args->replicated = true;
-					thread_args->offset += (globals.buf_size * globals.thread_count);
-					set_exit(true);
-
-					goto out_wait;
-//					continue;	
-				}
+			if (replicated_offset != -1) {
+				goto out_wait;
 			}
 		}
 
@@ -787,12 +893,12 @@ void *write_func(void *args_ptr) {
 		thread_args->c = (thread_args->c + globals.thread_count) % FILL_LEN;
 	} while (thread_args->offset < globals.filesize);
 
-
 	if (thread_args->id >= globals.extra_write_threads) {
 		thread_output("writes complete; waiting for other threads to complete\n");
-		pthread_barrier_wait(&proc_args->bar);
+//		pthread_barrier_wait(&proc_args->bar);
 	} else
 		thread_output("writes complete\n");
+	goto out_wait;
 
 out:
 	free_mem(thread_args->buf);
@@ -803,21 +909,19 @@ out_error:
 	set_exit(true);
 
 out_wait: /* need to spin on the barrier until all threads get the message */
-	{
-		off_t offset = thread_args->offset;
-
-		while (offset < globals.filesize) {
-			pthread_barrier_wait(&proc_args->bar);
-
-			offset += (globals.buf_size * globals.thread_count);
-		}
-		if (thread_args->id >= globals.extra_write_threads) /* wait one extra time */
-			pthread_barrier_wait(&proc_args->bar);
+	while (wait_all_threads(thread_args)) {
+		do_thread_wait(thread_args);
+//		pthread_barrier_wait(&proc_args->bar);
+//		incr_waited_count(thread_args);
 	}
+	if (thread_args->offset < globals.filesize)
+		thread_output("exiting with offset of %lu; file size is %lu\n", thread_args->offset, globals.filesize);
+
 	goto out;
 }
 
-// if some of the threads got an extra write() in, need to reduce the file size to the largest size known to have been written by all threads
+// if some of the threads got an extra write() in, need to reduce the file
+// 	size to the largest size known to have been written by all threads
 //
 // for the file size, determine which thread would have written the
 //     (offset + length) to cause the file to become that size
@@ -839,28 +943,160 @@ void truncate_test_file(void) {
 		st.st_size, st.st_size, ending_thread, write_count,
 		proc_args->thread_args[ending_thread].size, proc_args->thread_args[ending_thread].size);
 
+
+proc_output("\n");
+
+#if 0
+size_t ts2 = proc_args->thread_args[0].size;
+int wc = proc_args->thread_args[0].write_count;
+
+recheck_sizes1:
+//for (i = 1 ; i < globals.extra_write_threads ; i++) {
+for (i = 1 ; i < ending_thread ; i++) {
+	int this_wc = proc_args->thread_args[i].write_count;
+
+	if (this_wc == wc) {
+output("write count for thread %d is %d, which is equal to the current write count; increasing size from %lu to %lu\n",
+	i, this_wc, ts2, proc_args->thread_args[i].size);
+		ts2 = proc_args->thread_args[i].size;
+	} else if (this_wc > wc) {
+output("write count for thread %d is %d, which is greater than the current write count %d; ignoring the thread; size stays at %lu\n",
+	i, this_wc, wc, ts2);
+		;
+	} else if (this_wc == wc - 1) {
+output("write count for thread %d is %d, which is one less than the current write count %d; can't increase the current file size from %lu\n",
+	i, this_wc, wc, ts2);
+		break;
+	} else if (this_wc < wc - 1) { /* not sure this could/should ever happen */
+output("write count for thread %d is %d, which is unexpectedly much lower than the current write count %d; setting the write count and size, and restarting phase 1 of the checks\n",
+	i, this_wc, wc);
+		ts2 = proc_args->thread_args[i].size; /* have to decrese the size */
+		wc = proc_args->thread_args[i].write_count; /* have to decrease the size */
+		goto recheck_sizes1;
+	}
+}
+
+recheck_sizes2:
+//for (i = globals.extra_write_threads ; i < globals.thread_count ; i++) {
+for (i = ending_thread ; i < globals.thread_count ; i++) {
+	int this_wc = proc_args->thread_args[i].write_count;
+
+	if (this_wc > wc) {
+		output("write count for thread %d is %d, which is greater than the current write count %d; ignoring the thread; size stays at %lu and write count stays at %d\n",
+			i, this_wc, wc, ts2, wc);
+	} else if (this_wc == wc) { /* size should always be larger */
+		if (proc_args->thread_args[i].size < ts2) {
+			output("ERROR size of write by thread %d (%lu) should be larger than current size: %lu\n",
+				i, proc_args->thread_args[i].size, ts2);
+		} else {
+			output("write count for thread %d is %d, which is equal to the current write count; increasing size from %lu to %lu\n",
+				i, this_wc, ts2, proc_args->thread_args[i].size);
+		}
+	} else if (this_wc == wc - 1) { /* should be fine, but nobody else should have fewer */
+		output("write count for thread %d is %d, which is lower than the current write count %d; should be okay, though\n",
+			i, this_wc, wc);
+
+	} else if (this_wc < wc - 1) { /* hmm...  this is pretty low */
+		output("write count for thread %d is %d, which is unexpectedly much lower than the current write count %d; setting the write count and restarting phase 2 of the checks\n",
+			i, this_wc, wc);
+		ts2 = proc_args->thread_args[i].size; /* have to decrese the size */
+                wc = proc_args->thread_args[i].write_count; /* have to decrease the size */
+		goto recheck_sizes2;
+	}
+
+
+}
+
+
+
+
+#elsif 0 /* original size determination algorithm */
+// write count
+// truncate_size
+
+proc_output("initial size: 0x%lx (%lu), initial write count: %d, written by thread %d\n",
+	truncate_size, truncate_size, write_count, ending_thread);
+
+//reloop:
 	for (i = (ending_thread + globals.thread_count - 1) ; i > ending_thread ; i--) {
 		int check_thread = i % globals.thread_count;
+
 
 		proc_output("checking thread %d, which wrote %d times making file size 0x%lx (%lu)\n",
 			check_thread, proc_args->thread_args[check_thread].write_count,
 			proc_args->thread_args[check_thread].size, proc_args->thread_args[check_thread].size);
 
+		// this thread's write count should not be lower; 
 		if (check_thread < ending_thread && proc_args->thread_args[check_thread].write_count < write_count) {
+
 			write_count = proc_args->thread_args[check_thread].write_count;
 			truncate_size = proc_args->thread_args[check_thread].size;
 
 			proc_output("reducing size to 0x%lx (%lu) due to write count for thread %d (%d)\n",
 				truncate_size, truncate_size, check_thread, write_count);
+//goto reloop;
 		} else if (check_thread > ending_thread && proc_args->thread_args[check_thread].write_count < (write_count - 1)) {
+
 			write_count = proc_args->thread_args[check_thread].write_count;
 			truncate_size = proc_args->thread_args[check_thread].size;
 
 			proc_output("reducing size to 0x%lx (%lu) due to write count for thread %d (%d)\n",
 				truncate_size, truncate_size, check_thread, write_count);
+//goto reloop;
 		}
 	}
 
+#else
+
+//int min_wc_thr = 0, max_wc_thr = 0;
+int wc = proc_args->thread_args[0].write_count;
+
+
+size_t tsz3 = proc_args->thread_args[0].size;
+
+
+int highest_with_min = 0;
+int min_wc = proc_args->thread_args[0].write_count;
+int max_wc = proc_args->thread_args[0].write_count;
+
+
+for (i = 1 ; i < globals.thread_count ; i++) {
+	int this_wc = proc_args->thread_args[i].write_count;
+
+//	min_wc = min(min_wc, proc_args->thread_args[i].write_count);
+//	man_wc = max(max_wc, proc_args->thread_args[i].write_count);
+	if (this_wc < min_wc) {
+		min_wc = this_wc;
+		highest_with_min = i;
+	} else if (this_wc == min_wc) {
+		highest_with_min = i;
+	}
+
+	if (this_wc > max_wc) {
+		max_wc = this_wc;
+//		lowest_with_max = i;
+	}
+}
+if (min_wc == max_wc) { /* easy; just pick the last one */
+	tsz3 = proc_args->thread_args[globals.thread_count - 1].size;
+} else if (highest_with_min == 0) { /* easy; just pick the first one */
+	tsz3 = proc_args->thread_args[0].size;
+//} else if (highest_with_min == global.thread_count - 1) { /* could be one that's wc+1 */
+} else {
+	tsz3 = proc_args->thread_args[highest_with_min].size;
+	for (i = 0 ; i < highest_with_min ; i++) {
+		int this_wc = proc_args->thread_args[i].write_count;
+		if (this_wc == min_wc + 1)
+			tsz3 = proc_args->thread_args[i].size;
+		else /* oh well */
+			break;
+	}
+}
+truncate_size = tsz3;
+
+
+
+#endif
 	if (truncate_size < st.st_size) {
 		proc_output("truncating file from 0x%lx (%lu) to size known to have completed: 0x%lx (%lu)\n",
 			st.st_size, st.st_size, truncate_size, truncate_size);
@@ -911,6 +1147,16 @@ int do_one_test(void) {
 	}
 
 	memset(proc_args->thread_args, 0, sizeof(struct thread_args) * globals.thread_count);
+	proc_args->exit_acked = 0;
+
+//	proc_args->
+//int stop_waited_count;
+//        int test_count;
+//        bool replicated;
+
+//        pthread_mutex_t state_mutex;
+//        bool exit_test;
+//        int exit_acked;
 
 	if ((pthread_barrier_init(&proc_args->bar, NULL, globals.thread_count))) {
 		proc_output("error calling pthread_barrier_init(): %m\n");
@@ -935,7 +1181,8 @@ int do_one_test(void) {
 			ret = EXIT_FAILURE;
 			goto out;
 		}
-		proc_output("thread %d wrote to file size 0x%lx (%lu)\n", i, proc_args->thread_args[i].size, proc_args->thread_args[i].size);
+		proc_output("thread %d wrote %d times to file size 0x%lx (%lu)\n",
+			i, proc_args->thread_args[i].write_count, proc_args->thread_args[i].size, proc_args->thread_args[i].size);
 
 	}
 
@@ -944,12 +1191,25 @@ int do_one_test(void) {
 
 	close_fd(proc_args->fd);
 
-	if (globals.verify_mode == verify_mode_end) {
+	if (globals.verify_mode == verify_mode_end && ! proc_args->interrupted) {
+		off_t replicated_offset;
 		proc_output("test #%d verifying file contents\n", proc_args->test_count);
-		if ((check_replicated()) == true) {
+
+		if ((replicated_offset = verify_file(NULL, 0)) != -1) {
 			ret = EXIT_SUCCESS;
-			proc_args->replicated = true;
-		}
+
+			proc_output("verification failed; non-zero data found at offset 0x%lx (%lu)\n", replicated_offset, replicated_offset);
+		} else
+			proc_output("verification succeeded; no errors found\n");
+
+
+//		if ((replicated_offset = check_proc_replicated()) != -1) {
+//			ret = EXIT_SUCCESS;
+//			if (__sync_add_and_fetch(&proc_args->replicated, 1) == 1) {
+//				proc_args->replicated_offset = replicated_offset;
+//				__sync_add_and_fetch(&globals.shared->replicated_count, 1);
+//			} /* otherwise, one of our threads already incremented */
+//		}
 	}
 
 out:
@@ -961,12 +1221,35 @@ out:
 	return ret == EXIT_SUCCESS ? EXIT_SUCCESS : EXIT_FAILURE;
 }
 
+void proc_sig_handler(int sig) {
+	char tstamp_buf[TSTAMP_BUF_SIZE];
+
+	if (sig != SIGPIPE)
+		proc_sig_output("in the proc sig handler with signal %d\n", sig);
+//	set_exit(true); /* tell everyone to exit? */
+	proc_args->exit_test = true; /* just tell our threads to exit */
+	proc_args->interrupted = true; /* without checking */
+}
+
 int do_one_proc(int proc_num) {
 	int ret = EXIT_SUCCESS;
+	struct sigaction sa;
 
 	proc_args = &globals.proc[proc_num];
 	proc_args->pid = getpid();
 	proc_args->state_mutex = (pthread_mutex_t) PTHREAD_MUTEX_INITIALIZER;
+
+	/* allow the process to handle its own signals */
+	memset(&sa, 0, sizeof(sa));
+	sigfillset(&sa.sa_mask);
+	sa.sa_flags = 0;
+	sa.sa_handler = &proc_sig_handler;
+	sigaction(SIGINT, &sa, NULL);
+	sigaction(SIGTERM, &sa, NULL);
+	sigaction(SIGPIPE, &sa, NULL);
+	sigaction(SIGABRT, &sa, NULL);
+	sigaction(SIGHUP, &sa, NULL);
+	sigaction(SIGQUIT, &sa, NULL);
 
 	proc_output("alive\n");
 
@@ -977,13 +1260,11 @@ int do_one_proc(int proc_num) {
 	}
 	if ((dup3(proc_args->log_fd, fileno(stdout), 0)) < 0) {
 		dprintf(globals.stderr_fd, "%s  [%d] error replacing stdout: %m\n", tstamp(proc_args->tstamp_buf), proc_args->pid);
-//		proc_output("error replacing stdout: %m\n"); // will this actually go anywhere?
 		ret = EXIT_FAILURE;
 		goto out;
 	}
 	if ((dup3(proc_args->log_fd, fileno(stderr), 0)) < 0) {
 		dprintf(globals.stderr_fd, "%s  [%d] error replacing stderr: %m\n", tstamp(proc_args->tstamp_buf), proc_args->pid);
-//		proc_output("error replacing stderr: %m\n"); // will this actually go anywhere?
 		ret = EXIT_FAILURE;
 		goto out;
 	}
@@ -992,21 +1273,20 @@ int do_one_proc(int proc_num) {
 
 	proc_args->thread_args = malloc(sizeof(struct thread_args) * globals.thread_count);
 	for (proc_args->test_count = 1 ; proc_args->test_count <= globals.test_count ; proc_args->test_count++) {
-		incr_test_count(proc_args->proc_num);
+		__sync_add_and_fetch(&globals.shared->test_count, 1); /* update the global stat */
 
 		ret = do_one_test();
 
-		if (proc_args->replicated) {
+		if (__sync_add_and_fetch(&proc_args->replicated, 0)) {
 			proc_output("test proc %d replicated the bug on test #%d with device %d:%d inode %lu\n",
 				proc_args->proc_num, proc_args->test_count,
 				proc_args->major, proc_args->minor, proc_args->inode);
-			set_proc_replicated(proc_args->proc_num, true);
 			break;
 		}
 
 		if (ret == EXIT_FAILURE)
 			break;
-		if (get_exit()) {
+		if (get_exit() || proc_args->exit_test) { /* global or per-proc exit flag */
 			proc_output("exiting as requested\n");
 			break;
 		}
@@ -1095,7 +1375,7 @@ struct linux_dirent64 {
 	char		d_name[]; /* Filename (null-terminated) */
 };
 
-size_t reclaim_disk(int _dfd) {
+size_t reclaim_disk(int _dfd, const char *reclaim_path) {
 	struct linux_dirent64 *de;
 	char *getdents_buf = NULL, *bpos;
 	int nread;
@@ -1103,8 +1383,8 @@ size_t reclaim_disk(int _dfd) {
 	int unreclaimable_objects = 0, dfd;
 	struct stat st;
 
-	global_output("attempting to reclaim disk space in the test directory '%s/testfiles'\n",
-		globals.canonical_base_dir_path);
+	global_output("attempting to reclaim disk space in the test directory '%s/%s'\n",
+		globals.canonical_base_dir_path, reclaim_path);
 
 	if ((getdents_buf = malloc(GETDENTS_BUF_SIZE)) == NULL) {
 		global_output("error allocating memory: %m\n");
@@ -1142,13 +1422,15 @@ size_t reclaim_disk(int _dfd) {
 				char *p;
 				uint32_t filenum = strtoul(de->d_name + 4, &p, 10);
 
-				if ((filenum == ULONG_MAX && errno == ERANGE) || (*p != '\0')) {
-global_output("here1 - p: '%s'\n", p);
-					/* overflow or filename contains something after test### */
+				if (filenum == ULONG_MAX && errno == ERANGE) { /* overflow */
 					reclaimable += st.st_size; /* could be reclaimed, but we're not doing so, since we don't know what it is */
 					continue;
 				}
-global_output("deleting %s\n", de->d_name);
+				if (*p != '\0' && strcmp(p, ".log")) { /* filename not test###.log */
+					reclaimable += st.st_size; /* could be reclaimed, but we're not doing so, since we don't know what it is */
+					continue;
+				}
+
 				if ((unlinkat(dfd, de->d_name, 0)) < 0) {
 					global_output("error removing file '%s': %m\n", de->d_name);
 					reclaim_failed += st.st_size;
@@ -1207,7 +1489,7 @@ int do_testing() {
 	int ret = EXIT_FAILURE, i;
 	off_t total_disk_required;
 	char *total_disk_required_str = NULL;
-	char *size1 = NULL, *size2 = NULL;
+	char *filesize_str = NULL, *buf_size_str = NULL;
 	struct statfs stfs;
 
 
@@ -1238,25 +1520,20 @@ int do_testing() {
 	global_output("test running on '%s' arch '%s' kernel '%s'\n", globals.uts.nodename, globals.uts.machine, globals.uts.release);
 	global_output("base directory for testing is '%s'\n", globals.canonical_base_dir_path);
 
-	size1 = byte_units(globals.filesize);
-	size2 = byte_units(globals.buf_size);
+	filesize_str = byte_units(globals.filesize);
+	buf_size_str = byte_units(globals.buf_size);
 	global_output("size of each testfile is 0x%lx (%lu - %s) bytes, and buffer size will be 0x%lx (%lu - %s)\n",
-		globals.filesize, globals.filesize, size1, globals.buf_size, globals.buf_size, size2);
-	free_mem(size1);
-	free_mem(size2);
+		globals.filesize, globals.filesize, filesize_str, globals.buf_size, globals.buf_size, buf_size_str);
+	free_mem(filesize_str);
+	free_mem(buf_size_str);
 
 	global_output("initial offset is 0x%lx (%ld)\n", globals.off0, globals.off0);
 	global_output("creating %d test processes, each having %d threads\n", globals.proc_count, globals.thread_count);
 
+	output("\n");
 	total_disk_required_str = byte_units(total_disk_required);
 	global_output("tests will require approximately %lu bytes (%s) in the test directory (%s/testfiles)\n",
 		total_disk_required, total_disk_required_str, globals.canonical_base_dir_path);
-
-	shared = mmap(NULL, sizeof(struct shared_struct), PROT_READ|PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
-	shared->exit_test = false;
-
-	globals.proc = mmap(NULL, sizeof(struct proc_args) * globals.proc_count, PROT_READ|PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
-
 
 	if ((mkdirat(globals.base_dir_fd, "testfiles", 0777)) && errno != EEXIST) {
 		global_output("error creating testfile dir '%s/testfiles': %m\n", globals.canonical_base_dir_path);
@@ -1285,8 +1562,28 @@ int do_testing() {
 		goto out;
 	}
 
-	/* remove existing testfiles */
-	reclaim_disk(globals.testfile_dir_fd);
+	reclaim_disk(globals.testfile_dir_fd, "testfiles"); /* remove existing testfiles */
+
+	if ((globals.proc = mmap(NULL, sizeof(struct proc_args) * globals.proc_count, PROT_READ|PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0)) == MAP_FAILED) {
+		global_output("error mapping memory for processes: %m\n");
+		goto out;
+	}
+	if ((globals.shared = mmap(NULL, sizeof(struct shared_struct) + (sizeof(uint64_t) * globals.proc_count), PROT_READ|PROT_WRITE, MAP_SHARED|MAP_ANONYMOUS, -1, 0)) == MAP_FAILED) {
+		global_output("error mapping memory for test counts: %m\n");
+		goto out;
+	}
+	globals.shared->exit_test = false;
+
+	/* open log dir */
+	if ((mkdirat(globals.base_dir_fd, "logs", 0777)) && errno != EEXIST) {
+		global_output("error creating log dir '%s/logs': %m\n", globals.canonical_base_dir_path);
+		goto out;
+	}
+	if ((globals.log_dir_fd = openat(globals.base_dir_fd, "logs", O_RDONLY|O_DIRECTORY)) < 0) {
+		global_output("error opening log dir '%s/logs': %m\n", globals.canonical_base_dir_path);
+		goto out;
+	}
+	reclaim_disk(globals.log_dir_fd, "logs"); /* remove existing logfiles */
 
 	if ((fstatfs(globals.testfile_dir_fd, &stfs)) < 0) {
 		global_output("error calling fstatfs() to verify free space: %m\n");
@@ -1307,15 +1604,7 @@ int do_testing() {
 
 		goto out;
 	}
-
-	if ((mkdirat(globals.base_dir_fd, "logs", 0777)) && errno != EEXIST) {
-		global_output("error creating log dir '%s/logs': %m\n", globals.canonical_base_dir_path);
-		goto out;
-	}
-	if ((globals.log_dir_fd = openat(globals.base_dir_fd, "logs", O_RDONLY|O_DIRECTORY)) < 0) {
-		global_output("error opening log dir '%s/logs': %m\n", globals.canonical_base_dir_path);
-		goto out;
-	}
+	output("\n");
 
 	if ((ret = alloc_proc_paths()) != EXIT_SUCCESS) {
 		global_output("error allocating memory for test process paths: %s\n", strerror(ret));
@@ -1323,7 +1612,6 @@ int do_testing() {
 		goto out;
 	}
 
-	set_exit(false);
 	for (i = 0 ; i < globals.proc_count ; i++) {
 		pid_t cpid;
 
@@ -1335,7 +1623,7 @@ int do_testing() {
 			globals.cpids[i] = cpid;
 			globals.proc[i].pid = cpid;
 			global_output("forked test proc %d as pid %d\n", i, globals.proc[i].pid);
-
+			__sync_add_and_fetch(&globals.shared->running_count, 1);
 		} else {
 			int j;
 
@@ -1359,28 +1647,35 @@ int do_testing() {
 	sigdelset(&signal_mask, SIGALRM);
 
 	while (42) {
-		int running_count = 0;
+//		int running_count = 0;
 
 		sigsuspend(&signal_mask);
 
-		for (i = 0 ; i < globals.proc_count ; i++) {
-			if (globals.cpids[i])
-				running_count++;
-		}
-		if (! running_count)
+		if (__sync_add_and_fetch(&globals.shared->running_count, 0) == 0)
 			break;
+
+//		for (i = 0 ; i < globals.proc_count ; i++) {
+//			if (globals.cpids[i])
+//				running_count++;
+//		}
+//		if (! running_count)
+//			break;
 	}
 
-	if (globals.replicated) {
+	if (__sync_add_and_fetch(&globals.shared->replicated_count, 0)) {
 		global_output("replicated the bug %d time%s\n",
-			globals.replicated, globals.replicated == 1 ? "" : "s");
+//			globals.replicated, globals.replicated == 1 ? "" : "s");
+			__sync_add_and_fetch(&globals.shared->replicated_count, 0), 
+			__sync_add_and_fetch(&globals.shared->replicated_count, 0) == 1 ? "" : "s");
 		for (i = 0 ; i < globals.proc_count ; i++) {
-			if (check_proc_replicated(i)) {
-				global_output("test proc %d on test #%d with %s/testfiles/%s - device %d:%d inode %lu\n",
+//			if (check_proc_replicated(i)) {
+			if (globals.proc[i].replicated) {
+//				global_output("test proc %d on test #%d with %s/testfiles/%s - device %d:%d inode %lu\n",
+				output("test proc %d on test #%d with %s/testfiles/%s - device %d:%d inode %lu - offset 0x%lx (%lu)\n",
 					i, globals.proc[i].test_count, globals.canonical_base_dir_path, globals.proc[i].name,
-					globals.proc[i].major, globals.proc[i].minor, globals.proc[i].inode);
-				output("    replicated at offset 0x%lx (%lu)\n",
+					globals.proc[i].major, globals.proc[i].minor, globals.proc[i].inode,
 					globals.proc[i].replicated_offset, globals.proc[i].replicated_offset);
+//				output("    replicated at offset 0x%lx (%lu)\n",
 			}
 		}
 	} else
@@ -1397,12 +1692,16 @@ out:
 		free_proc_paths();
 		munmap(globals.proc, sizeof(struct proc_args) * globals.proc_count);
 	}
+	if (globals.shared)
+		munmap(globals.shared, sizeof(struct shared_struct) + (sizeof(uint64_t) * globals.proc_count));
 
 	return ret;
 }
 
 void do_init(char *exe) {
 	memset(&globals, 0, sizeof(globals));
+
+	globals.page_size = sysconf(_SC_PAGESIZE);
 
 	globals.exe = exe;
 	globals.proc_count = DEFAULT_PROC_COUNT;
