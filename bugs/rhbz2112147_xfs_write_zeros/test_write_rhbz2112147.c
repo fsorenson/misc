@@ -62,6 +62,17 @@
 	 F. count the number of successful tests
 
 
+	Program can be interrupted, and test processes should exit.
+	    1 - processes will exit after completing this current test and verification
+	    2 - processes will exit now, and verify the bytes written
+	    3 - processes will exit now, without verifying bytes written
+	    4 - processes will be unceremoniously killed (signal 9)
+
+
+nterrupt 5+ times
+	for the test program to unceremoniously kill all child processes.
+
+
 
 */
 
@@ -93,6 +104,8 @@
 #include <sys/time.h>
 #include <sys/utsname.h>
 #include <sys/vfs.h>
+
+#define PAGE_SIZE_4K		(4096UL)
 
 #define DEFAULT_TEST_COUNT	(100)
 
@@ -161,6 +174,11 @@ static char fill_chars[] = FILL_CHARS;
 	__val = __val < __min ? __min: __val;   \
 	__val > __max ? __max: __val; })
 
+
+#define PTHREAD_TBARRIER_CANCELED	(-2)
+// function looks like:  bool cancel_func(void);
+typedef bool (*tbarrier_csncel_func_t)(void);
+
 /* a cancelable barrier */
 struct pthread_tbarrier {
 	pthread_cond_t cond;
@@ -168,26 +186,27 @@ struct pthread_tbarrier {
 	struct timespec freq;
 
 	uint32_t target_count;
-//	int current_wait_count; // alternately, threads_left
-	uint32_t threads_left; // alternately, current_wait_count
+	uint32_t threads_left; // alternatively, current_wait_count
 	uint32_t cycle;
 	bool initialized;
-	bool cancel;
+	tbarrier_csncel_func_t cancel;
 };
 typedef struct pthread_tbarrier pthread_tbarrier_t;
 typedef enum { verify_mode_end, verify_mode_ongoing } verify_mode;
 
-typedef enum { no_exit = 0, exit_now, exit_after_test } exit_urgency;
+//typedef enum { no_exit = 0, exit_now_verify, exit_now, exit_after_test } exit_urgency;
+typedef enum { no_exit = 0, exit_after_test, exit_now_verify, exit_now, exit_kill } exit_urgency;
+
+
 typedef enum { not_exiting = 0, exit_error, exit_interrupt, exit_test_count, exit_replicated } exit_reason;
 
 struct bug_result {
 	off_t offset; /* offset of zero data */
-	size_t length /* length of zeroed data */
+	size_t length; /* length of zeroed data */
 };
 struct bug_results {
 	int count; /* number of result entries */
-	size-t size; /* size of file */
-	struct bug_results result[0];
+	struct bug_result result[0];
 };
 
 struct shared_struct {
@@ -207,8 +226,8 @@ struct thread_args {
 
 	pthread_t thread;
 
-	off_t offset;
-	size_t size;
+	off_t offset; /* location of write */
+	size_t size; /* size which this process's latest write made the file */
 
 	pid_t tid;
 	int id;
@@ -219,9 +238,7 @@ struct thread_args {
 
 struct proc_args {
 	int proc_num;
-//	struct thread_args thread_args[MAX_THREAD_COUNT];
-	char tstamp_buf[TSTAMP_BUF_SIZE]; // may only be used by the main test process
-//	struct thread_args thread_args[MAX_THREAD_COUNT];
+	char tstamp_buf[TSTAMP_BUF_SIZE]; // may only be used by the test process
 	struct thread_args *thread_args;
 	char *name;
 	char *log_name;
@@ -232,15 +249,12 @@ struct proc_args {
 	size_t zero_len; /* number of zeros */
 
 	struct bug_results *results;
-	int result_count;
 
 	ino_t inode;
 
 	pid_t pid;
 	int fd; // fd of the testfile
 	int log_fd;
-	pthread_barrier_t bar;
-	pthread_barrier_t bar2;
 
 	pthread_tbarrier_t tbar1;
 	pthread_tbarrier_t tbar2;
@@ -248,13 +262,17 @@ struct proc_args {
 	pthread_key_t thread_id_key;
 	pthread_key_t thread_key;
 
+	uint32_t write_round;
+	uint32_t last_verify_round;
+	size_t last_verified_size;
+	size_t current_size;
+
 	int memfd;
 	int test_count;
-	int verifying;
+//	int verifying;
 	int replicated;
 
-	bool exit_test;
-	int interrupted;
+	exit_urgency exit_test;
 	exit_reason exit_reason;
 } *proc_args;
 
@@ -276,6 +294,8 @@ struct globals {
 
 	struct proc_args *proc;
 	struct shared_struct *shared;
+	struct timespec start_time;
+	struct timespec end_time;
 	long page_size;
 
 	int log_fd;
@@ -289,13 +309,11 @@ struct globals {
 	int log_dir_fd;
 
 	verify_mode verify_mode;
+	uint32_t verify_frequency;
 
 	int proc_count;
 	int test_count;
 	int thread_count;
-
-//	int total_write_count; // total number of writes required to fill the file
-//	int extra_write_threads; // number of threads which will write an extra time
 
 	int interrupt_count; /* how many times we've received a non-SIGCHLD interrupt (i.e. told to stop) */
 } globals;
@@ -322,16 +340,16 @@ pid_t gettid(void) {
 #define close_fd(fd) do { \
 	if (fd >= 0) { \
 		if ((close(fd)) < 0) \
-			output("error closing fd '%s': %m\n", \
-				STR(fd)); \
+			output("%s() @ %s:%d - error closing fd '%s': %m\n", \
+				__func__, __FILE__, __LINE__, STR(fd)); \
 		fd = -1; \
 	} \
 } while (0)
 #define close_FILE(fh, fd) do { \
 	if (fh) { \
 		if (fclose(fh) == EOF) \
-			output("error closing file handle '%s' / fd '%s': %m\n", \
-				STR(fh), STR(fd)); \
+			output("%s() @ %s:%d - error closing file handle '%s' / fd '%s': %m\n", \
+				__func__, __FILE__, __LINE__, STR(fh), STR(fd)); \
 		fh = NULL; \
 		fd = -1; \
 	} \
@@ -340,6 +358,14 @@ pid_t gettid(void) {
 #define output(args...) do { \
 	printf(args); \
 	fflush(stdout); \
+} while (0)
+
+/* globals.log_fd should be line-buffered now */
+#define log_and_output(args...) do { \
+	if (globals.log_fd >= 0) { \
+		dprintf(globals.log_fd, args); \
+	} \
+	output(args); \
 } while (0)
 
 /* globals.log_fd should be line-buffered now */
@@ -353,16 +379,37 @@ pid_t gettid(void) {
 #define thread_output(_thread_output_fmt, ...) \
 	output("%s  [%d / test proc %d / thread %d] " _thread_output_fmt, tstamp(thread_args->tstamp_buf), thread_args->tid, proc_args->proc_num, thread_args->id, ##__VA_ARGS__)
 
+#define proc_sig_output(_output_fmt, ...) \
+	output("%s  [%d / test proc %d] " _output_fmt, tstamp(tstamp_buf), proc_args->pid, proc_args->proc_num, ##__VA_ARGS__)
 #define proc_output(_proc_output_fmt, ...) \
 	output("%s  [%d / test proc %d] " _proc_output_fmt, tstamp(proc_args->tstamp_buf), proc_args->pid, proc_args->proc_num, ##__VA_ARGS__)
 
+#define global_sig_output(_global_output_fmt, ...) /* expected to have our own buffer */ \
+	log_and_output("%s  [%d] " _global_output_fmt, tstamp(tstamp_buf), globals.pid, ##__VA_ARGS__)
 #define global_output(_global_output_fmt, ...) \
 	output_global_log_and_stdout("%s  [%d] " _global_output_fmt, tstamp(globals.tstamp_buf), globals.pid, ##__VA_ARGS__)
 
-#define global_sig_output(_global_output_fmt, ...) /* expected to have our own buffer */ \
-	output("%s  [%d] " _global_output_fmt, tstamp(tstamp_buf), globals.pid, ##__VA_ARGS__)
-#define proc_sig_output(_output_fmt, ...) \
-	output("%s  [%d / test proc %d] " _output_fmt, tstamp(tstamp_buf), proc_args->pid, proc_args->proc_num, ##__VA_ARGS__)
+
+
+
+//#ifndef __NR_memfd_create /* glibc doesn't have memfd_create? */
+#ifndef MFD_CLOEXEC /* glibc doesn't have the necessary stuff? */
+
+#if __x86_64__
+#define __NR_memfd_create 319
+#elif __aarch64__
+#define __NR_memfd_create 279
+#else
+#error "Need syscall # for memfd_create"
+#endif
+
+# define SYS_memfd_create __NR_memfd_create
+
+int memfd_create(const char *__name, unsigned int __flags) {
+	return syscall(SYS_memfd_create, __name, __flags);
+}
+#endif /* don't have memfd_create */
+
 
 union multi_access {
 	uint64_t u64[1];
@@ -460,7 +507,7 @@ void handle_child_exit(int sig, siginfo_t *info, void *ucontext) {
 	pid_t pid;
 	int status, i;
 
-//	if (sig != SIGCHLD && __atomic_add_fetch(&globals.interrupt_count, 1, __ATOMIC_SEQ_CST) >= INTERRUPT_COUNT_REALLY_EXIT) {
+//	if (sig != SIGCHLD && __atomic_add_fetch(&globals.interrupt_count, 2, __ATOMIC_SEQ_CST) >= INTERRUPT_COUNT_REALLY_EXIT) {
 //		for (i = 0 ; i < globals.proc_count ; i++)
 //			if (globals.cpids[i])
 //				kill(globals.cpids[i], sig);
@@ -485,7 +532,7 @@ void handle_child_exit(int sig, siginfo_t *info, void *ucontext) {
 							i, pid, globals.proc[i].test_count, globals.proc[i].major, globals.proc[i].minor, globals.proc[i].inode,
 							globals.proc[i].replicated_offset, globals.proc[i].replicated_offset);
 
-					__sync_add_and_fetch(&globals.shared->replicated_count, 1);
+					__atomic_add_fetch(&globals.shared->replicated_count, 1, __ATOMIC_SEQ_CST);
 //					globals.shared->exit_test = true; // tell everyone else to exit
 					globals.shared->exit_test = exit_after_test; // tell everyone to exit at the end of this test
 				} else if (WIFSIGNALED(status))
@@ -497,7 +544,7 @@ void handle_child_exit(int sig, siginfo_t *info, void *ucontext) {
 				globals.cpids[i] = 0;
 				globals.proc[i].pid = 0;
 
-				__sync_sub_and_fetch(&globals.shared->running_count, 1);
+				__atomic_sub_fetch(&globals.shared->running_count, 1, __ATOMIC_SEQ_CST);
 				i = globals.proc_count;
 				found = true;
 			}
@@ -505,16 +552,6 @@ void handle_child_exit(int sig, siginfo_t *info, void *ucontext) {
 		if (! found)
 			global_sig_output("unable to find exiting child pid %d (cue Billy Jean)\n", pid);
 	} /* wait on any more children */
-//	if (sig != SIGCHLD &&
-//			globals.interrupt_count == INTERRUPT_COUNT_REALLY_EXIT &&
-//			__sync_add_and_fetch(&globals.shared->running_count, 0)) { /* processes still around; get physical */
-
-//		global_sig_output("%d processes still running; killing unceremoniously\n", __sync_add_and_fetch(&globals.shared->running_count, 0));
-
-//		for (i = 0 ; i < globals.proc_count ; i++)
-//			if (globals.cpids[i])
-//				kill(globals.cpids[i], 9);
-//	}
 }
 void handle_sig(int sig) {
 	char tstamp_buf[TSTAMP_BUF_SIZE];
@@ -680,6 +717,9 @@ off_t proc_verify_file(off_t verify_start_offset, size_t verify_start_size) {
 	void *map = MAP_FAILED, *ptr;
 	size_t expected_size = verify_start_offset + verify_start_size;
 
+struct bug_results results;
+struct bug_result result;
+
 	off_t verify_offset = page_offset;
 	off_t verify_size = verify_start_size;
 	void *verify_start;
@@ -689,8 +729,10 @@ off_t proc_verify_file(off_t verify_start_offset, size_t verify_start_size) {
 
 
 
+// = { .count = proc_args->replicated };
 
-results;
+// = { .offset = this_evil_offset, .length = zero_count };
+
 
 
 	if ((fd = openat(globals.testfile_dir_fd, proc_args->name, O_RDONLY)) < 0) {
@@ -704,8 +746,33 @@ results;
 	if (st.st_size != expected_size) {
 		proc_output("error with file size; expected 0x%lx (%lu), but size is 0x%lx (%lu)\n",
 			expected_size, expected_size, st.st_size, st.st_size);
+
+		results.count = ++proc_args->replicated;
+		result = (struct bug_result){ .offset = st.st_size, .length = expected_size - st.st_size };
+
+		pwrite(proc_args->memfd, &results, sizeof(results), 0);
+		pwrite(proc_args->memfd, &result, sizeof(result),
+			sizeof(struct bug_results) + sizeof(struct bug_result) * (proc_args->replicated - 1));
+
+
 		replicated_offset = min(expected_size, st.st_size);
-		goto out;
+//		goto out;
+
+if (verify_start_offset + verify_size < replicated_offset) // file shrunk below the point we care about it
+	goto out;
+
+
+/*
+if (st.st_size > expected_size)
+	verify_size += (st.st_size - expected_size);
+else if (st.st_size < expected_size)
+	verify_size -= (expected_size - st.st_size);
+*/
+verify_size += (st.st_size - expected_size); // the above are equivalent
+map_size = verify_size + page_offset;
+
+
+
 	}
 
 	proc_output("verifying writes...  start offset: 0x%lu (%lu), page_offset: %d, size: 0x%lx (%lu), map starts at 0x%lx (%lu) for length %lu\n",
@@ -719,45 +786,21 @@ results;
 	}
 
 check_for_evil:
-//	proc_output("checking offset 0x%lx (%lu) for length 0x%lx (%lu)\n",
-//		verify_offset, verify_offset, verify_size, verify_size);
 
 	verify_start = map + verify_offset;
-
-
-#if 0
-        void *check_start = map + page_offset;
-        if ((ptr = memchr(check_start, 0, size))) {
-                off_t valid_chars = ptr - check_start;
-                int dump_bytes = min(DUMP_BYTE_COUNT, offset + size - valid_chars + (DUMP_BYTE_COUNT>>1));
-
-                replicated_offset = valid_chars + offset;
-                proc_output("verification failed at offset 0x%lx (%lu) (valid chars: %lu)\n",
-                        replicated_offset, replicated_offset, valid_chars);
-
-                if (dump_bytes > 0) {
-                        char *hdr_str = NULL;
-
-                        hexdump(hdr_str, check_start + valid_chars - (DUMP_BYTE_COUNT>>1), offset + valid_chars - (DUMP_BYTE_COUNT>>1), dump_bytes);
-                        free_mem(hdr_str);
-                }
-                goto out;
-#endif
 
 
 	if ((ptr = memchr(verify_start, 0, verify_size))) {
 		off_t valid_chars = ptr - verify_start;
 		size_t dump_bytes = min(DUMP_BYTE_COUNT, verify_offset + verify_size - valid_chars + (DUMP_BYTE_COUNT>>1));
-		off_t this_evil_offset = valid_chars + verify_offset;
+		off_t this_evil_offset = valid_chars + verify_offset, zero_count;
 
 
 		proc_args->replicated++;
+
+
 		if (replicated_offset == -1) /* keep the already-set first location */
 			replicated_offset = this_evil_offset;
-
-//		proc_output("verification failed at offset 0x%lx (%lu) (valid chars: %lu)\n",
-//			this_evil_offset, this_evil_offset, valid_chars);
-
 
 		if (dump_bytes > 0)
 			hexdump("", verify_start + valid_chars - (DUMP_BYTE_COUNT>>1), verify_offset + valid_chars - (DUMP_BYTE_COUNT>>1), dump_bytes);
@@ -765,54 +808,47 @@ check_for_evil:
 		verify_offset = this_evil_offset;
 		verify_size -= valid_chars;
 
-
-		off_t zero_count;
-
-		if (verify_size > 0) {
-
-			verify_start = map + verify_offset;
-
-			zero_count = find_nonzero(verify_start, verify_size);
-//			proc_output("%lu zeros found; zeros end at 0x%lx (%lu)\n",
-//				zero_count, verify_offset + zero_count, verify_offset + zero_count);
-
-			verify_offset += zero_count;
-			verify_size -= zero_count;
-
-
-proc_output("  0x%lx - 0x%lx (%ld bytes) - (4k page offsets %ld - %ld)\n",
-	this_evil_offset, this_evil_offset + zero_count, zero_count, this_evil_offset & 4095, (this_evil_offset + zero_count) & 4095);
-
-		} else { /* actually... can we this happen? we'd be at the end of the file... */
-
-
-proc_output("  0x%lx (4k page offset %lx) - no remaining bytes to check\n",
-	this_evil_offset, this_evil_offset % 4095);
-}
-
-
-
-		if (verify_size > 0)
-			goto check_for_evil;
-#if 0
-		off_t this_evil_offset = valid_chars + verify_offset;
-
-		if (replicated_offset != -1) /* keep the already-set first location */
-			replicated_offset = this_evil_offset;
-
-		proc_output("verification failed at offset 0x%lx (%lu) (valid chars: %lu)\n",
-			this_evil_offset, this_evil_offset, valid_chars);
-
-		if (dump_bytes > 0) {
-			char *hdr_str = "";
-
-//			hexdump(hdr_str, verify_start + valid_chars - (DUMP_BYTE_COUNT>>1), offset + valid_chars - (DUMP_BYTE_COUNT>>1), dump_bytes);
-
-			hexdump(hdr_str, dump_start, verify_offset + (ptr - dump_start), dump_bytes);
-//			free_mem(hdr_str);
+		if (verify_size <= 0) { /* shouldn't happen */
+			proc_output("error: expected zero bytes, but remaining length indicates offset is at or beyond length of file: %ld?",
+				verify_size);
+			goto out;
 		}
 
-#endif
+		/* shouuld always be the case */
+		verify_start = map + verify_offset;
+
+		zero_count = find_nonzero(verify_start, verify_size);
+
+
+		if (proc_args->results) {
+			proc_args->results->count = proc_args->replicated;
+			proc_args->results->result[proc_args->replicated - 1] = (struct bug_result){ .offset = this_evil_offset, .length = zero_count };
+		}
+
+
+
+		if (proc_args->memfd >= 0) {
+				struct bug_results results = { .count = proc_args->replicated };
+				struct bug_result result = { .offset = this_evil_offset, .length = zero_count };
+
+				/* we honestly can't do anything about errors here */
+				pwrite(proc_args->memfd, &results, sizeof(results), 0);
+				pwrite(proc_args->memfd, &result, sizeof(result),
+					sizeof(struct bug_results) + sizeof(struct bug_result) * (proc_args->replicated - 1));
+		}
+
+
+		/* set up for next search */
+		verify_offset += zero_count;
+		verify_size -= zero_count;
+
+		proc_output("  0x%lx - 0x%lx (%ld bytes) - (4k page offsets %ld - %ld)\n",
+			this_evil_offset, this_evil_offset + zero_count - 1, zero_count,
+			this_evil_offset & 4095, (this_evil_offset + zero_count) & 4095);
+
+		if (verify_size > 0)
+			goto check_for_evil; /* search for more occurrences of the bug */
+
 		goto out;
 	} else if (replicated_offset != -1)
 		proc_output("data at offset 0x%lx (%lu) for length 0x%lx (%lu) is valid\n",
@@ -825,20 +861,100 @@ out:
 
 	return replicated_offset;
 }
+bool need_barrier(void) {
+	return true;
+}
+bool need_verify(void) {
+	int elapsed_rounds;
+
+	if (proc_args->last_verified_size == proc_args->current_size)
+		goto out_noverify;
+
+	if (proc_args->write_round == proc_args->last_verify_round)
+		goto out_noverify; /* nothing to be done, regardless of verify frequency */
+
+	if (globals.shared->exit_test > exit_now_verify)
+		goto out_noverify;
+
+	if (globals.shared->exit_test == exit_now_verify)
+		goto out_verify;
+
+	if (globals.verify_frequency == 0 && proc_args->current_size >= globals.filesize)
+		goto out_verify; /* we're at the end of the test */
+
+	elapsed_rounds = proc_args->write_round - proc_args->last_verify_round;
+	if (elapsed_rounds % globals.verify_frequency)
+		goto out_noverify;
+
+	goto out_verify;
+out_noverify:
+	return false;
+out_verify:
+	return true;
+}
 off_t verify_file(off_t offset, size_t size) {
 	off_t replicated_offset = -1;
+	off_t start_offset
+	size_t verify_size;
 
-	__sync_add_and_fetch(&globals.shared->verifying_count, 1);
+	if (! need_verify())
+		goto out;
+
+
+
+
+
+	proc_args->last_verify_round = proc_args->write_round;
+
+
+__atomic_add_fetch(&globals.shared->verifying_count, 1, __ATOMIC_SEQ_CST);
+replicated_offset = proc_verify_file(proc_args->last_verified_size, proc_args->current_size - proc_args->last_verified_size);
+
+
+
+
+__atomic_sub_fetch(&globals.shared->verifying_count, 1, __ATOMIC_SEQ_CST);
+
+
+
+
+//proc_args->write_round;
+//proc_args->last_verify_round;
+//proc_args->current_size;
+//globals.verify_frequency
+
+
+
+	if (globals.shared->exit_test == no_exit)
+		goto out;
+//no_exit = 0, exit_after_test, exit_now_verify, exit_now, exit_kill } exit_urgency;
+		
+	if (globals.verify_frequency == 0 && globals.shared->exit_test == no_exit)
+		return replicated_offset;
+
+	if (proc_args->globals.verify_grequency
+
+
+
+	uint32_t verify_frequency;
+	uint32_t write_round;
+	uint32_t last_verify_round;
+
+do_verify:
+
+	__atomic_add_fetch(&globals.shared->verifying_count, 1, __ATOMIC_SEQ_CST);
 
 	replicated_offset = proc_verify_file(offset, size);
 
 	if  (replicated_offset != -1) {
 		proc_args->replicated_offset = replicated_offset;
-		proc_args->exit_test = true;
-//		proc_args->replicated = true; // let's increment it in the checking function
-	}
-	__sync_sub_and_fetch(&globals.shared->verifying_count, 1);
+		proc_args->exit_test = max(proc_args->exit_test, exit_after_test);
+//		proc_args->exit_test = true;
 
+	}
+	__atomic_sub_fetch(&globals.shared->verifying_count, 1, __ATOMIC_SEQ_CST);
+
+out:
 	return replicated_offset;
 }
 
@@ -872,13 +988,22 @@ int my_thread_id(void) {
 	return -1;
 }
 struct thread_args *my_thread_ptr(void) {
-	void *ptr = pthread_getspecific(proc_args->thread_key);
-	return ptr;
+//	void *ptr = pthread_getspecific(proc_args->thread_key);
+	int *my_id_ptr, my_id;
+
+	if ((my_id_ptr = (int *)pthread_getspecific(proc_args->thread_id_key))) {
+		my_id = *my_id_ptr;
+		if (my_id >= globals.thread_count ++ my_id < -1)
+			return NULL;
+		return &proc_args->thread_args[my_id];
+	}
+	return NULL;
 }
 
 int pthread_tbarrier_init(pthread_tbarrier_t *tbar,
 		const pthread_barrierattr_t *restrict attr,
-		int target_count, struct timespec *freq) {
+		int target_count, tbarrier_csncel_func_t cancel,
+		struct timespec *freq) {
 
 	int ret = 0;
 
@@ -896,7 +1021,7 @@ int pthread_tbarrier_init(pthread_tbarrier_t *tbar,
 	else
 		tbar->freq = (struct timespec){ .tv_sec = 1, .tv_nsec = 0 };
 
-	tbar->cancel = false;
+	tbar->cancel = cancel;
 	tbar->initialized = true;
 
 	pthread_mutex_unlock(&tbar->lock);
@@ -922,33 +1047,20 @@ out:
 int pthread_tbarrier_wait(pthread_tbarrier_t *tbar) {
 	uint32_t left, ret = 0;
 	struct thread_args *thread_args = my_thread_ptr();
-	int tid = my_thread_id();
 
 	pthread_mutex_lock(&tbar->lock);
 
 	if ((left = --tbar->threads_left) == 0) {
 
-		if (tbar->cancel)
-			goto out_cancel;
-
-//		output("\n\nthread %d is pushing the cart off the cliff\n\n", tid);
-
 		tbar->threads_left = tbar->target_count;
 		tbar->cycle++;
 
 		pthread_cond_broadcast(&tbar->cond);
-//		pthread_mutex_unlock(&tbar->lock);
 
 		ret = PTHREAD_BARRIER_SERIAL_THREAD;
 		goto out;
 	} else {
 		uint32_t cycle = tbar->cycle;
-
-		if (tbar->cancel)
-			goto out_cancel;
-
-//		output("thread %d in waiting tbar (%d/%d)\n", tid,
-//		tbar->target_count - left + 1, tbar->target_count);
 
 		while (cycle == tbar->cycle) {
 			struct timespec wait_stop_time;
@@ -956,21 +1068,17 @@ int pthread_tbarrier_wait(pthread_tbarrier_t *tbar) {
 			wait_stop_time.tv_sec += tbar->freq.tv_sec;
 			wait_stop_time.tv_nsec += tbar->freq.tv_nsec;
 
-			if (proc_args->exit_test)
-				break;
-
-			if ((ret = pthread_cond_timedwait(&tbar->cond, &tbar->lock, &wait_stop_time)) == 0) {
-				output("thread %d done waitihng\n", tid);
+			if (tbar->cancel && tbar->cancel()) {
+				ret = PTHREAD_TBARRIER_CANCELED;
 				break;
 			}
-			if (ret == ETIMEDOUT && tbar->cancel)
-				goto out_cancel;
 
-			if (ret == ETIMEDOUT) {
-//			output("thread %d wait timed out...  waiting again\n", tid);
-				continue;
-			}
-//		output("thread %d waited, and got error: %s\n", tid, strerror(ret));
+			if ((ret = pthread_cond_timedwait(&tbar->cond, &tbar->lock, &wait_stop_time)) == 0)
+				break; /* done waiting--we may continue */
+
+			if (ret == ETIMEDOUT)
+				continue; /* wait timed out... waiting again */
+
 			thread_output("%s - pthread_cond_timedwait returned error: %s\n", __func__, strerror(ret));
 		}
 
@@ -981,21 +1089,6 @@ out:
 	pthread_mutex_unlock(&tbar->lock);
 	return ret;
 
-out_cancel:
-
-	thread_output("spotted the cancel flag -- breaking out of %s\n", __func__);
-
-	if (++tbar->threads_left == tbar->target_count) {
-		tbar->cancel = false;
-	}
-	goto out;
-}
-int pthread_tbarrier_cancel(pthread_tbarrier_t *tbar) {
-	pthread_mutex_lock(&tbar->lock);
-	if (tbar->threads_left < tbar->target_count) /* no need to cancel nothing */
-		tbar->cancel = true;
-	pthread_mutex_unlock(&tbar->lock);
-	return 0;
 }
 uint32_t pthread_tbarrier_get_waiters(pthread_tbarrier_t *tbar) {
 	uint32_t waiters;
@@ -1026,8 +1119,6 @@ void *write_func(void *args_ptr) {
 	pthread_setspecific(proc_args->thread_id_key, (void *)&thread_args->id);
 	pthread_setspecific(proc_args->thread_key, (void *)thread_args);
 
-	thread_output("thread id is definitely %d\n", my_thread_id());
-
 	thread_output("alive, initial offset 0x%lx (%lu)\n", thread_args->offset, thread_args->offset);
 	if ((thread_args->buf = malloc(globals.buf_size)) == NULL) {
 		thread_output("error allocating buffer: %m\n");
@@ -1043,7 +1134,7 @@ void *write_func(void *args_ptr) {
 //		pthread_barrier_wait(&proc_args->bar);
 		pthread_tbarrier_wait(&proc_args->tbar1);
 		if (proc_args->exit_test) { // just skip to the end
-			thread_output("exiting early after writing %d times\n", thread_args->write_count);
+			thread_output("exiting after writing %d times\n", thread_args->write_count);
 			goto out;
 		}
 
@@ -1067,12 +1158,19 @@ void *write_func(void *args_ptr) {
 			}
 
 			thread_args->size = thread_args->offset + this_write_size;
-			__sync_add_and_fetch(&thread_args->write_count, 1);
+			__atomic_add_fetch(&thread_args->write_count, 1, __ATOMIC_SEQ_CST);
 
 		}
-//		thread_output("wait on barrier 2\n");
+
+
 //		pthread_barrier_wait(&proc_args->bar2);
-		pthread_tbarrier_wait(&proc_args->tbar2);
+		pthread_tbarrier_wait(&proc_args->tbar2); /* need to keep all threads on the same cycle */
+		if (globals.verify_mode == verify_mode_ongoing) {
+			if (proc_args->exit_test) {
+				thread_output("exiting after writing %d times\n", thread_args->write_count);
+				goto out;
+			}
+		}
 
 		if (this_write_size) {
 			thread_args->offset += (globals.buf_size * globals.thread_count);
@@ -1099,16 +1197,14 @@ int reap_thread(int id) {
 	void *res;
 	int ret = EAGAIN;
 
-//	int pthread_tryjoin_np(pthread_t thread, void **retval);
-//	int pthread_timedjoin_np(pthread_t thread, void **retval,
-//		const struct timespec *abstime);
 	if (proc_args->thread_args[id].thread) {
 		if ((ret = pthread_tryjoin_np(proc_args->thread_args[id].thread, &res))) {
-			proc_output("tried to pthread_join(%d), but got error: %s\n", id, strerror(ret));
 			if (ret == EBUSY) {
 				ret = EAGAIN;
 				goto out;
 			}
+//			if (ret == 
+			proc_output("tried to pthread_join(%d), but got error: %s\n", id, strerror(ret));
 		} else {
 			proc_args->thread_args[id].thread = 0;
 			proc_output("thread %d exited\n", id);
@@ -1120,52 +1216,30 @@ out:
 	return ret;
 }
 
-int cancel_threads(int low, int high) { // inclusive
+int reap_threads(int low, int high) { // inclusive
 	int ret = EXIT_SUCCESS, i;
-	void *res;
 
 	proc_args->exit_test = true;
-
-/* don't actually need to cancel... we'll just wait for them to figure it out
-
-	pthread_tbarrier_cancel(&proc_args->tbar1);
-
-
-	for (i = low ; i <= high ; i++) {
-proc_output("canceling thread %d\n", i);
-		if ((ret = pthread_cancel(proc_args->thread_args[i].thread))) {
-			proc_output("canceling thread %d failed: %s\n", i, strerror(ret));
-		}
-	}
-*/
-
-//	pthread_tbarrier_cancel(&proc_args->tbar1);
 
 	while (42) {
 		int live_threads = 0;
 
 		for (i = low ; i <= high ; i++) {
-			if ((ret = reap_thread(i))) {
-				if (ret == EAGAIN || ret == EBUSY)
-					live_threads++;
+			if (proc_args->thread_args[i].thread) {
+				if ((ret = reap_thread(i))) {
+					if (ret == EAGAIN || ret == EBUSY)
+						live_threads++;
+				}
 			}
-	//			if (ret != EBUSY)
-	/*
-			if ((ret = pthread_join(proc_args->thread_args[i].thread, &res))) {
-				proc_output("error ioining thread %d: %s\n", i, strerror(ret));
-			} else if (res != PTHREAD_CANCELED) {
-				proc_output("thread %d exited unknown error\n", i);
-			}
-	*/
 		}
-if (! live_threads)
-	break;
-proc_output("%d threads remain\n", live_threads);
-usleep(250);
-
+		if (! live_threads)
+			goto out;
+		//proc_output("%d threads remain\n", live_threads);
+		usleep(250);
 	}
 
-proc_output("all threads appear to have ended\n");
+out:
+	proc_output("all threads appear to have ended\n");
 
 	return ret;
 }
@@ -1178,47 +1252,38 @@ int launch_threads(void) {
 		proc_args->thread_args[i].offset = globals.off0 + (globals.buf_size * i);
 		if ((ret = pthread_create(&proc_args->thread_args[i].thread, NULL, write_func, &proc_args->thread_args[i])) != 0) {
 			proc_output("pthread_create(%d) failed: %s\n", i, strerror(ret));
-			__sync_add_and_fetch(&globals.shared->error_count, 1);
+			__atomic_add_fetch(&globals.shared->error_count, 1, __ATOMIC_SEQ_CST);
 
 			proc_output("canceling all threads\n");
-			cancel_threads(0, i - 1);
-			goto out_canceled;
+			goto out_cancel;
 		}
-
 
 		if (globals.shared->exit_test == exit_now) {
-			proc_output("global exit flag set -- canceling threads and exiting\n");
-			cancel_threads(0, i);
-			goto out_canceled;
+			proc_output("canceling test as instructed by main test process\n");
+			goto out_cancel;
 		}
-
-
-		if (proc_args->exit_test) {
-			proc_output("proc exit flag set -- canceling threads and exiting\n");
-			cancel_threads(0, i);
-			goto out_canceled;
-		}
-
 	}
 	ret = EXIT_SUCCESS;
 out:
 	proc_output("threads started; returning %d\n", ret);
 	return ret;
-out_canceled:
+
+out_cancel:
+	reap_threads(0, globals.thread_count - 1);
+
+
 	proc_output("all threads canceled\n");
-	if ((pthread_tbarrier_get_waiters(&proc_args->tbar1))) {
-		pthread_tbarrier_cancel(&proc_args->tbar1);
-	}
 	ret = EXIT_FAILURE;
 	goto out;
 }
 
 int do_one_test(void) {
-	int i, ret = EXIT_FAILURE; /* whether the test run was successful, not whether we replicated the bug */
+	int ret = EXIT_FAILURE; /* whether the test run was successful, not whether we replicated the bug */
 	struct stat st;
-	int pthread_barrier_initialized = 0;
+//	int pthread_barrier_initialized = 0;
 	int pthread_tbarrier_initialized = 0;
 	int pthread_keys_created = 0; 
+
 
 	proc_output("starting test #%d\n", proc_args->test_count);
 
@@ -1240,6 +1305,12 @@ int do_one_test(void) {
 	proc_output("opened '%s/testfiles/%s' - device %d:%d inode %lu\n",
 		globals.base_dir_path, proc_args->name, major(st.st_dev), minor(st.st_dev), st.st_ino);
 
+	proc_args->current_size = 0;
+	proc_args->write_round = 0;
+	proc_args->last_verify_round = 0;
+	proc_args->last_verified_size = 0;
+
+
 	{ // fill the first off0 bytes so that the only 0-byte contents are actually the bug
 		char *buf = NULL;
 		int ret2;
@@ -1248,34 +1319,38 @@ int do_one_test(void) {
 			goto out;
 		}
 		memset(buf, fill_chars[FILL_LEN - 1], globals.off0);
-		if ((ret2 = pwrite(proc_args->fd, buf, globals.off0, 0)) != globals.off0)
+		if ((ret2 = pwrite(proc_args->fd, buf, globals.off0, proc_args->current_size)) != globals.off0)
 			proc_output("error writing initial off0 bytes to test file: %m\n");
 		free_mem(buf);
 		if (ret2 != globals.off0)
 			goto out;
 	}
+	proc_args->current_size += globals.off0;
 
 	memset(proc_args->thread_args, 0, sizeof(struct thread_args) * globals.thread_count);
 	proc_args->exit_test = false;
 
-	if ((pthread_barrier_init(&proc_args->bar, NULL, globals.thread_count + 1))) {
-		proc_output("error calling pthread_barrier_init(): %m\n");
-		goto out;
-	}
-	pthread_barrier_initialized++;
-	if ((pthread_barrier_init(&proc_args->bar2, NULL, globals.thread_count + 1))) {
-		proc_output("error calling pthread_barrier_init(): %m\n");
-		goto out;
-	}
-	pthread_barrier_initialized++;
+//	if ((pthread_barrier_init(&proc_args->bar, NULL, globals.thread_count + 1))) {
+//		proc_output("error calling pthread_barrier_init(): %m\n");
+//		goto out;
+//	}
+//	pthread_barrier_initialized++;
+//	if ((pthread_barrier_init(&proc_args->bar2, NULL, globals.thread_count + 1))) {
+//		proc_output("error calling pthread_barrier_init(): %m\n");
+//		goto out;
+//	}
+//	pthread_barrier_initialized++;
 
 
-	if ((pthread_tbarrier_init(&proc_args->tbar1, NULL, globals.thread_count + 1, NULL))) {
+	bool proc_exit_test(void) {
+		return proc_args ? proc_args->exit_test : false;
+	}
+	if ((pthread_tbarrier_init(&proc_args->tbar1, NULL, globals.thread_count + 1, &proc_exit_test, NULL))) {
 		proc_output("error calling pthread_tbarrier_init(): %m\n");
 		goto out;
 	}
 	pthread_tbarrier_initialized++;
-	if ((pthread_tbarrier_init(&proc_args->tbar2, NULL, globals.thread_count + 1, NULL))) {
+	if ((pthread_tbarrier_init(&proc_args->tbar2, NULL, globals.thread_count + 1, NULL, NULL))) {
 		proc_output("error calling pthread_tbarrier_init(): %m\n");
 		goto out;
 	}
@@ -1290,104 +1365,68 @@ int do_one_test(void) {
 	if ((ret = launch_threads()) != EXIT_SUCCESS)
 		goto out;
 
-#if 0
-	for (i = 0; i < globals.thread_count; i++) {
-		proc_args->thread_args[i].id = i;
-		proc_args->thread_args[i].c = i % FILL_LEN; // in case we have more threads than fill chars
-		proc_args->thread_args[i].offset = globals.off0 + (globals.buf_size * i);
-		if ((ret = pthread_create(&proc_args->thread_args[i].thread, NULL, write_func, &proc_args->thread_args[i])) != 0) {
-			int j;
-//			proc_output("pthread_create(%d) ret=%d\n", i, ret);
-			proc_output("pthread_create(%d) failed: %s\n", i, strerror(ret));
-			__sync_add_and_fetch(&globals.shared->error_count, 1);
+        pthread_setspecific(proc_args->thread_id_key, (void *)&minusone);
 
-			proc_output("canceling all threads\n");
-			for (j = 0 ; j < i ; j++) {
-				void *res;
 
-proc_output("canceling thread %d\n", j);
-				if ((ret = pthread_cancel(proc_args->thread_args[j].thread))) {
-					proc_output("canceling thread %d failed: %s\n", j, strerror(ret));
-				}
 
-				if ((ret = pthread_join(proc_args->thread_args[j].thread, &res))) {
-					proc_output("error joining thread %d: %s\n", j, strerror(ret));
-				} else if (res != PTHREAD_CANCELED) {
-					proc_output("thread %d exited unknown error\n", j);
-				}
-			}
-			proc_output("all threads canceled\n");
-			goto out;
-		}
-	}
-#endif
-
-	__sync_add_and_fetch(&globals.shared->writing_count, 1);
-	size_t current_size = globals.off0;
+	__atomic_add_fetch(&globals.shared->writing_count, 1, __ATOMIC_SEQ_CST);
 	while (42) {
-		size_t this_write_size = clamp(globals.buf_size * globals.thread_count, 0UL, max(globals.filesize - current_size, 0UL));
+		size_t this_write_size = clamp(globals.buf_size * globals.thread_count, 0UL, max(globals.filesize - proc_args->current_size, 0UL));
 
-//		pthread_barrier_wait(&proc_args->bar);
 		pthread_tbarrier_wait(&proc_args->tbar1);
 		if (proc_args->exit_test)
 			break;
 
-//		pthread_barrier_wait(&proc_args->bar2);
-		pthread_tbarrier_wait(&proc_args->tbar2);
+		proc_args->write_round++;
 
-		if (globals.verify_mode == verify_mode_ongoing && !__sync_add_and_fetch(&proc_args->interrupted, 0)) {
-//			off_t replicated_offset;
 
-			__sync_sub_and_fetch(&globals.shared->writing_count, 1);
-//			replicated_offset = verify_file(current_size, this_write_size);
-			verify_file(current_size, this_write_size);
+#define SIZE_AFTER_WRITE_ROUND(round) ({ \
+	min(globals.off0 + \
+	(round * globals.buf_size * globals.thread_count), \
+	globals.filesize })
 
-/*
-			if (replicated_offset != -1) {
-proc_output("replicated at offset 0x%lx (%lu)\n", replicated_offset, replicated_offset);
-				proc_args->replicated_offset = replicated_offset;
-				proc_args->exit_test = true;
+
+
+		pthread_tbarrier_wait(&proc_args->tbar2); /* need to make sure everyone's write has completed */
+
+		if (globals.verify_frequency) { /* frequency 0 means to verify only at end */
+
+
+
+
+
+		if (globals.verify_mode == verify_mode_ongoing) {
+			if (!__atomic_load_n(&proc_args->interrupted, __ATOMIC_SEQ_CST)) {
+				__atomic_sub_fetch(&globals.shared->writing_count, 1, __ATOMIC_SEQ_CST);
+				verify_file(proc_args->current_size, this_write_size);
+				__atomic_add_fetch(&globals.shared->writing_count, 1, __ATOMIC_SEQ_CST);
 			}
-*/
-			__sync_add_and_fetch(&globals.shared->writing_count, 1);
 		}
+
+
 		if (globals.shared->exit_test == exit_now)
 			proc_args->exit_test = true;
-		current_size += this_write_size;
-		if (__sync_add_and_fetch(&proc_args->interrupted, 0) || current_size >= globals.filesize)
+		proc_args->current_size += this_write_size;
+
+		if (__atomic_load_n(&proc_args->interrupted, __ATOMIC_SEQ_CST) || proc_args->current_size >= globals.filesize)
 			proc_args->exit_test = true;
 	}
-	__sync_sub_and_fetch(&globals.shared->writing_count, 1);
+
+	__atomic_sub_fetch(&globals.shared->writing_count, 1, __ATOMIC_SEQ_CST);
 	ret = EXIT_SUCCESS;
 
-	if (pthread_tbarrier_get_waiters(&proc_args->tbar1)) {
-		pthread_tbarrier_cancel(&proc_args->tbar1);
-	}
-
-//	pthread_barrier_wait(&proc_args->bar); /* wait one last time, while our threads get the message */
-//	pthread_tbarrier_wait(&proc_args->tbar1); /* wait one last time, while our threads get the message */
-
-
-	for (i = 0; i < globals.thread_count; i++) {
-		if ((ret = pthread_join(proc_args->thread_args[i].thread, NULL)) != 0) {
-			proc_output("error joining thread %d: %s\n", i, strerror(ret));
-			ret = EXIT_FAILURE;
-			goto out;
-		}
-		proc_output("thread %d wrote %d times\n", i, proc_args->thread_args[i].write_count);
-
-	}
+	reap_threads(0, globals.thread_count - 1);
 
 	close_fd(proc_args->fd);
 
-	if (globals.verify_mode == verify_mode_end && !__sync_add_and_fetch(&proc_args->interrupted, 0)) {
+
+
+	if (proc_args->last_verify_round < proc_args->write_round && !__atomic_load_n(&proc_args->interrupted, __ATOMIC_SEQ_CST)) {
+//	if (globals.verify_mode == verify_mode_end && !__atomic_load_n(&proc_args->interrupted, __ATOMIC_SEQ_CST)) {
 		off_t replicated_offset;
 		proc_output("test #%d verifying file contents\n", proc_args->test_count);
 
-//		if ((replicated_offset = verify_file(NULL, 0)) != -1) {
-//			ret = EXIT_SUCCESS;
 		if ((replicated_offset = verify_file(0, globals.filesize)) != -1) {
-//			proc_output("verification failed; zero-byte data found at offset 0x%lx (%lu)\n", replicated_offset, replicated_offset);
 			ret = EXIT_SUCCESS;
 		} else
 			proc_output("verification succeeded; no errors found\n");
@@ -1401,10 +1440,10 @@ out:
 		proc_output("error calling pthread_key_delete() for thread_id_key: %m\n");
 
 
-	if (pthread_barrier_initialized == 2 && pthread_barrier_destroy(&proc_args->bar2))
-		proc_output("error calling pthread_barrier_destroy(): %m\n"); // don't consider this fatal
-	if ((pthread_barrier_initialized && pthread_barrier_destroy(&proc_args->bar)))
-		proc_output("error calling pthread_barrier_destroy(): %m\n"); // don't consider this fatal
+//	if (pthread_barrier_initialized == 2 && pthread_barrier_destroy(&proc_args->bar2))
+//		proc_output("error calling pthread_barrier_destroy(): %m\n"); // don't consider this fatal
+//	if ((pthread_barrier_initialized && pthread_barrier_destroy(&proc_args->bar)))
+//		proc_output("error calling pthread_barrier_destroy(): %m\n"); // don't consider this fatal
 
 	if (pthread_tbarrier_initialized == 2 && pthread_tbarrier_destroy(&proc_args->tbar2))
 		proc_output("error calling pthread_tbarrier_destroy(): %m\n"); // don't consider this fatal
@@ -1421,7 +1460,7 @@ void proc_sig_handler(int sig) {
 
 	if (sig != SIGPIPE)
 		proc_sig_output("in the proc sig handler with signal %d\n", sig);
-	__sync_add_and_fetch(&proc_args->interrupted, 1);
+	__atomic_add_fetch(&proc_args->interrupted, 1, __ATOMIC_SEQ_CST);
 }
 
 #define try_sigaction(sig, sa, old_sa) do { \
@@ -1454,7 +1493,7 @@ int open_memfd(int proc_num) {
 }
 
 int do_one_proc(int proc_num) {
-	int ret = EXIT_FAILURE, i;
+	int ret = EXIT_FAILURE, minusone = -1, zero = 0, i;
 	struct sigaction sa;
 
 	proc_args = &globals.proc[proc_num];
@@ -1462,12 +1501,9 @@ int do_one_proc(int proc_num) {
 
 	alloc_proc_paths(proc_num);
 
-        pthread_setspecific(proc_args->thread_id_key, (void *)&((int)(0)));
-	for (i = 0 ; i < globals.proc_count ; i++) {
-		if (i != proc_num && globals.proc[i].memfd >= 0) {
-			close_fd(globals.proc[i].memfd);
-		}
-	}
+        pthread_setspecific(proc_args->thread_id_key, (void *)&zero);
+	for (i = 0 ; i < proc_num ; i++) /* only need to close the ones opened before we were forked */
+		close(globals.proc[i].memfd); // can't close_fd(), since that would wipe out the stored fd
 
 	/* allow the process to handle its own signals */
 	memset(&sa, 0, sizeof(sa));
@@ -1503,10 +1539,9 @@ int do_one_proc(int proc_num) {
 
 		if (proc_args->interrupted || globals.shared->exit_test) { /* global or per-proc exit flag */
 			proc_output("exiting as requested\n");
-			break;
+			goto out;
 		}
 
-//		__sync_add_and_fetch(&globals.shared->test_count, 1); /* update the global stat */
 		__atomic_add_fetch(&globals.shared->test_count, 1,  __ATOMIC_SEQ_CST); /* update the global stat */
 
 		if ((ret = do_one_test()) == EXIT_FAILURE) {
@@ -1515,18 +1550,24 @@ int do_one_proc(int proc_num) {
 		}
 
 		if (proc_args->replicated) {
-			proc_output("test proc %d replicated the bug on test #%d with device %d:%d inode %lu\n",
-				proc_args->proc_num, proc_args->test_count,
+			if (proc_args->results) {
+//				proc_args->results->result[proc_args->replicated - 1];
+				pwrite(proc_args->memfd, proc_args->results,
+					sizeof(struct bug_results) + (sizeof(struct bug_result) * proc_args->replicated), 0);
+				free_mem(proc_args->results);
+			}
+
+			proc_output("test proc %d replicated the bug %d time%s on test #%d with device %d:%d inode %lu\n",
+				proc_args->proc_num, proc_args->replicated,
+				proc_args->replicated == 1 ? "" : "s", proc_args->test_count,
 				proc_args->major, proc_args->minor, proc_args->inode);
 			ret = EXIT_SUCCESS;
 			break;
 		}
-
-//		if (ret == EXIT_FAILURE)
-//			break;
 	}
 
 out:
+	close(proc_args->memfd);
 	close_fd(proc_args->fd);
 	free_mem(proc_args->thread_args);
 	free_proc_paths(proc_args->proc_num);
@@ -1868,9 +1909,6 @@ int do_testing() {
 	}
 	output("\n");
 
-	for (i = 0 ; i < globals.proc_count ; i++)
-		globals.proc[i].memfd = open_memfd(i);
-
 	if (setup_handlers(0) != EXIT_SUCCESS) /* call #0 - block SIGCHLD, etc. */
 		goto out;
 
@@ -1879,7 +1917,7 @@ int do_testing() {
 		pid_t cpid;
 
 		globals.proc[i].proc_num = i;
-
+		globals.proc[i].memfd = open_memfd(i);
 
 		if ((cpid = fork()) == 0) {
 			ret = do_one_proc(i);
@@ -1888,7 +1926,6 @@ int do_testing() {
 			globals.cpids[i] = cpid;
 			globals.proc[i].pid = cpid;
 			global_output("forked test proc %d as pid %d\n", i, globals.proc[i].pid);
-//			__sync_add_and_fetch(&globals.shared->running_count, 1);
 			__atomic_add_fetch(&globals.shared->running_count, 1, __ATOMIC_SEQ_CST);
 		} else {
 			int j;
@@ -1897,7 +1934,8 @@ int do_testing() {
 			for (j = 0 ; j < i ; j++) {
 				kill(globals.cpids[j], SIGKILL); // just kill everything unceremoniously
 			}
-			return EXIT_FAILURE;
+			ret = EXIT_FAILURE;
+			goto out;
 		}
 	}
 	show_progress(0);
@@ -1916,58 +1954,143 @@ int do_testing() {
 	while (42) {
 		sigsuspend(&signal_mask);
 
-//		if (__sync_add_and_fetch(&globals.shared->running_count, 0) == 0)
-		if ((__atomic_load_n(&globals.shared->running_count, __ATOMIC_SEQ_CST)) == 0) {
+		if ((__atomic_load_n(&globals.shared->running_count, __ATOMIC_SEQ_CST)) == 0)
 			break;
 
-//		if (__sync_add_and_fetch(&globals.shared->replicated_count, 0) > 0)
-		if ((__atomic_load_n(&globals.shared->replicated_count, __ATOMIC_SEQ_CST)) > 0) {
+		if ((__atomic_load_n(&globals.shared->replicated_count, __ATOMIC_SEQ_CST)) > 0)
 			globals.shared->exit_test = exit_after_test;
 
-		if (__atomic
 	}
 
 	setup_handlers(2); /* disable the timer */
 
 	show_progress(0);
-//	if (__sync_add_and_fetch(&globals.shared->replicated_count, 0)) {
-	int replicated_count = __atomic_fetch_n(&globals.shared->replicated_count, __ATOMIC_SEQ_CST);
+
+	int replicated_count = __atomic_load_n(&globals.shared->replicated_count, __ATOMIC_SEQ_CST);
 
 	if (replicated_count) {
-		output("==========================================================\n");
-		output("replicated the bug %d time%s\n",
+		log_and_output("==========================================================\n");
+		log_and_output("replicated the bug %d time%s\n",
 			replicated_count, 
 			replicated_count == 1 ? "" : "s");
 		for (i = 0 ; i < globals.proc_count ; i++) {
 			if (globals.proc[i].replicated) {
-				output("test proc %d on test #%d with %s/testfiles/test%d - device %d:%d inode %lu - offset 0x%lx (%lu)\n",
-					i, globals.proc[i].test_count, globals.canonical_base_dir_path, i,
+
+				log_and_output("%s/testfiles/test%d - device %d:%d inode %lu - %d error%s\n",
+					globals.canonical_base_dir_path, i,
 					globals.proc[i].major, globals.proc[i].minor, globals.proc[i].inode,
-					globals.proc[i].replicated_offset, globals.proc[i].replicated_offset);
-				if (globals.proc[i].replicated > 1) {
-					output("\t+%d other time%s\n", globals.proc[i].replicated - 1,
-						globals.proc[i].replicated == 1 ? "" : "s");
-					output("\tsee log file '%s/logs/test%d.log' for further details\n",
-						globals.canonical_base_dir_path, i);
+					globals.proc[i].replicated, globals.proc[i].replicated == 1 ? "" : "s");
+
+				if (globals.proc[i].memfd >= 0) {
+					struct bug_results results;
+					int j;
+
+					if ((ret = pread(globals.proc[i].memfd, &results, sizeof(results), 0)) < sizeof(results)) {
+						log_and_output("error reading bug count: %m\n");
+						results.count = globals.proc[i].replicated;
+					}
+					for (j = 0 ; j < results.count ; j++) {
+						struct bug_result result;
+						off_t end_offset;
+
+						if ((ret = pread(globals.proc[i].memfd, &result, sizeof(result), sizeof(results) + (j * sizeof(result)))) < sizeof(result)) {
+							log_and_output("error reading result %d: %m\n", j + 1);
+							continue;
+						}
+						end_offset = result.offset + result.length - 1;
+
+						log_and_output("\t%3d - offset 0x%lx (%lu) - 0x%lx (%lu) - length: %lu\n",
+							j + 1, result.offset, result.offset,
+							end_offset, end_offset,
+							result.length);
+
+
+/* which thread is responsible for the write which laid down data at this offset? */
+#define WHOSE_WRITE(offset) ({ \
+	int write_num = (offset - globals.off0) / globals.buf_size; \
+	write_num % globals.thread_count; })
+
+/* writes are performed by all threads simultaneously, operating in lock-step; on which
+	round was the data at this offset written? */
+#define WHICH_ROUND(offset) ({ \
+	int write_num = (offset - globals.off0) / globals.buf_size; \
+	write_num / globals.thread_count; })
+
+#define WHICH_PAGE(offset) ({ \
+	
+#define BYTE_OF_WRITE(offset) ({ \
+	(offset - globals.off0) % globals.buf_size; })
+#define BYTE_OF_PAGE4K(offset) {( \
+	offset % PAGE_SIZE_4K; )}
+
+
+						if (result.length > globals.buf_size) {
+							log_and_output("length of the zero bytes is unexpectedly longer than the size of a buffer\n");
+						} else {
+							log_and_output("\t\tstart is page %lu, offset %lu; byte %ld of write %d by thread %d\n",
+								result.offset / PAGE_SIZE_4K,
+								BYTE_OF_PAGE4K(result.offset),
+								BYTE_OF_WRITE(result.offset),
+								WHICH_ROUND(result.offset),
+								WHOSE_WRITE(result.offset));
+
+							log_and_output("\t\tend is page %lu, offset %lu; byte %ld of write %d by thread %d\n",
+								(end_offset) / PAGE_SIZE_4K,
+								BYTE_OF_PAGE4K(end_offset),
+								BYTE_OF_WRITE(end_offset),
+								WHICH_ROUND((end_offset)),
+								WHOSE_WRITE((end_offset)));
+						}
+
+
+//						if (j < (result_count - 1))
+log_and_output("\n");
+
+
+
+					}
+
+					close(globals.proc[i].memfd);
+
+					if (i < (globals.proc_count - 1))
+						log_and_output("\n");
 				}
 			}
-		}
+		} /* for each test proc */
 	} else
-		output("did not replicate the bug\n");
+		log_and_output("did not replicate the bug\n");
 out:
 	close_fd(globals.testfile_dir_fd);
 	close_fd(globals.log_dir_fd);
 	close_fd(globals.base_dir_fd);
 	close_FILE(globals.log_FILE, globals.log_fd);
-//	close_fd(globals.log_fd);
+//	close_fd(globals.log_fd); /* closing the log_FILE will close this as well */
+
+	for (i = 0 ; i < globals.proc_count ; i++)
+		close(globals.proc[i].memfd); /* ignore errors */
 
 	free_mem(total_disk_required_str);
 
 	if (gettid() == globals.pid) {
+		struct timespec run_time;
+
 		if (globals.proc)
 			munmap(globals.proc, sizeof(struct proc_args) * globals.proc_count);
 		if (globals.shared)
 			munmap(globals.shared, sizeof(struct shared_struct) + (sizeof(uint64_t) * globals.proc_count));
+		log_and_output("results logged to %s/log.out\n", globals.canonical_base_dir_path);
+
+		clock_gettime(CLOCK_REALTIME, &globals.end_time);
+		run_time = (struct timespec){
+			.tv_sec = globals.end_time.tv_sec - globals.start_time.tv_sec,
+			.tv_nsec = globals.end_time.tv_nsec - globals.start_time.tv_nsec };
+
+		while (run_time.tv_nsec < 0) {
+			run_time.tv_nsec += 1000000000ULL;
+			run_time.tv_sec--;
+		}
+		log_and_output("total runtime: %lu.%09lu seconds\n",
+			run_time.tv_sec, run_time.tv_nsec);
 	}
 
 	return ret;
@@ -2098,10 +2221,16 @@ int main(int argc, char *argv[]) {
 	if ((ret = parse_args(argc, argv)) != EXIT_SUCCESS)
 		goto out;
 
+	clock_gettime(CLOCK_REALTIME, &globals.start_time);
+
 	ret = do_testing();
+
 
 out:
 	free_mem(globals.canonical_base_dir_path);
+
+
+
 
 	return ret;
 }
