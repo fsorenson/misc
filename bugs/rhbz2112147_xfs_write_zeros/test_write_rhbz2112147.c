@@ -2333,6 +2333,12 @@ memory_guess += globals.filesize;
 
 	memory_guess += (memory_guess / 4);
 
+	memory_guess_str = byte_units(memory_guess);
+	global_output("setting cgroup memory limit to %s\n", memory_guess_str);
+	free_mem(memory_guess_str);
+
+
+	// try guessing how much memory will result in replicating the bug
 	write_uint64_t(MEMORY_CGROUP_PATH "/" MEMORY_CGROUP_NAME "/memory.limit_in_bytes", memory_guess);
 	write_uint64_t(MEMORY_CGROUP_PATH "/" MEMORY_CGROUP_NAME "/memory.memsw.limit_in_bytes", memory_guess);
 
