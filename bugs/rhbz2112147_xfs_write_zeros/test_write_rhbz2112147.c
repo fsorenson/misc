@@ -15,13 +15,14 @@
 
 	the reproducer will:
 	 A. create <test_directory>/testfiles and <test_directory>/logs
-	 B. spawn 40 (default; configurable) test processes
+	 B. spawn a process to consume memory
+	 C. spawn ## (default is number of online cpus; configurable) test processes
 	  each test process will:
 	   1. redirect stdout/stderr to a logfile at <test_directory>/logs/test##.log
 	   2. delete the test file <test_directory>/testfiles/test##
 	   3. create-open the file <test_directory>/testfiles/test## for testing
 	   4. spawn 3 (default; configurable) threads
-	    the threads will work together to write as much as 200 MiB (default; configurable)
+	    the threads will work together to write as much as 300 MiB (default; configurable)
 		of non-zero data to the testfile, beginning at offset 0x300 (default; configurable)
 	    a. all threads will wait at a barrier for synchronization
 	    b. thread 0 will write 1 MiB (default; configurable) starting at offset 0x300
@@ -51,15 +52,15 @@
 	   8. close the logfile
 	   9. exit
 
-	 C. main process waits for test process exit
-	  1. every 5 seconds (default; configurable) output message giving the status of the
+	 D. main process waits for test process exit
+	  1. every 1 second (default; configurable) output message giving the status of the
 		testing, including the number of running processes, total attempts to
 		replicate the bug, and number of processes which have replicated it
-	 D. examine the process's flag which denotes whether reproduction was successful
+	 E. examine the process's flag which denotes whether reproduction was successful
 	   1. if bug is reproduced:
 	     a. sets a global flag to indicate that all processes and threads should exit
-	 E. wait for all test processes to exit
-	 F. count the number of successful tests
+	 F. wait for all test processes to exit
+	 G. count the number of successful tests
 
 
 	Program can be interrupted, and test processes should exit.
@@ -67,13 +68,6 @@
 	    2 - processes will exit now, and verify the bytes written
 	    3 - processes will exit now, without verifying bytes written
 	    4 - processes will be unceremoniously killed (signal 9)
-
-
-nterrupt 5+ times
-	for the test program to unceremoniously kill all child processes.
-
-
-
 */
 
 #define _GNU_SOURCE
@@ -110,7 +104,7 @@ nterrupt 5+ times
 
 #define DEFAULT_TEST_COUNT	(100)
 
-#define DEFAULT_PROC_COUNT	(40)
+//#define DEFAULT_PROC_COUNT	(40) /* use the number of cpus in the system */
 #define MAX_PROC_COUNT		(1000)
 
 #define DEFAULT_THREAD_COUNT	(3)
@@ -126,11 +120,11 @@ nterrupt 5+ times
 #define MIN_BUF_SIZE		(128ULL)
 #define MAX_BUF_SIZE		(MAX_FILE_SIZE)
 
-#define DEFAULT_FILE_SIZE	(200ULL * MiB + DEFAULT_OFF_0) /* was based on size of buffer * a constant '500' + the offset */
+#define DEFAULT_FILE_SIZE	(300ULL * MiB + DEFAULT_OFF_0) /* was based on size of buffer * a constant '500' + the offset */
 #define MIN_FILE_SIZE		(4ULL * KiB)
 #define MAX_FILE_SIZE		(10 * GiB)
 
-#define DEFAULT_UPDATE_DELAY_S	(5)
+#define DEFAULT_UPDATE_DELAY_S	(1)
 #define DEFAULT_UPDATE_DELAY_US	(0)
 
 #define TSTAMP_BUF_SIZE		(32)
