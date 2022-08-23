@@ -652,8 +652,7 @@ void handle_child_exit(int sig, siginfo_t *info, void *ucontext) {
 							globals.proc[i].major, globals.proc[i].minor, globals.proc[i].inode);
 
 					__atomic_add_fetch(&globals.shared->replicated_count, 1, __ATOMIC_SEQ_CST);
-//					globals.shared->exit_test = true; // tell everyone else to exit
-					__atomic_store_n(&globals.shared->exit_test, exit_after_test, __ATOMIC_SEQ_CST); // tell everyone to exit at the end of this test
+					globals.shared->exit_test = exit_after_test; // tell everyone to exit at the end of this test
 				} else if (WIFSIGNALED(status))
 					global_output("test proc %d (pid %d) exiting with signal %d%s\n", i, pid,
 						WTERMSIG(info->si_signo), WCOREDUMP(status) ? " and dumped core" : "");
@@ -691,7 +690,7 @@ void handle_sig(int sig) {
 				kill(globals.cpids[i], SIGKILL);
 		}
 	} else
-		__atomic_store_n(&globals.shared->exit_test, exit_now, __ATOMIC_SEQ_CST);
+		globals.shared->exit_test = exit_now;
 }
 
 typedef enum { setup_handlers_prefork, setup_handlers_postfork, setup_handlers_disable_timer, setup_handlers_test_proc, setup_handlers_pressure_pid } setup_handlers_type;
@@ -949,8 +948,8 @@ out:
 
 int do_memory_pressure(void) {
 	struct timespec sleep_time = MEMORY_PRESSURE_SLEEP;
-	uint64_t current_alloc_KiB = 0, new_alloc_KiB;
 	uint64_t current_pressure_increment = 0;
+	uint64_t new_alloc_KiB;
 	pid_t pid = getpid();
 	void *mem = NULL, *new_ptr = NULL;
 
@@ -969,6 +968,7 @@ int do_memory_pressure(void) {
 
 
 new_mapping:
+	globals.shared->pressure_KiB = 0;
 
 	if ((mem = mmap(NULL, new_alloc_KiB * KiB, PROT_READ|PROT_WRITE,
 		MAP_PRIVATE|MAP_ANONYMOUS|MAP_POPULATE, MAP_ANONYMOUS, 0)) == MAP_FAILED) {
@@ -976,11 +976,8 @@ new_mapping:
 		pressure_output("couldn't allocate even minimum size (%lu KiB): %m\n", MEMORY_PRESSURE_START_INCREMENT);
 		return 1;
 	}
-	current_alloc_KiB = new_alloc_KiB;
-//	pressure_output("currently mapped address: %p for %lu KiB\n", mem, current_alloc_KiB);
-	__atomic_store_n(&globals.shared->pressure_KiB, current_alloc_KiB, __ATOMIC_SEQ_CST);
+	globals.shared->pressure_KiB = new_alloc_KiB;
 
-	current_pressure_increment = MEMORY_PRESSURE_START_INCREMENT;
 	sleep_time = MEMORY_PRESSURE_SLEEP;
 
 //		nanosleep(&sleep_time, NULL);
@@ -989,10 +986,10 @@ new_mapping:
 		if (__atomic_load_n(&globals.shared->exit_test, __ATOMIC_SEQ_CST) > exit_after_test)
 			break;
 
-		if (__atomic_load_n(&globals.shared->apply_pressure, __ATOMIC_SEQ_CST)) {
-			new_alloc_KiB = current_alloc_KiB + current_pressure_increment;
+		if (globals.shared->apply_pressure) {
+			new_alloc_KiB = globals.shared->pressure_KiB + MEMORY_PRESSURE_INCREMENT;
 
-			if (current_alloc_KiB <= 0) { // I don't think we can recover from something like this
+			if (globals.shared->pressure_KiB <= 0) { // I don't think we can recover from something like this
 				return 1;
 			}
 
@@ -1004,16 +1001,14 @@ new_mapping:
 
 				sleep_time = MEMORY_PRESSURE_SLEEP_AT_MAX;
 				nanosleep(&sleep_time, NULL);
-				char *max_usage_str = byte_units(current_alloc_KiB * KiB);
 
 				sleep_time = MEMORY_PRESSURE_SLEEP_AT_MAX;
 
 				pressure_output("memory pressure hit max of %s; freeing and reapplying\n", max_usage_str);
 				free_mem(max_usage_str);
-				munmap(mem, current_alloc_KiB * KiB);
-				current_alloc_KiB = 0;
+				munmap(mem, globals.shared->pressure_KiB * KiB);
+				globals.shared->pressure_KiB = 0;
 				mem = NULL;
-				__atomic_store_n(&globals.shared->pressure_KiB, current_alloc_KiB, __ATOMIC_SEQ_CST);
 
 				nanosleep(&sleep_time, NULL);
 				goto new_mapping;
@@ -1023,8 +1018,7 @@ new_mapping:
 //				pressure_output("mremap(%p, %lu, %lu)  returned %p\n", mem, current_alloc_KiB, new_alloc_KiB, new_ptr);
 
 				mem = new_ptr;
-				current_alloc_KiB = new_alloc_KiB;
-				__atomic_store_n(&globals.shared->pressure_KiB, current_alloc_KiB, __ATOMIC_SEQ_CST);
+				globals.shared->pressure_KiB = new_alloc_KiB;
 			}
 		} // 'more pressure' called for
 		if (__atomic_load_n(&globals.shared->exit_test, __ATOMIC_SEQ_CST) > exit_after_test)
@@ -2329,7 +2323,7 @@ memory_guess += globals.filesize;
 		global_output("error opening log dir '%s/logs': %m\n", globals.canonical_base_dir_path);
 		goto out;
 	}
-	__atomic_store_n(&globals.shared->exit_test, no_exit, __ATOMIC_SEQ_CST);
+	globals.shared->exit_test = no_exit;
 
 
 	if ((ret = check_free_disk()) != EXIT_SUCCESS)
@@ -2358,7 +2352,7 @@ memory_guess += globals.filesize;
 	sigdelset(&signal_mask, SIGQUIT);
 	sigdelset(&signal_mask, SIGALRM);
 
-	__atomic_store_n(&globals.shared->apply_pressure, true, __ATOMIC_SEQ_CST);
+	globals.shared->apply_pressure = true;
 
 	while (42) {
 		sigsuspend(&signal_mask);
@@ -2367,15 +2361,14 @@ memory_guess += globals.filesize;
 			if (globals.pressure_pid == 0)
 				break;
 			kill(SIGINT, globals.pressure_pid);
-			__atomic_store_n(&globals.shared->exit_test, exit_now, __ATOMIC_SEQ_CST);
+			globals.shared->exit_test = exit_now;
 		}
 		if ((__atomic_load_n(&globals.shared->replicated_count, __ATOMIC_SEQ_CST)) > 0) {
 
-			__atomic_store_n(&globals.shared->exit_test,
-				max(exit_after_test, globals.shared->exit_test), __ATOMIC_SEQ_CST);
+			globals.shared->exit_test = max(exit_after_test, globals.shared->exit_test);
 
 			if (globals.shared->exit_test > exit_after_test)
-				__atomic_store_n(&globals.shared->apply_pressure, false, __ATOMIC_SEQ_CST);
+				globals.shared->apply_pressure = false;
 		}
 
 		// re-launch a test process, if it's exited on an error
