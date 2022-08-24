@@ -297,6 +297,7 @@ struct globals {
 	char *base_dir_path;
 	char *canonical_base_dir_path;
 
+	uint64_t cgroup_mem_size;
 	size_t filesize;
 	size_t buf_size;
 	off_t off0;
@@ -1929,6 +1930,7 @@ int usage(int ret) {
 
 	output("\t-V | --verify=<number>\t\t\thow frequently to verify the written data\n");
 	output("\t\t\t\t (i.e. every '1', '2', '3' writes; default: 0 == check at end only)\n");
+	output("\t-m | --cgroup_memry=<size>\t\t(default: calculated from semi-arbitrary factors)\n");
 
 	return ret;
 }
@@ -2279,38 +2281,9 @@ int do_testing() {
 	write_uint64_t(MEMORY_CGROUP_PATH "/" MEMORY_CGROUP_NAME "/memory.swappiness", 1);
 	write_uint32_t(MEMORY_CGROUP_PATH "/" MEMORY_CGROUP_NAME "/memory.oom_control", 1); /* disable oom kill */
 
-	uint64_t memory_guess =
-		sizeof(struct shared_struct) + ( // shared state
-			globals.proc_count * (
-				sizeof(struct proc_args) + (  // proc args
-					globals.thread_count * (
-						sizeof(struct thread_args) + // thread args
-						sizeof(char *) + // thread buf pointers
-						globals.buf_size // thread bufs
-					)
-				)
-			)
-		);
 
-	char *memory_guess_str = byte_units(memory_guess);
-	global_output("expecting to require somewhere in the neighborhood of %s of allocated memory\n", memory_guess_str);
-	free_mem(memory_guess_str);
-
-//	memory_guess = max(memory_guess, 50UL * MiB);
-	memory_guess += (20 * MiB);
-
-memory_guess += globals.filesize;
-
-	memory_guess += (memory_guess / 4);
-
-	memory_guess_str = byte_units(memory_guess);
-	global_output("setting cgroup memory limit to %s\n", memory_guess_str);
-	free_mem(memory_guess_str);
-
-
-	// try guessing how much memory will result in replicating the bug
-	write_uint64_t(MEMORY_CGROUP_PATH "/" MEMORY_CGROUP_NAME "/memory.limit_in_bytes", memory_guess);
-	write_uint64_t(MEMORY_CGROUP_PATH "/" MEMORY_CGROUP_NAME "/memory.memsw.limit_in_bytes", memory_guess);
+	write_uint64_t(MEMORY_CGROUP_PATH "/" MEMORY_CGROUP_NAME "/memory.limit_in_bytes", globals.cgroup_mem_size);
+	write_uint64_t(MEMORY_CGROUP_PATH "/" MEMORY_CGROUP_NAME "/memory.memsw.limit_in_bytes", globals.cgroup_mem_size);
 
 
 	if ((cpid = fork()) == 0) {
@@ -2564,6 +2537,55 @@ void do_global_init(char *exe) {
 	pthread_key_create(&globals.process_args_key, NULL);
 }
 
+
+int check_cgroup_size(void) {
+	char *memory_str1 = NULL, *memory_str2 = NULL;
+
+	// these are all terrible guesses, but it just might work anyway
+#define PER_THREAD_MEMORY (150UL * KiB)
+	uint64_t memory_alloc_guess =
+		sizeof(struct shared_struct) + ( // shared state
+			globals.proc_count * (
+				sizeof(struct proc_args) + (  // proc args
+					globals.thread_count * (
+						PER_THREAD_MEMORY + // some amount of memory for the thread
+						sizeof(struct thread_args) + // thread args
+						sizeof(char *) + // thread buf pointers
+						globals.buf_size // thread bufs
+					)
+				)
+			)
+		);
+
+	memory_str1 = byte_units(memory_alloc_guess);
+
+	if (globals.cgroup_mem_size) { // is it a sane value?
+
+		memory_str2 = byte_units(globals.cgroup_mem_size);
+
+		if (globals.cgroup_mem_size < memory_alloc_guess) // warn, but let the user shoot off their foot, if they choose
+			global_output("WARNING: specified memory size of %s is below the expected minimum requirements of the test program (%s)\n\n",
+				memory_str2, memory_str1);
+	} else {
+		// try guessing how much memory will result in replicating the bug
+		// these values are super arbitrary, but seem to work
+//		globals.cgroup_mem_size = memory_alloc_guess + (20 * MiB); // add some padding
+//		globals.cgroup_mem_size += globals.filesize; // allow caching up to a file in pagecache
+		globals.cgroup_mem_size += globals.filesize / 4; // allow caching some of a file in pagecache
+//		globals.cgroup_mem_size += (memory_alloc_guess / 4); // some more padding... again, arbitrary
+
+		memory_str2 = byte_units(globals.cgroup_mem_size);
+	}
+
+
+	global_output("guessing total process memory at %s; memory cgroup size will be set to %s\n", memory_str1, memory_str2);
+
+	free_mem(memory_str1);
+	free_mem(memory_str2);
+
+	return 0;
+}
+
 int parse_args(int argc, char *argv[]) {
 	int opt = 0, long_index = 0;
 	static struct option long_options[] = {
@@ -2574,6 +2596,7 @@ int parse_args(int argc, char *argv[]) {
 		{ "offset",	required_argument, 0, 'o' },
 		{ "test_count",	required_argument, 0, 'c' },
 		{ "update_frequency", required_argument, 0, 'u' },
+		{ "cgroup_memory", required_argument, 0, 'm' },
 
 		{ "verify",	required_argument, 0, 'V' },
 		{ NULL, 0, 0, 0 },
@@ -2583,7 +2606,7 @@ int parse_args(int argc, char *argv[]) {
 	do_global_init(argv[0]);
 
 	opterr = 0;
-	while ((opt = getopt_long(argc, argv, "s:b:p:t:o:c:u:V:", long_options, &long_index)) != -1) {
+	while ((opt = getopt_long(argc, argv, "b:c:m:o:p:s:t:u:V:", long_options, &long_index)) != -1) {
 		switch (opt) {
 			case 's':
 				globals.filesize = parse_size(optarg);
@@ -2599,6 +2622,9 @@ int parse_args(int argc, char *argv[]) {
 					return msg_usage(EXIT_FAILURE, "unable to parse buffer size '%s'\n", optarg);
 				if (globals.buf_size < MIN_BUF_SIZE || globals.buf_size > MAX_BUF_SIZE)
 					return msg_usage(EXIT_FAILURE, "invalid bufrer size '%s'; size must be between %llu and %llu\n", optarg, MIN_BUF_SIZE, MAX_BUF_SIZE);
+				break;
+			case 'm':
+				globals.cgroup_mem_size = parse_size(optarg); // we'll check it later
 				break;
 			case 'p':
 				globals.proc_count = strtoul(optarg, NULL, 10);
@@ -2661,6 +2687,8 @@ int parse_args(int argc, char *argv[]) {
 			globals.off0, globals.buf_size, globals.off0 % globals.buf_size);
 		globals.off0 %= globals.buf_size;
 	}
+
+	check_cgroup_size();
 
 	return ret;
 }
