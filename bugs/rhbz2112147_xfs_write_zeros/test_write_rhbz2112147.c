@@ -893,7 +893,7 @@ int write_uint64_t(const char *path, uint64_t val) {
 int enter_cgroup(void) {
 	pid_t tid = gettid();
 
-	if (write_uint32_t(MEMORY_CGROUP_PATH "/" MEMORY_CGROUP_NAME "/tasks", tid) == 0)
+	if (write_uint32_t(MEMORY_CGROUP_PATH "/" MEMORY_CGROUP_NAME "/cgroup.procs", tid) == 0)
 		return EXIT_SUCCESS;
 
 	output("error entering cgroup\n");
