@@ -137,13 +137,12 @@
 
 
 #define SHOW_RUSAGE 0 /* whether to show resource usage at end */
+#define DO_MTRACE 0	/* whether to mtrace; only useful when debugging this reproducer */
 
-#define INTERRUPT_COUNT_REALLY_EXIT	(5)
+#define INTERRUPT_COUNT_REALLY_EXIT	(5) /* after this many interrupts, start murdering processes */
 
-//#define FILL_CHARS "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz!\"#$%&'()*+,-./0123456789:;<=>?@[\\]^_`{|}~"
 #define FILL_CHARS " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~"
 
-//          `~!@#$%^&*()-_=+[{]}\\|;:'\",<.>/?"
 static char fill_chars[] = FILL_CHARS;
 #define FILL_LEN (sizeof(FILL_CHARS) - 1)
 
@@ -290,6 +289,8 @@ struct globals {
 
 	struct utsname uts;
 
+	struct timespec start_time;
+	struct timespec end_time;
 	struct timeval update_timer;
 
 	char *exe;
@@ -302,8 +303,6 @@ struct globals {
 
 	struct proc_args *proc;
 	struct shared_struct *shared;
-	struct timespec start_time;
-	struct timespec end_time;
 	long page_size;
 	int online_cpus;
 
@@ -317,7 +316,6 @@ struct globals {
 	int testfile_dir_fd;
 	int log_dir_fd;
 
-//	verify_mode verify_mode;
 	uint32_t verify_frequency;
 
 	pid_t pressure_pid;
@@ -412,12 +410,6 @@ pid_t gettid(void) {
 } while (0)
 
 
-/*
-#define generic_output(_fmt, ...) do { \
-	char tstamp_buf[TSTAMP_BUF_SIZE]; \
-	log_and_output("%s  " _fmt, tstamp(tstamp_buf), ##__VA_ARGS__); \
-} while (0)
-*/
 #define generic_output(args...) tstamp_output(args)
 
 
@@ -1460,7 +1452,6 @@ int reap_thread(int id) {
 				ret = EAGAIN;
 				goto out;
 			}
-//			if (ret == 
 			proc_output("tried to pthread_join(%d), but got error: %s\n", id, strerror(ret));
 		} else {
 			proc_args->thread_args[id].thread = 0;
@@ -1828,11 +1819,6 @@ int do_one_proc(int proc_num) {
 	for (i = 0 ; i < globals.thread_count ; i++)
 		proc_args->thread_bufs[i] = try_malloc(globals.buf_size, proc, false);
 
-
-proc_output("allocated %lu for thread_args, %lu for thread_bufs pointers, and %lu for thread_bufs\n",
-	sizeof(struct thread_args) * globals.thread_count, sizeof(char *) * globals.thread_count, globals.buf_size * globals.thread_count);
-
-
 	for (proc_args->test_count = 1 ; proc_args->test_count <= globals.test_count ; proc_args->test_count++) {
 
 retry_test:
@@ -2047,10 +2033,6 @@ size_t reclaim_disk(int _dfd, const char *reclaim_path) {
 		globals.canonical_base_dir_path, reclaim_path);
 
 	getdents_buf = try_malloc(GETDENTS_BUF_SIZE, global, false);
-//	if ((getdents_buf = malloc(GETDENTS_BUF_SIZE)) == NULL) {
-//		global_output("error allocating memory: %m\n");
-//		return 0;
-//	}
 
 	if ((dfd = dup(_dfd)) < 0) {
 		global_output("error duplicating the directory file descriptor: %m\n");
@@ -2454,7 +2436,7 @@ memory_guess += globals.filesize;
 							continue;
 						}
 
-total_errors++;
+						total_errors++;
 
 						end_offset = result.offset + result.length - 1;
 
@@ -2514,7 +2496,6 @@ if (gettid() == globals.pid) {
 	close_FILE(globals.log_FILE, globals.log_fd);
 //	close_fd(globals.log_fd); /* closing the log_FILE will close this as well */
 
-
 	if (gettid() == globals.pid) {
 		struct timespec run_time;
 
@@ -2542,7 +2523,6 @@ if (gettid() == globals.pid) {
 	}
 
 
-
 	// empty out the cgroup & get rid of it
 //	write_uint64_t(MEMORY_CGROUP_PATH "/" MEMORY_CGROUP_NAME "/memory.force_empty", 1);
 //	rmdir(MEMORY_CGROUP_PATH "/" MEMORY_CGROUP_NAME);
@@ -2553,14 +2533,14 @@ if (gettid() == globals.pid) {
 void do_global_init(char *exe) {
 	memset(&globals, 0, sizeof(globals));
 
+	globals.exe = exe;
 	globals.page_size = sysconf(_SC_PAGESIZE);
 	globals.online_cpus = sysconf(_SC_NPROCESSORS_ONLN);
+	globals.pid = getpid();
 
-	globals.exe = exe;
 	globals.proc_count = globals.online_cpus;
 	globals.thread_count = DEFAULT_THREAD_COUNT;
 	globals.test_count = DEFAULT_TEST_COUNT;
-	globals.pid = getpid();
 	globals.filesize = DEFAULT_FILE_SIZE;
 	globals.buf_size = DEFAULT_BUF_SIZE;
 	globals.off0 = DEFAULT_OFF_0;
@@ -2570,7 +2550,7 @@ void do_global_init(char *exe) {
 	globals.testfile_dir_fd = -1;
 	globals.log_dir_fd = -1;
 
-	globals.verify_frequency = 0; // verify at end only
+	globals.verify_frequency = 0; // default to verify at end only
 	globals.update_timer = (struct timeval){ .tv_sec = DEFAULT_UPDATE_DELAY_S, .tv_usec = DEFAULT_UPDATE_DELAY_US };
 
 
@@ -2685,9 +2665,12 @@ int parse_args(int argc, char *argv[]) {
 int main(int argc, char *argv[]) {
 	int ret = EXIT_FAILURE;
 
-//#include <mcheck.h>
-//setenv("MALLOC_TRACE", "/mnt/vdc/mtrace.out", 0);
-//mtrace();
+#if DO_MTRACE
+#include <mcheck.h>
+setenv("MALLOC_TRACE", "mtrace.out", 0);
+global_output("creating memtrace in mtrace.out\n");
+mtrace();
+#endif
 
 
 	if ((ret = parse_args(argc, argv)) != EXIT_SUCCESS)
