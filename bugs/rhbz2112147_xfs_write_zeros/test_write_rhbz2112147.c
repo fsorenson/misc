@@ -421,10 +421,7 @@ pid_t gettid(void) {
 #define generic_output(args...) tstamp_output(args)
 
 
-
-#if SHOW_RUSAGE
 #define show_rusage(scope, who) do { \
-	char tstamp_buf[TSTAMP_BUF_SIZE]; \
 	struct rusage usage; \
 \
 	if (getrusage(who, &usage) == -1) { \
@@ -440,9 +437,6 @@ pid_t gettid(void) {
 		PASTE(scope, _output)("\tIO blocks - in: %ld, out: %ld\n", usage.ru_inblock, usage.ru_oublock); \
 	} \
 } while (0)
-#else
-#define show_rusage(scope, who) do { } while (0)
-#endif
 
 
 /* which thread is responsible for the write which laid down data at this offset? */
@@ -1052,6 +1046,13 @@ new_mapping:
 		nanosleep(&sleep_time, NULL);
 	}
 	pressure_output("exiting\n");
+
+#if SHOW_RUSAGE
+        show_rusage(pressure, RUSAGE_THREAD);
+        show_rusage(pressure, RUSAGE_CHILDREN);
+        show_rusage(pressure, RUSAGE_SELF);
+#endif
+
 	return 1;
 }
 
@@ -1435,8 +1436,9 @@ void *do_one_thread(void *args_ptr) {
 
 out:
 
+#if SHOW_RUSAGE
 	show_rusage(thread, RUSAGE_THREAD);
-
+#endif
 
 	return NULL;
 
@@ -1888,9 +1890,6 @@ retry_test:
 
 out:
 
-	show_rusage(proc, RUSAGE_THREAD);
-	show_rusage(proc, RUSAGE_SELF);
-
 	close(proc_args->memfd);
 	close_fd(proc_args->fd);
 	if (proc_args->thread_bufs) {
@@ -1906,6 +1905,12 @@ out:
 		proc_output("error calling pthread_key_delete() for thread_key: %m\n");
 	if (pthread_keys_created && pthread_key_delete(proc_args->thread_id_key))
 		proc_output("error calling pthread_key_delete() for thread_id_key: %m\n");
+
+#if SHOW_RUSAGE
+show_rusage(proc, RUSAGE_THREAD);
+show_rusage(proc, RUSAGE_CHILDREN);
+show_rusage(proc, RUSAGE_SELF);
+#endif
 
 	close_FILE(proc_args->log_FILE, proc_args->log_fd);
 	dup3(globals.stdout_fd, fileno(stdout), 0); // restore stdout, close log
@@ -2411,10 +2416,11 @@ memory_guess += globals.filesize;
 
 	show_progress(0);
 
+#if SHOW_RUSAGE
 	show_rusage(global, RUSAGE_THREAD);
 	show_rusage(global, RUSAGE_CHILDREN);
 	show_rusage(global, RUSAGE_SELF);
-
+#endif
 
 	int total_errors = 0;
 
@@ -2493,6 +2499,15 @@ total_errors++;
 	} else
 		log_and_output("did not replicate the bug\n");
 out:
+
+#if SHOW_RUSAGE
+if (gettid() == globals.pid) {
+	show_rusage(global, RUSAGE_THREAD);
+	show_rusage(global, RUSAGE_CHILDREN);
+	show_rusage(global, RUSAGE_SELF);
+}
+#endif
+
 	close_fd(globals.testfile_dir_fd);
 	close_fd(globals.log_dir_fd);
 	close_fd(globals.base_dir_fd);
