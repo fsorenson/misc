@@ -285,7 +285,7 @@ struct proc_args {
 } *proc_args;
 
 struct globals {
-	pid_t cpids[MAX_PROC_COUNT];
+	pid_t *cpids;
 
 	struct utsname uts;
 
@@ -2271,6 +2271,7 @@ int do_testing() {
 		global_output("error mapping memory for shared state: %m\n");
 		goto out;
 	}
+	globals.cpids = try_malloc(sizeof(pid_t) * globals.proc_count, global, true);
 
 	// TODO: error handling
 	rmdir(MEMORY_CGROUP_PATH "/" MEMORY_CGROUP_NAME);
@@ -2507,6 +2508,8 @@ if (gettid() == globals.pid) {
 		}
 		if (globals.shared)
 			munmap(globals.shared, sizeof(struct shared_struct) + (sizeof(uint64_t) * globals.proc_count));
+		free_mem(globals.cpids);
+
 		log_and_output("results logged to %s/log.out\n", globals.canonical_base_dir_path);
 
 		clock_gettime(CLOCK_REALTIME, &globals.end_time);
