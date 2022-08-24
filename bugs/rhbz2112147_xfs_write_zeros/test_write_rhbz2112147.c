@@ -2687,6 +2687,14 @@ int parse_args(int argc, char *argv[]) {
 			globals.off0, globals.buf_size, globals.off0 % globals.buf_size);
 		globals.off0 %= globals.buf_size;
 	}
+	if (globals.proc_count < 2)
+		return msg_usage(EXIT_FAILURE, "this reproducer will probably not work with fewer than 2 test processes\n");
+	if (globals.thread_count < 2)
+		return msg_usage(EXIT_FAILURE, "this reproducer will probably not work with fewer than 2 thread per test process\n");
+	if (globals.off0 + globals.buf_size > globals.filesize)
+		return msg_usage(EXIT_FAILURE, "buffer size is larger than the filesize!\n");
+	if (globals.off0 + globals.buf_size * globals.thread_count > globals.filesize)
+		return msg_usage(EXIT_FAILURE, "total buffer size is larger than the filesize!\n");
 
 	check_cgroup_size();
 
