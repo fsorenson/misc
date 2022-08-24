@@ -307,6 +307,9 @@ struct globals {
 	long page_size;
 	int online_cpus;
 
+	int main_prio;
+	int proc_prio;
+
 	int log_fd;
 	FILE *log_FILE;
 	int stdout_fd;
@@ -899,14 +902,8 @@ int enter_cgroup(void) {
 void reduce_prio(void) { // not much we can do if these shenanigans fail
 	int prio;
 
-	errno = 0;
-	prio = getpriority(PRIO_PROCESS, 0);
-	if (errno) {
-		output("error calling getpriority(): %m\n");
-	} else {
-		if ((setpriority(PRIO_PROCESS, 0, prio + 5)) < 0)
-			output("error calling setpriority(): %m\n");
-	}
+	if ((setpriority(PRIO_PROCESS, 0, globals.proc_prio)) < 0)
+		output("error calling setpriority(): %m\n");
 }
 
 int set_sysctl(const char *path, const char *val) {
@@ -2512,6 +2509,8 @@ void do_global_init(char *exe) {
 	globals.exe = exe;
 	globals.page_size = sysconf(_SC_PAGESIZE);
 	globals.online_cpus = sysconf(_SC_NPROCESSORS_ONLN);
+	globals.main_prio = getpriority(PRIO_PROCESS, 0);
+	globals.proc_prio = globals.main_prio + 5;
 	globals.pid = getpid();
 
 	globals.proc_count = globals.online_cpus;
