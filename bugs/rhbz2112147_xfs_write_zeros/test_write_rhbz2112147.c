@@ -1364,7 +1364,7 @@ void *do_one_thread(void *args_ptr) {
 			}
 		}
 
-		pthread_tbarrier_wait(&proc_args->tbar2); /* need to keep all threads on the same cycle */
+		pthread_tbarrier_wait(&proc_args->tbar2); // keep all threads on same cycle, and let test process know it can verify
 
 		if (this_write_size) {
 			thread_args->offset += (globals.buf_size * globals.thread_count);
@@ -1471,15 +1471,15 @@ out_cancel:
 }
 
 
-
-// if some of the threads got an extra write() in, need to reduce the file
-//      size to the largest size known to have been written by all threads
+// if some of the threads got an extra write() in (i.e. write failed due to
+// 	error, etc.), need to reduce the file size to the largest size
+// 	known to have been written by all threads
 //
 // for the file size, determine which thread would have written the
 //     (offset + length) to cause the file to become that size
 // with n being the number of times this thread has written:
-//     all the threads lower must also have at least n writes;
-//     all the threads higher must have at least n-1 writes
+//     all the threads with lower id must also have at least n writes;
+//     all the threads with higher id must have at least n-1 writes
 void truncate_test_file(void) {
 	struct stat st;
 	int ending_thread, write_count, i;
