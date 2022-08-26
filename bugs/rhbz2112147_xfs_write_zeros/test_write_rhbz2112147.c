@@ -123,7 +123,6 @@
 
 #define DEFAULT_TEST_COUNT	(100)
 
-//#define DEFAULT_PROC_COUNT	(40) /* use the number of cpus in the system */
 #define MAX_PROC_COUNT		(1000)
 
 #define DEFAULT_THREAD_COUNT	(3)
@@ -155,7 +154,7 @@
 #define GETDENTS_BUF_SIZE	(64ULL * KiB)
 
 
-#define INTERRUPT_COUNT_REALLY_EXIT	(5) /* after this many interrupts, start murdering processes */
+#define INTERRUPT_COUNT_REALLY_EXIT	(4) /* after this many interrupts, start murdering processes */
 
 #define FILL_CHARS " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~"
 
@@ -176,6 +175,7 @@ static char fill_chars[] = FILL_CHARS;
 #define CGROUP_V2_MAX_FILE		"memory.max"
 
 
+#define PROC_RESTART_HOLDOFF (struct timespec){ .tv_sec = 3, .tv_nsec = MSEC_TO_NSEC(0) }
 
 #define min(a,b) ({ \
 	typeof(a) _a = (a); \
@@ -1107,9 +1107,6 @@ out:
 	return ret;
 }
 
-
-
-#define PROC_RESTART_HOLDOFF (struct timespec){ .tv_sec = 3, .tv_nsec = MSEC_TO_NSEC(0) }
 
 off_t proc_verify_file(off_t verify_start_offset, size_t verify_start_size) {
 	size_t expected_size = verify_start_offset + verify_start_size;
