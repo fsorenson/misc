@@ -1715,17 +1715,14 @@ int do_one_proc(int proc_num) {
 	if ((proc_args->log_FILE = fdopen(proc_args->log_fd, "a")) == NULL)
 		proc_output("unable to reopen log fd: %m\n");
 	else
-		if ((globals.log_FILE = fdopen(globals.log_fd, "a")) == NULL)
-			global_output("unable to reopen log fd: %m\n");
-		else
-			setvbuf(proc_args->log_FILE, NULL, _IONBF, 0); // try going commando
+		setvbuf(proc_args->log_FILE, NULL, _IONBF, 0); // try going commando
 
 	if ((dup3(proc_args->log_fd, fileno(stdout), 0)) < 0) {
-		global_output("%s  [%d] error replacing stdout: %m\n", tstamp(tstamp_buf), proc_args->pid);
+		global_output("error replacing stdout: %m\n");
 		goto out;
 	}
 	if ((dup3(proc_args->log_fd, fileno(stderr), 0)) < 0) {
-		global_output("%s  [%d] error replacing stderr: %m\n", tstamp(tstamp_buf), proc_args->pid);
+		global_output("error replacing stderr: %m\n");
 		goto out;
 	}
 
@@ -1736,11 +1733,12 @@ int do_one_proc(int proc_num) {
 	pthread_key_create(&proc_args->thread_key, NULL);
 	pthread_keys_created++;
 
-
 	proc_args->thread_args = try_malloc(sizeof(struct thread_args) * globals.thread_count, proc, true);
 	proc_args->thread_bufs = try_malloc(sizeof(char *) * globals.thread_count, proc, true);
-	for (i = 0 ; i < globals.thread_count ; i++)
-		proc_args->thread_bufs[i] = try_malloc(globals.buf_size, proc, false);
+	for (i = 0 ; i < globals.thread_count ; i++) {
+		proc_args->thread_bufs[i] = try_malloc(globals.buf_size, proc, true);
+		memset(proc_args->thread_bufs[i], '0' + i, globals.buf_size);
+	}
 
 	for (proc_args->test_count = 1 ; proc_args->test_count <= globals.test_count ; proc_args->test_count++) {
 
