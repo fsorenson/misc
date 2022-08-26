@@ -131,6 +131,9 @@
 #define MiB			(KiB * KiB)
 #define GiB			(KiB * KiB * KiB)
 
+#define USEC_TO_NSEC(v)		(v * 1000UL)
+#define MSEC_TO_NSEC(v)		(v * 1000000UL)
+
 #define DEFAULT_OFF_0		(768UL)
 
 #define DEFAULT_BUF_SIZE	(MiB)
@@ -232,10 +235,6 @@ struct shared_struct {
 	int verifying_count;
 	int completed_count;
 
-	/* memory pressure controls */
-	uint64_t pressure_KiB;
-	bool apply_pressure;
-	bool pressure_exit;
 };
 
 struct thread_args {
@@ -308,7 +307,6 @@ struct globals {
 	char *base_dir_path;
 	char *canonical_base_dir_path;
 
-	uint64_t cgroup_mem_size;
 	size_t filesize;
 	size_t buf_size;
 	off_t off0;
@@ -333,7 +331,6 @@ struct globals {
 
 	uint32_t verify_frequency;
 
-	pid_t pressure_pid;
 	pthread_key_t process_args_key;
 
 	int proc_count;
@@ -418,10 +415,6 @@ pid_t gettid(void) {
 
 #define global_output(_fmt, ...) do { \
 	tstamp_log_and_output("[%d] " _fmt, globals.pid, ##__VA_ARGS__); \
-} while (0)
-
-#define pressure_output(_fmt, ...) do { \
-	tstamp_log_and_output("[%d - memory pressure] " _fmt, pid, ##__VA_ARGS__); \
 } while (0)
 
 
@@ -612,14 +605,6 @@ void handle_child_exit(int sig, siginfo_t *info, void *ucontext) {
 		if (pid == 0)
 			return;
 
-		if (pid == globals.pressure_pid) {
-			globals.pressure_pid = 0;
-			globals.shared->pressure_KiB = 0;
-			global_output("memory pressure pid exited\n");
-			continue;
-		}
-
-
 		for (i = 0 ; i < globals.proc_count ; i++) {
 			if (globals.cpids[i] == pid) {
 				if (globals.proc[i].replicated) {
@@ -677,7 +662,7 @@ void handle_sig(int sig) {
 		globals.shared->exit_test = exit_now;
 }
 
-typedef enum { setup_handlers_prefork, setup_handlers_postfork, setup_handlers_disable_timer, setup_handlers_test_proc, setup_handlers_pressure_pid } setup_handlers_type;
+typedef enum { setup_handlers_prefork, setup_handlers_postfork, setup_handlers_disable_timer, setup_handlers_test_proc } setup_handlers_type;
 int setup_handlers(setup_handlers_type handler_type);
 
 uint64_t l1024(uint64_t x) {
@@ -714,45 +699,13 @@ char *byte_units(uint64_t size) {
 	return ret;
 }
 
-int check_under_oom(void) {
-	int ret = 0, fd = -1;
-	char buf[60];;
-
-	if ((fd = open(MEMORY_CGROUP_PATH "/" MEMORY_CGROUP_NAME "/memory.oom_control", O_RDONLY)) < 0)
-		goto out_error;
-	else {
-		if ((read(fd, buf, sizeof(buf))) < 0)
-			goto out_error;
-		if (buf[29] == '0')
-			;
-		else if (buf[29] == '1')
-			ret = 1;
-		else {
-			global_output("oom character: '%c'\n", buf[30]);
-		}
-		goto out;
-	}
-out_error:
-	global_output("error checking oom status: %m\n");
-out:
-	close_fd(fd);
-	return ret;
-}
-
 void show_progress(int sig) {
-	char *mem_pressure_str = byte_units(globals.shared->pressure_KiB * KiB);
-	int under_oom = check_under_oom();
-
-	global_output("%d/%d running, writing: %d, verifying: %d, %lu tests started, memory pressure: %s %sOOM, replicated: %d\n",
+	global_output("%d/%d running, writing: %d, verifying: %d, %lu tests started, replicated: %d\n",
 		__atomic_load_n(&globals.shared->running_count, __ATOMIC_SEQ_CST), globals.proc_count,
 		__atomic_load_n(&globals.shared->writing_count, __ATOMIC_SEQ_CST),
 		__atomic_load_n(&globals.shared->verifying_count, __ATOMIC_SEQ_CST),
 		__atomic_load_n(&globals.shared->test_count, __ATOMIC_SEQ_CST),
-		mem_pressure_str,
-		under_oom ? "" : "not ",
 		__atomic_load_n(&globals.shared->replicated_count, __ATOMIC_SEQ_CST));
-
-	free_mem(mem_pressure_str);
 }
 
 /* returns a size in bytes */
@@ -920,115 +873,8 @@ out:
 }
 
 
-#define USEC_TO_NSEC(v) (v * 1000UL)
-#define MSEC_TO_NSEC(v) (v * 1000000UL)
-
-#define MEMORY_PRESSURE_INCREMENT (1UL * 1024UL) /* increase by  MiB */
-
-#define MEMORY_PRESSURE_SLEEP  (struct timespec){ .tv_sec = 0, .tv_nsec = MSEC_TO_NSEC(25) }
-#define MEMORY_PRESSURE_SLEEP_AT_MAX (struct timespec){ .tv_sec = 2, .tv_nsec = MSEC_TO_NSEC(0) }
-#define MEMORY_PRESSURE_INITIAL_DELAY (struct timespec){ .tv_sec = 5, .tv_nsec = 0 }
-#define MEMORY_PRESSURE_INITIAL_FAILURE_SLEEP (struct timespec){ .tv_sec = 5, .tv_nsec = 0 }
 
 #define PROC_RESTART_HOLDOFF (struct timespec){ .tv_sec = 3, .tv_nsec = MSEC_TO_NSEC(0) }
-
-int do_memory_pressure(void) {
-	struct timespec sleep_time = MEMORY_PRESSURE_INITIAL_DELAY;
-	uint64_t new_alloc_KiB;
-	pid_t pid = getpid();
-	void *mem = NULL, *new_ptr = NULL;
-
-	reduce_prio();
-
-	if (enter_cgroup() != EXIT_SUCCESS) {
-		pressure_output("exiting due to failure to join cgroup\n");
-		return 1;
-	}
-
-	if ((mlockall(MCL_FUTURE)) < 0) {
-		pressure_output("error locking memory: %m\n");
-		return 1;
-	}
-
-	pressure_output("alive\n");
-	nanosleep(&sleep_time, NULL);
-
-
-new_mapping:
-	sleep_time = MEMORY_PRESSURE_SLEEP;
-	globals.shared->pressure_KiB = 0;
-	new_alloc_KiB = MEMORY_PRESSURE_INCREMENT;
-
-	if ((mem = mmap(NULL, new_alloc_KiB * KiB, PROT_READ|PROT_WRITE,
-		MAP_PRIVATE|MAP_ANONYMOUS|MAP_POPULATE, -1, 0)) == MAP_FAILED) {
-
-		pressure_output("couldn't allocate even minimum size (%lu KiB): %m\n", MEMORY_PRESSURE_INCREMENT);
-
-		sleep_time = MEMORY_PRESSURE_INITIAL_FAILURE_SLEEP;
-		nanosleep(&sleep_time, NULL);
-		goto new_mapping;
-	}
-	globals.shared->pressure_KiB = new_alloc_KiB;
-
-	sleep_time = MEMORY_PRESSURE_SLEEP;
-
-	while (42) {
-		if (__atomic_load_n(&globals.shared->exit_test, __ATOMIC_SEQ_CST) > exit_after_test)
-			break;
-
-		if (globals.shared->apply_pressure) {
-			new_alloc_KiB = globals.shared->pressure_KiB + MEMORY_PRESSURE_INCREMENT;
-
-			if (globals.shared->pressure_KiB <= 0) { // I don't think we can recover from something like this
-				return 1;
-			}
-
-			if ((new_ptr = mremap(mem, globals.shared->pressure_KiB * KiB, new_alloc_KiB * KiB, MREMAP_MAYMOVE)) == MAP_FAILED) {
-				char *max_usage_str = byte_units(globals.shared->pressure_KiB * KiB);
-
-
-				pressure_output("memory pressure reached max of %s\n", max_usage_str);
-
-				sleep_time = MEMORY_PRESSURE_SLEEP_AT_MAX;
-				nanosleep(&sleep_time, NULL);
-
-				pressure_output("freeing allocated memory of %s\n", max_usage_str);
-
-				free_mem(max_usage_str);
-				munmap(mem, globals.shared->pressure_KiB * KiB);
-				globals.shared->pressure_KiB = 0;
-				mem = NULL;
-
-				nanosleep(&sleep_time, NULL);
-				goto new_mapping;
-
-			} else { // end error path, success starts here
-				mem = new_ptr;
-				globals.shared->pressure_KiB = new_alloc_KiB;
-			}
-		} else { // else ! ->apply pressure
-
-			if (mem && mem != MAP_FAILED && munmap(mem, globals.shared->pressure_KiB * KiB) != 0) {
-				char *mem_usage_str = byte_units(globals.shared->pressure_KiB * KiB);
-
-				pressure_output("releasing memory of %s\n", mem_usage_str);
-				free_mem(mem_usage_str);
-				munmap(mem, globals.shared->pressure_KiB * KiB);
-				globals.shared->pressure_KiB = 0;
-				mem = 0;
-			}
-			goto new_mapping;
-		}
-		if (__atomic_load_n(&globals.shared->exit_test, __ATOMIC_SEQ_CST) > exit_after_test)
-			break;
-
-		sleep_time = MEMORY_PRESSURE_SLEEP;
-		nanosleep(&sleep_time, NULL);
-	}
-	pressure_output("exiting\n");
-
-	return 1;
-}
 
 off_t proc_verify_file(off_t verify_start_offset, size_t verify_start_size) {
 	size_t expected_size = verify_start_offset + verify_start_size;
@@ -1969,17 +1815,6 @@ int setup_handlers(setup_handlers_type handler_type) {
 		try_sigaction(SIGABRT, &sa, NULL);
 		try_sigaction(SIGHUP, &sa, NULL);
 		try_sigaction(SIGQUIT, &sa, NULL);
-	} else if (handler_type == setup_handlers_pressure_pid) {
-		sigfillset(&sa.sa_mask);
-		sa.sa_handler = NULL;
-
-		sigemptyset(&sa.sa_mask);
-		sigaddset(&sa.sa_mask, SIGCHLD);
-		if ((sigprocmask(SIG_BLOCK, &sa.sa_mask, NULL)) < 0) {
-			global_output("error blocking SIGCHLD: %m\n");
-			ret++;
-			goto out; /* considering this fatal */
-		}
 	}
 out:
 	return ret == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
@@ -2256,11 +2091,6 @@ int do_testing() {
 	write_uint64_t(MEMORY_CGROUP_PATH "/" MEMORY_CGROUP_NAME "/memory.memsw.limit_in_bytes", globals.cgroup_mem_size);
 
 
-	if ((cpid = fork()) == 0) {
-		ret = do_memory_pressure();
-		goto out;
-	}
-	globals.pressure_pid = cpid;
 
 	/* open log dir */
 	if ((mkdirat(globals.base_dir_fd, "logs", 0777)) && errno != EEXIST) {
@@ -2299,8 +2129,6 @@ int do_testing() {
 	sigdelset(&signal_mask, SIGHUP);
 	sigdelset(&signal_mask, SIGQUIT);
 	sigdelset(&signal_mask, SIGALRM);
-
-	globals.shared->apply_pressure = true;
 
 	while (42) {
 		sigsuspend(&signal_mask);
