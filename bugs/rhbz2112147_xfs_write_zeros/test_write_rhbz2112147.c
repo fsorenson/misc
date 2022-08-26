@@ -2580,8 +2580,15 @@ int parse_args(int argc, char *argv[]) {
 			globals.off0, globals.buf_size, globals.off0 % globals.buf_size);
 		globals.off0 %= globals.buf_size;
 	}
-	if (globals.proc_count < 2)
-		return msg_usage(EXIT_FAILURE, "this reproducer will probably not work with fewer than 2 test processes\n");
+
+	if (globals.online_cpus < 2)
+		global_output("***** WARNING ***** system only has one cpu; it is unclear whether this reproducer will work if the system does not have at least 2 cpus *****\n\nattempting to continue anyway\n\n");
+	if (globals.proc_count < 2) {
+//		return msg_usage(EXIT_FAILURE, "this reproducer will probably not work with fewer than 2 test processes\n");
+		output("***** WARNING ***** this reproducer will probably not work with fewer than 2 test processes;\n\nuse '-p <process_count>' to specify more than 1 process\n\n");
+		return 1;
+	}
+
 	if (globals.thread_count < 2)
 		return msg_usage(EXIT_FAILURE, "this reproducer will probably not work with fewer than 2 thread per test process\n");
 	if (globals.off0 + globals.buf_size > globals.filesize)
