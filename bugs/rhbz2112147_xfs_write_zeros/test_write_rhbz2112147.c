@@ -1152,24 +1152,23 @@ off_t proc_verify_file(off_t verify_start_offset, size_t verify_start_size) {
 	}
 
 
-check_for_evil:
-
+check_for_errors:
 	verify_start_addr = map + verify_offset;
 
 	if ((ptr = memchr(verify_start_addr, 0, verify_size))) {
 		off_t valid_chars = ptr - verify_start_addr;
 		size_t dump_bytes = min(DUMP_BYTE_COUNT, verify_offset + verify_size - valid_chars + (DUMP_BYTE_COUNT>>1));
-		off_t this_evil_offset = verify_offset + valid_chars, zero_count;
+		off_t this_error_offset = verify_offset + valid_chars, zero_count;
 
 
 		proc_args->replicated++;
 
 
 		if (dump_bytes > 0)
-			hexdump("", verify_start_addr + valid_chars - (DUMP_BYTE_COUNT>>1), verify_offset + valid_chars - (DUMP_BYTE_COUNT>>1), dump_bytes); 
+			hexdump("", verify_start_addr + valid_chars - (DUMP_BYTE_COUNT>>1), verify_offset + valid_chars - (DUMP_BYTE_COUNT>>1), dump_bytes);
 
 
-		verify_offset = this_evil_offset;
+		verify_offset = this_error_offset;
 		verify_size -= valid_chars;
 
 		if (verify_size <= 0) { /* shouldn't happen */
@@ -1183,7 +1182,7 @@ check_for_evil:
 
 		if (proc_args->memfd >= 0) {
 			struct bug_results results = { .count = proc_args->replicated };
-			struct bug_result result = { .offset = this_evil_offset, .length = zero_count };
+			struct bug_result result = { .offset = this_error_offset, .length = zero_count };
 
 			/* we honestly can't do anything about errors here */
 			pwrite(proc_args->memfd, &results, sizeof(results), 0);
@@ -1200,7 +1199,7 @@ check_for_evil:
 		verify_size -= zero_count;
 
 		if (verify_size > 0)
-			goto check_for_evil; /* search for more occurrences of the bug */
+			goto check_for_errors; /* search for more occurrences of the bug */
 
 		goto out;
 	} else
