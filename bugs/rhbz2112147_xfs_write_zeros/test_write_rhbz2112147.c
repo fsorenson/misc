@@ -427,7 +427,6 @@ pid_t gettid(void) {
 	output(args); \
 } while (0)
 
-
 #define tstamp_output(_fmt, ...) do { \
 	char tstamp_buf[TSTAMP_BUF_SIZE]; \
 	output("%s  " _fmt, tstamp(tstamp_buf), ##__VA_ARGS__); \
@@ -1187,7 +1186,6 @@ check_for_errors:
 				sizeof(struct bug_results) + sizeof(struct bug_result) * (proc_args->replicated - 1));
 		}
 
-
 		proc_output("  found zero bytes in file at offset 0x%lx (%lu) for length 0x%lx (%lu)\n",
 			verify_offset, verify_offset, zero_count, zero_count);
 
@@ -1247,7 +1245,6 @@ void verify_file(off_t offset, size_t size) {
 	proc_verify_file(proc_args->last_verified_size, proc_args->current_size - proc_args->last_verified_size);
 	__atomic_sub_fetch(&globals.shared->verifying_count, 1, __ATOMIC_SEQ_CST);
 
-
 	proc_args->last_verify_round = proc_args->write_round;
 	proc_args->last_verified_size = proc_args->current_size;
 
@@ -1270,7 +1267,6 @@ out:
 	} \
 	addr; \
 })
-
 
 void free_proc_paths(int i) {
 	free_mem(globals.proc[i].name);
@@ -1464,12 +1460,10 @@ out:
 out_cancel:
 	reap_threads(0, globals.thread_count - 1);
 
-
 	proc_output("all threads canceled\n");
 	ret = EXIT_FAILURE;
 	goto out;
 }
-
 
 // if some of the threads got an extra write() in (i.e. write failed due to
 // 	error, etc.), need to reduce the file size to the largest size
@@ -1611,10 +1605,8 @@ int do_one_test(void) {
 	}
 	pthread_tbarrier_initialized++;
 
-
 	if ((ret = launch_threads()) != EXIT_SUCCESS)
 		goto out;
-
 
 	while (42) {
 		size_t this_write_size = clamp(globals.buf_size * globals.thread_count, 0UL, max(globals.filesize - proc_args->current_size, 0UL));
@@ -1650,7 +1642,6 @@ int do_one_test(void) {
 			proc_args->exit_test = true;
 		sched_yield();
 	}
-
 
 	ret = EXIT_SUCCESS;
 
@@ -1723,7 +1714,6 @@ int do_one_proc(int proc_num) {
 	}
 
 	alloc_proc_paths(proc_num);
-
 
 	for (i = 0 ; i < proc_num ; i++) /* only need to close the ones opened before we were forked */
 		close(globals.proc[i].memfd); // can't close_fd(), since that would wipe out the stored fd
@@ -1798,7 +1788,6 @@ retry_test:
 				proc_output("delaying briefly before re-launching test\n");
 				nanosleep(&sleep_time, NULL);
 				proc_output("restarting test #%d due to write errors\n", proc_args->test_count);
-
 
 				goto retry_test;
 			}
@@ -2235,7 +2224,6 @@ int do_testing() {
 			setvbuf(globals.log_FILE, NULL, _IONBF, 0); // try setting unbuffered
 	}
 
-
 	if ((mkdirat(globals.base_dir_fd, "testfiles", 0777)) && errno != EEXIST) {
 		global_output("error creating testfile dir '%s/testfiles': %m\n", globals.canonical_base_dir_path);
 		goto out;
@@ -2315,7 +2303,6 @@ int do_testing() {
 			break;
 		if ((__atomic_load_n(&globals.shared->replicated_count, __ATOMIC_SEQ_CST)) > 0)
 			globals.shared->exit_test = max(exit_after_test, globals.shared->exit_test);
-
 
 		// re-launch a test process, if it's exited on an error
 		if (globals.shared->exit_test == no_exit) {
@@ -2581,6 +2568,7 @@ int parse_args(int argc, char *argv[]) {
 
 	if (optind >= argc)
 		return msg_usage(EXIT_FAILURE, "No path specified\n");
+
 	globals.base_dir_path = argv[optind++];
 	if ((globals.canonical_base_dir_path = canonicalize_file_name(globals.base_dir_path)) == NULL)
 		return msg_usage(EXIT_FAILURE, "Unable to canonicalize '%s': %m\n", globals.base_dir_path);
