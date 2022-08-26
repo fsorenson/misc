@@ -108,6 +108,7 @@
 #include <getopt.h>
 #include <dirent.h>
 #include <sys/stat.h>
+#include <sys/vfs.h>
 #include <sys/sysmacros.h>
 #include <sys/types.h>
 #include <sys/mman.h>
@@ -116,6 +117,7 @@
 #include <sys/utsname.h>
 #include <sys/vfs.h>
 #include <sys/resource.h>
+#include <linux/magic.h>
 
 #define PAGE_SIZE_4K		(4096UL)
 
@@ -160,9 +162,20 @@
 static char fill_chars[] = FILL_CHARS;
 #define FILL_LEN (sizeof(FILL_CHARS) - 1)
 
+#define CGROUP_PATH "/sys/fs/cgroup"
+#define CGROUP_NAME "rhbz2112147"
 
-#define MEMORY_CGROUP_PATH "/sys/fs/cgroup/memory"
-#define MEMORY_CGROUP_NAME "rhbz2112147"
+#define CGROUP_V1_GROUP_PATH		CGROUP_PATH "/memory/" CGROUP_NAME
+#define CGROUP_V1_CURRENT_USAGE_FILE	"memory.usage_in_bytes"
+#define CGROUP_V1_HIGH_FILE		"memory.soft_limit_in_bytes"
+#define CGROUP_V1_MAX_FILE		"memory.limit_in_bytes"
+
+#define CGROUP_V2_GROUP_PATH		CGROUP_PATH "/" CGROUP_NAME
+#define CGROUP_V2_CURRENT_USAGE_FILE	"memory.current"
+#define CGROUP_V2_HIGH_FILE		"memory.high"
+#define CGROUP_V2_MAX_FILE		"memory.max"
+
+
 
 #define min(a,b) ({ \
 	typeof(a) _a = (a); \
@@ -235,6 +248,11 @@ struct shared_struct {
 	int verifying_count;
 	int completed_count;
 
+	int threads_running;
+
+	uint64_t mem_min;
+	uint64_t mem_high;
+	uint64_t mem_max;
 };
 
 struct thread_args {
@@ -316,6 +334,9 @@ struct globals {
 	long page_size;
 	int online_cpus;
 
+	int cgroup_vers;
+	char *cgroup_path;
+	int cgroup_fd;
 	int main_prio;
 	int proc_prio;
 
@@ -918,22 +939,114 @@ int write_into(const char *path, const char *val) {
 	errno = 0;
 
 	if ((fd = open(path, O_RDWR)) < 0) {
+int write_into_at(int dfd, const char *path, const char *val) {
+	int ret = 0, fd;
+
+	if ((fd = openat(dfd, path, O_WRONLY)) < 0) {
 		output("error opening '%s': %m\n", path);
 		ret++;
 	} else if ((write(fd, val, strlen(val))) != strlen(val)) {
 		output("error writing '%s' to '%s': %m\n", val, path);
 		ret++;
-	}
-
-	if (close_fd(fd)) {
-		output("error closing '%s': %m\n", path);
+	} else if ((close_fd(fd)) < 0)
 		ret++;
+	return ret;
+}
+int write_cgroup_file(const char *path, uint64_t val) {
+	char buf[32];
+
+	snprintf(buf, sizeof(buf), "%lu", val);
+	return write_into_at(globals.cgroup_fd, path, buf);
+}
+uint64_t read_cgroup_uint(const char *path) {
+	char buf[32];
+	uint64_t ret = 0;
+	int fd = -1;
+	ssize_t nchar;
+
+	if ((fd = openat(globals.cgroup_fd, path, O_RDONLY)) < 0)
+		output("error opening cgroup file '%s': %m\n", path);
+	else if ((nchar = read(fd, buf, sizeof(buf))) < 0)
+		output("error reading file '%s': %m\n", path);
+	else {
+		buf[sizeof(buf) - 1] = '\0';
+		ret = strtoull(buf, NULL, 10);
+
+		if (ret == ULLONG_MAX) {
+			output("error parsing value '%s': %m\n", buf);
+			ret = 0;
+		}
 	}
 
-	if (ret) {
-		output("error writing '%s' to '%s'\n", val, path);
+	close_fd(fd);
+
+	return ret;
+}
+
+int init_cgroup(void) {
+	struct statfs stfs;
+	struct stat st;
+	int ret = EXIT_FAILURE;
+
+	if (! (statfs(CGROUP_PATH "/memory", &stfs))) {
+		if (stfs.f_type == CGROUP_SUPER_MAGIC)
+			globals.cgroup_vers = 1;
+		else {
+			global_output("filesystem type for '%s/memory' is not cgroup: %lx\n",
+				CGROUP_PATH, stfs.f_type);
+			goto out;
+		}
+	} else {
+		if ((statfs(CGROUP_PATH, &stfs)) < 0) {
+			global_output("error with statfs('%s'): %m\n", CGROUP_PATH);
+			goto out;
+		} else if (stfs.f_type == CGROUP2_SUPER_MAGIC)
+			globals.cgroup_vers = 2;
+		else {
+			global_output("filesystem type for '%s' is not cgroup: %lx\n",
+				CGROUP_PATH, stfs.f_type);
+			goto out;
+		}
 	}
 
+	if (globals.cgroup_vers == 1)
+		globals.cgroup_path = CGROUP_V1_GROUP_PATH;
+	else if (globals.cgroup_vers == 2)
+		globals.cgroup_path = CGROUP_V2_GROUP_PATH;
+	else {
+		global_output("could not find cgroups filesystem at '%s'\n", CGROUP_PATH);
+		goto out;
+	}
+
+	if ((lstat(globals.cgroup_path, &st)) < 0) {
+		if (errno != ENOENT) {
+			global_output("error with lstat('%s'): %m\n", globals.cgroup_path);
+			goto out;
+		}
+	} else if ((rmdir(globals.cgroup_path)) < 0 && errno != EBUSY)
+		global_output("error with rmdir('%s'): %m\n", globals.cgroup_path);
+
+	if ((mkdir(globals.cgroup_path, 0755)) < 0 && errno != EEXIST) {
+		global_output("error creating directory '%s': %m\n", globals.cgroup_path);
+		goto out;
+	}
+
+	if ((globals.cgroup_fd = open(globals.cgroup_path, O_RDONLY|O_DIRECTORY)) < 0) {
+		global_output("error opening cgroup path '%s': %m\n", globals.cgroup_path);
+		goto out;
+	}
+
+	if (globals.cgroup_vers == 1) {
+		// these are cgroups v1-specific
+		if ((write_cgroup_file("memory.swappiness", 1)) != 0)
+			global_output("error writing memory.swappiness: %m\n");
+		else if ((write_cgroup_file("memory.oom_control", 1)) != 0)
+			global_output("error writing memory.oom_control: %m\n");
+		else
+			ret = EXIT_SUCCESS;
+	} else if (globals.cgroup_vers == 2)
+		ret = EXIT_SUCCESS;
+out:
 	return ret;
 }
 int write_uint32_t(const char *path, uint32_t val) {
@@ -948,9 +1061,7 @@ int write_uint64_t(const char *path, uint64_t val) {
 }
 
 int enter_cgroup(void) {
-	pid_t tid = gettid();
-
-	if (write_uint32_t(MEMORY_CGROUP_PATH "/" MEMORY_CGROUP_NAME "/cgroup.procs", tid) == 0)
+	if (write_cgroup_file("cgroup.procs", getpid()) == 0)
 		return EXIT_SUCCESS;
 
 	output("error entering cgroup\n");
@@ -1203,6 +1314,12 @@ void *do_one_thread(void *args_ptr) {
 
 	thread_output("alive, initial offset 0x%lx (%lu)\n", thread_args->offset, thread_args->offset);
 	thread_args->buf = proc_args->thread_bufs[thread_args->id]; /* so we don't have to alloc & free each test... just set */
+
+	if (! globals.shared->mem_max) { // one-time pause while the main process determines memory requirements
+		__atomic_add_fetch(&globals.shared->threads_running, 1, __ATOMIC_SEQ_CST);
+		while (!globals.shared->mem_max)
+			sched_yield();
+	}
 
 	while (42) {
 		size_t this_write_size = clamp(globals.filesize - thread_args->offset, 0UL, globals.buf_size);
@@ -2032,6 +2149,58 @@ out:
 	return ret;
 }
 
+int setup_cgroup_limits(void) {
+	int ret = EXIT_FAILURE;
+
+	if (! globals.shared->mem_max) { // one-time thing
+		char *current_file = CGROUP_V1_CURRENT_USAGE_FILE;
+		char *mem_min_str = NULL, *mem_high_str = NULL, *mem_max_str = NULL;
+		char *high_file = CGROUP_V1_HIGH_FILE;
+		char *max_file = CGROUP_V1_MAX_FILE;
+
+		if (globals.cgroup_vers == 2) {
+			current_file = CGROUP_V2_CURRENT_USAGE_FILE;
+			high_file = CGROUP_V2_HIGH_FILE;
+			max_file = CGROUP_V2_MAX_FILE;
+		}
+
+//		while (__atomic_load_n(&globals.shared->threads_running, __ATOMIC_SEQ_CST) < (globals.thread_count * globals.proc_count))
+//			sched_yield();
+
+//		pthread_tbarrier_wait(&globals.shared->tbar); // make sure everyone is started
+
+		global_output("\n\n");
+
+		globals.shared->mem_min = read_cgroup_uint(current_file);
+		mem_min_str = byte_units(globals.shared->mem_min);
+		global_output("current/minimum memory usage: %s\n", mem_min_str);
+
+		globals.shared->mem_high = globals.shared->mem_min + (globals.shared->mem_min / 2);
+		mem_high_str = byte_units(globals.shared->mem_high);
+		global_output("setting cgroup 'high' memory size: %s\n", mem_high_str);
+		if ((write_cgroup_file(high_file, globals.shared->mem_high)) != 0) {
+			global_output("error writing memory 'high' limit: %m\n");
+			goto out;
+		}
+
+		globals.shared->mem_max = globals.shared->mem_min * 2;
+		mem_max_str = byte_units(globals.shared->mem_max);
+		global_output("setting cgroup 'max' memory size: %s\n", mem_max_str);
+		if ((write_cgroup_file(max_file, globals.shared->mem_max)) != 0) {
+			global_output("error writing memory 'max' limit: %m\n");
+			goto out;
+		}
+
+		global_output("\n\n");
+
+		free_mem(mem_min_str);
+		free_mem(mem_high_str);
+		free_mem(mem_max_str);
+	}
+out:
+	return ret;
+}
+
 
 int do_testing() {
 	sigset_t signal_mask;
@@ -2083,16 +2252,14 @@ int do_testing() {
 	}
 	globals.cpids = try_malloc(sizeof(pid_t) * globals.proc_count, global, true);
 
-	// TODO: error handling
-	rmdir(MEMORY_CGROUP_PATH "/" MEMORY_CGROUP_NAME);
-	mkdir(MEMORY_CGROUP_PATH "/" MEMORY_CGROUP_NAME, 0755); // tasks will put themselves in the cgroup
-	write_uint64_t(MEMORY_CGROUP_PATH "/" MEMORY_CGROUP_NAME "/memory.swappiness", 1);
-	write_uint32_t(MEMORY_CGROUP_PATH "/" MEMORY_CGROUP_NAME "/memory.oom_control", 1); /* disable oom kill */
+	if ((init_cgroup()) != EXIT_SUCCESS)
+		goto out;
 
 
-	write_uint64_t(MEMORY_CGROUP_PATH "/" MEMORY_CGROUP_NAME "/memory.limit_in_bytes", globals.cgroup_mem_size);
-	write_uint64_t(MEMORY_CGROUP_PATH "/" MEMORY_CGROUP_NAME "/memory.memsw.limit_in_bytes", globals.cgroup_mem_size);
+	globals.cpids = try_malloc(sizeof(pid_t) * globals.proc_count, global, true);
 
+//	if ((setup_cgroup()) != EXIT_SUCCESS)
+//		goto out;
 
 
 	/* open log dir */
@@ -2136,18 +2303,11 @@ int do_testing() {
 	while (42) {
 		sigsuspend(&signal_mask);
 
-		if ((__atomic_load_n(&globals.shared->running_count, __ATOMIC_SEQ_CST)) == 0) {
-			if (globals.pressure_pid == 0)
-				break;
-			kill(SIGINT, globals.pressure_pid);
-			globals.shared->exit_test = exit_now;
-		}
-		if ((__atomic_load_n(&globals.shared->replicated_count, __ATOMIC_SEQ_CST)) > 0) {
+		if (!globals.shared->mem_max && __atomic_load_n(&globals.shared->threads_running, __ATOMIC_SEQ_CST) == (globals.thread_count * globals.proc_count))
+				setup_cgroup_limits();
 
 			globals.shared->exit_test = max(exit_after_test, globals.shared->exit_test);
 
-			if (globals.shared->exit_test > exit_after_test)
-				globals.shared->apply_pressure = false;
 		}
 
 		// re-launch a test process, if it's exited on an error
@@ -2283,9 +2443,7 @@ out:
 			run_time.tv_sec, run_time.tv_nsec);
 	}
 
-
 	// empty out the cgroup & get rid of it
-//	write_uint64_t(MEMORY_CGROUP_PATH "/" MEMORY_CGROUP_NAME "/memory.force_empty", 1);
 //	rmdir(MEMORY_CGROUP_PATH "/" MEMORY_CGROUP_NAME);
 
 	return ret;
@@ -2312,6 +2470,7 @@ void do_global_init(char *exe) {
 	globals.base_dir_fd = -1;
 	globals.testfile_dir_fd = -1;
 	globals.log_dir_fd = -1;
+	globals.cgroup_fd = -1;
 
 	globals.verify_frequency = 0; // default to verify at end only
 	globals.update_timer = (struct timeval){ .tv_sec = DEFAULT_UPDATE_DELAY_S, .tv_usec = DEFAULT_UPDATE_DELAY_US };
@@ -2324,55 +2483,6 @@ void do_global_init(char *exe) {
 	pthread_key_create(&globals.process_args_key, NULL);
 }
 
-
-int check_cgroup_size(void) {
-	char *memory_str1 = NULL, *memory_str2 = NULL;
-
-	// these are all terrible guesses, but it just might work anyway
-#define PER_THREAD_MEMORY (150UL * KiB)
-	uint64_t memory_alloc_guess =
-		sizeof(struct shared_struct) + ( // shared state
-			globals.proc_count * (
-				sizeof(struct proc_args) + (  // proc args
-					globals.thread_count * (
-						PER_THREAD_MEMORY + // some amount of memory for the thread
-						sizeof(struct thread_args) + // thread args
-						sizeof(char *) + // thread buf pointers
-						globals.buf_size // thread bufs
-					)
-				)
-			)
-		);
-
-	memory_str1 = byte_units(memory_alloc_guess);
-
-	if (globals.cgroup_mem_size) { // is it a sane value?
-
-		memory_str2 = byte_units(globals.cgroup_mem_size);
-
-		if (globals.cgroup_mem_size < memory_alloc_guess) // warn, but let the user shoot off their foot, if they choose
-			global_output("WARNING: specified memory size of %s is below the expected minimum requirements of the test program (%s)\n\n",
-				memory_str2, memory_str1);
-	} else {
-		// try guessing how much memory will result in replicating the bug
-		// these values are super arbitrary, but seem to work
-//		globals.cgroup_mem_size = memory_alloc_guess + (20 * MiB); // add some padding
-//		globals.cgroup_mem_size += globals.filesize; // allow caching up to a file in pagecache
-		globals.cgroup_mem_size += globals.filesize / 4; // allow caching some of a file in pagecache
-//		globals.cgroup_mem_size += (memory_alloc_guess / 4); // some more padding... again, arbitrary
-
-		memory_str2 = byte_units(globals.cgroup_mem_size);
-	}
-
-
-	global_output("guessing total process memory at %s; memory cgroup size will be set to %s\n", memory_str1, memory_str2);
-
-	free_mem(memory_str1);
-	free_mem(memory_str2);
-
-	return 0;
-}
-
 int parse_args(int argc, char *argv[]) {
 	int opt = 0, long_index = 0;
 	static struct option long_options[] = {
@@ -2383,7 +2493,6 @@ int parse_args(int argc, char *argv[]) {
 		{ "offset",	required_argument, 0, 'o' },
 		{ "test_count",	required_argument, 0, 'c' },
 		{ "update_frequency", required_argument, 0, 'u' },
-		{ "cgroup_memory", required_argument, 0, 'm' },
 
 		{ "verify",	required_argument, 0, 'V' },
 		{ NULL, 0, 0, 0 },
@@ -2393,7 +2502,7 @@ int parse_args(int argc, char *argv[]) {
 	do_global_init(argv[0]);
 
 	opterr = 0;
-	while ((opt = getopt_long(argc, argv, "b:c:m:o:p:s:t:u:V:", long_options, &long_index)) != -1) {
+	while ((opt = getopt_long(argc, argv, "b:c:o:p:s:t:u:V:", long_options, &long_index)) != -1) {
 		switch (opt) {
 			case 's':
 				globals.filesize = parse_size(optarg);
@@ -2409,9 +2518,6 @@ int parse_args(int argc, char *argv[]) {
 					return msg_usage(EXIT_FAILURE, "unable to parse buffer size '%s'\n", optarg);
 				if (globals.buf_size < MIN_BUF_SIZE || globals.buf_size > MAX_BUF_SIZE)
 					return msg_usage(EXIT_FAILURE, "invalid bufrer size '%s'; size must be between %llu and %llu\n", optarg, MIN_BUF_SIZE, MAX_BUF_SIZE);
-				break;
-			case 'm':
-				globals.cgroup_mem_size = parse_size(optarg); // we'll check it later
 				break;
 			case 'p':
 				globals.proc_count = strtoul(optarg, NULL, 10);
@@ -2482,8 +2588,6 @@ int parse_args(int argc, char *argv[]) {
 		return msg_usage(EXIT_FAILURE, "buffer size is larger than the filesize!\n");
 	if (globals.off0 + globals.buf_size * globals.thread_count > globals.filesize)
 		return msg_usage(EXIT_FAILURE, "total buffer size is larger than the filesize!\n");
-
-	check_cgroup_size();
 
 	return ret;
 }
