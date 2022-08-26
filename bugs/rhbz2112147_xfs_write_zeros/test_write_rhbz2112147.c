@@ -1475,22 +1475,13 @@ out_cancel:
 //     all the threads with lower id must also have at least n writes;
 //     all the threads with higher id must have at least n-1 writes
 void truncate_test_file(void) {
-	struct stat st;
-	int ending_thread, write_count, i;
 	size_t truncate_size;
+	struct stat st;
+	int i;
 
 	fstat(proc_args->fd, &st);
 
 	truncate_size = min(st.st_size, proc_args->thread_args[0].size);
-
-	ending_thread = (((truncate_size - globals.off0) / globals.buf_size) - 1) % globals.thread_count; // the thread that would have caused the file to be this size
-	write_count = proc_args->thread_args[ending_thread].write_count;
-
-	proc_output("file size is 0x%lx (%lu), last written by thread %d, which wrote %d times to file size 0x%lx (%lu)\n",
-		st.st_size, st.st_size, ending_thread, write_count,
-		proc_args->thread_args[ending_thread].size, proc_args->thread_args[ending_thread].size);
-
-	proc_output("\n");
 
 	int highest_with_min = 0;
 	int min_wc = proc_args->thread_args[0].write_count;
@@ -1536,12 +1527,9 @@ void truncate_test_file(void) {
 			globals.filesize, st.st_size, proc_args->current_size, truncate_size);
 
 		proc_args->current_size = truncate_size;
-	} else {
-//		proc_output("well... suppose I don't really need to truncate to its current size or larger (from %lu to %lu)\n", st.st_size, truncate_size);
-	}
+	} else
+		; // no need to truncate to current size or larger
 }
-
-
 
 int do_one_test(void) {
 	int ret = EXIT_FAILURE; /* whether the test run was successful, not whether we replicated the bug */
