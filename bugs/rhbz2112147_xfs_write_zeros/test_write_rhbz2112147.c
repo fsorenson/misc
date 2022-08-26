@@ -1561,19 +1561,16 @@ int do_one_test(void) {
 	proc_args->last_verify_round = 0;
 	proc_args->last_verified_size = 0;
 
-
-	{ // fill the first off0 bytes so that the only 0-byte contents are actually the bug
-		int ret2;
-
-		memset(proc_args->thread_bufs[0], fill_chars[FILL_LEN - 1], globals.off0); // reuse the buf for thread 0
-		if ((ret2 = pwrite(proc_args->fd, proc_args->thread_bufs[0], globals.off0, proc_args->current_size)) != globals.off0) {
-			if (ret2 == -1)
-				proc_output("error writing initial off0 bytes to test file: %m\n");
-			else
-				proc_output("short write for initial off0 bytes (tried %lu, only %d written)\n",
-					globals.off0, ret2);
-			goto out;
-		}
+	// fill the first off0 bytes so that the only 0-byte contents are actually the bug
+	memset(proc_args->thread_bufs[0], fill_chars[FILL_LEN - 1], globals.off0); // reuse the buf for thread 0
+	if ((ret = pwrite(proc_args->fd, proc_args->thread_bufs[0], globals.off0, proc_args->current_size)) != globals.off0) {
+		if (ret == -1)
+			proc_output("error writing initial off0 bytes to test file: %m\n");
+		else
+			proc_output("short write for initial off0 bytes (tried %lu, only %d written)\n",
+				globals.off0, ret);
+		ret = EXIT_FAILURE;
+		goto out;
 	}
 	proc_args->current_size += globals.off0;
 
