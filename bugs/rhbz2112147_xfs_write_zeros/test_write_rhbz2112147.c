@@ -1354,7 +1354,7 @@ void *do_one_thread(void *args_ptr) {
 					this_write_size, this_write_size, fill_chars[thread_args->c]);
 
 				thread_args->size = thread_args->offset + this_write_size;
-				__atomic_add_fetch(&thread_args->write_count, 1, __ATOMIC_SEQ_CST);
+				thread_args->write_count++;
 			} else {
 				 if (written == -1)
 					thread_output("write %d, offset 0x%lx (%lu), count 0x%lx (%lu) failed with error: %m\n",
@@ -1456,7 +1456,7 @@ int launch_threads(void) {
 			goto out_cancel;
 		}
 
-		if (__atomic_load_n(&globals.shared->exit_test, __ATOMIC_SEQ_CST) == exit_now) {
+		if (globals.shared->exit_test == exit_now) {
 			proc_output("canceling test as instructed by main test process\n");
 			goto out_cancel;
 		}
@@ -1646,7 +1646,7 @@ int do_one_test(void) {
 		if (proc_args->replicated)
 			proc_args->exit_test = true;
 
-		if (__atomic_load_n(&globals.shared->exit_test, __ATOMIC_SEQ_CST) == exit_now)
+		if (globals.shared->exit_test == exit_now)
 			proc_args->exit_test = true;
 		
 //		if (__atomic_load_n(&proc_args->interrupted, __ATOMIC_SEQ_CST) || proc_args->current_size >= globals.filesize)
@@ -1785,7 +1785,7 @@ retry_test:
 		proc_args->interrupted = 0;
 
 
-		if (proc_args->interrupted || __atomic_load_n(&globals.shared->exit_test, __ATOMIC_SEQ_CST)) { /* global or per-proc exit flag */
+		if (proc_args->interrupted || globals.shared->exit_test) { /* global or per-proc exit flag */
 			proc_output("exiting as requested\n");
 			goto out;
 		}
@@ -1796,8 +1796,7 @@ retry_test:
 			proc_output("error while running test\n");
 
 			if (!proc_args->replicated && proc_args->write_errors &&
-				! proc_args->interrupted &&
-				__atomic_load_n(&globals.shared->exit_test, __ATOMIC_SEQ_CST) <= exit_after_test) {
+				! proc_args->interrupted && globals.shared->exit_test <= exit_after_test) {
 
 				struct timespec sleep_time = PROC_RESTART_HOLDOFF;
 
@@ -2317,12 +2316,14 @@ int do_testing() {
 		if (!globals.shared->mem_max && __atomic_load_n(&globals.shared->threads_running, __ATOMIC_SEQ_CST) == (globals.thread_count * globals.proc_count))
 				setup_cgroup_limits();
 
+		if (globals.shared->exit_test > no_exit && __atomic_load_n(&globals.shared->running_count, __ATOMIC_SEQ_CST) == 0)
+			break;
+		if ((__atomic_load_n(&globals.shared->replicated_count, __ATOMIC_SEQ_CST)) > 0)
 			globals.shared->exit_test = max(exit_after_test, globals.shared->exit_test);
 
-		}
 
 		// re-launch a test process, if it's exited on an error
-		if (__atomic_load_n(&globals.shared->exit_test, __ATOMIC_SEQ_CST) == no_exit) {
+		if (globals.shared->exit_test == no_exit) {
 			int count = 0;
 			count += __atomic_load_n(&globals.shared->running_count, __ATOMIC_SEQ_CST);
 			count += __atomic_load_n(&globals.shared->replicated_count, __ATOMIC_SEQ_CST);
