@@ -1239,16 +1239,12 @@ out_verify:
 out_noverify:
 	return false;
 }
-off_t verify_file(off_t offset, size_t size) {
-	off_t replicated_offset = -1;
-
+void verify_file(off_t offset, size_t size) {
 	if (! need_verify())
 		goto out;
 
-
 	__atomic_add_fetch(&globals.shared->verifying_count, 1, __ATOMIC_SEQ_CST);
-	replicated_offset = proc_verify_file(proc_args->last_verified_size, proc_args->current_size - proc_args->last_verified_size);
-
+	proc_verify_file(proc_args->last_verified_size, proc_args->current_size - proc_args->last_verified_size);
 	__atomic_sub_fetch(&globals.shared->verifying_count, 1, __ATOMIC_SEQ_CST);
 
 
@@ -1256,7 +1252,7 @@ off_t verify_file(off_t offset, size_t size) {
 	proc_args->last_verified_size = proc_args->current_size;
 
 out:
-	return replicated_offset;
+	return;
 }
 
 /* attempt to malloc memory, assign; output error to 'scope'_output and goto 'out' on error */
