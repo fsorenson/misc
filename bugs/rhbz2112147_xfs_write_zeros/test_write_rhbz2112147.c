@@ -375,18 +375,25 @@ pid_t gettid(void) {
 #define PASTE3(a,b,c) _PASTE3(a,b,c)
 
 #define free_mem(addr) ({ \
-	if (addr) { \
+	if (addr) \
 		free(addr); \
-		addr = NULL; \
-	} \
+	addr = NULL; \
 	addr; })
+#define do_munmap(var, size) ({ \
+	if (var && var != MAP_FAILED) \
+		if ((munmap(var, size)) < 0) { \
+			tstamp_output("[%d] %s() @ %s:%d - error unmapping '%s' (%lu bytes): %m\n", \
+				gettid(), __func__, __FILE__, __LINE__, STR(size), size); \
+		} \
+	var = NULL; \
+	var; })
 
-#define close_fd(fd)  ({ \
+#define close_fd(fd) ({ \
 	int rc = 0; \
 	if (fd >= 0) { \
 		if ((close(fd)) < 0) { \
-			output("%s() @ %s:%d - error closing fd '%s': %m\n", \
-				__func__, __FILE__, __LINE__, STR(fd)); \
+			tstamp_output("%d] %s() @ %s:%d - error closing fd '%s': %m\n", \
+				gettid(), __func__, __FILE__, __LINE__, STR(fd)); \
 			rc = 1; \
 		} \
 		fd = -1; \
@@ -396,8 +403,8 @@ pid_t gettid(void) {
 #define close_FILE(fh, fd) do { \
 	if (fh) { \
 		if (fclose(fh) == EOF) \
-			output("%s() @ %s:%d - error closing file handle '%s' / fd '%s': %m\n", \
-				__func__, __FILE__, __LINE__, STR(fh), STR(fd)); \
+			tstamp_output("[%d] %s() @ %s:%d - error closing file handle '%s' / fd '%s': %m\n", \
+				gettid(), __func__, __FILE__, __LINE__, STR(fh), STR(fd)); \
 		fh = NULL; \
 		fd = -1; \
 	} \
@@ -437,9 +444,6 @@ pid_t gettid(void) {
 #define global_output(_fmt, ...) do { \
 	tstamp_log_and_output("[%d] " _fmt, globals.pid, ##__VA_ARGS__); \
 } while (0)
-
-
-#define generic_output(args...) tstamp_output(args)
 
 /* which thread is responsible for the write which laid down data at this offset? */
 #define WHOSE_WRITE(offset) ({ \
@@ -937,8 +941,16 @@ int write_into(const char *path, const char *val) {
 	int ret = EXIT_SUCCESS, fd;
 
 	errno = 0;
+	if ((fd = open(path, O_RDWR)) < 0)
+		{ output("error opening '%s': %m\n", path); ret++; }
+	else if ((write(fd, val, strlen(val))) != strlen(val))
+		{ output("error writing '%s' to '%s': %m\n", val, path); ret++; }
 
-	if ((fd = open(path, O_RDWR)) < 0) {
+	if (close_fd(fd))
+		ret++;
+
+	return ret;
+}
 int write_into_at(int dfd, const char *path, const char *val) {
 	int ret = 0, fd;
 
