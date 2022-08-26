@@ -1218,27 +1218,26 @@ bool need_verify(void) {
 	if (proc_args->write_round == proc_args->last_verify_round)
 		goto out_noverify; /* nothing to be done, regardless of verify frequency */
 
-	if (__atomic_load_n(&globals.shared->exit_test, __ATOMIC_SEQ_CST) > exit_now_verify)
+	if (globals.shared->exit_test > exit_now_verify)
 		goto out_noverify;
 
-	if (__atomic_load_n(&globals.shared->exit_test, __ATOMIC_SEQ_CST) == exit_now_verify)
+	if (globals.shared->exit_test == exit_now_verify)
 		goto out_verify;
 
-//	if (globals.verify_frequency == 0 && proc_args->current_size >= globals.filesize)
-//		goto out_verify; /* we're at the end of the test */
-
-	if (globals.verify_frequency == 0)
-		goto out_verify;
+	if (globals.verify_frequency == 0) {
+		if (proc_args->current_size >= globals.filesize)
+			goto out_verify;
+		goto out_noverify;
+	}
 
 	elapsed_rounds = proc_args->write_round - proc_args->last_verify_round;
 	if (elapsed_rounds % globals.verify_frequency)
 		goto out_noverify;
 
-	goto out_verify;
-out_noverify:
-	return false;
 out_verify:
 	return true;
+out_noverify:
+	return false;
 }
 off_t verify_file(off_t offset, size_t size) {
 	off_t replicated_offset = -1;
