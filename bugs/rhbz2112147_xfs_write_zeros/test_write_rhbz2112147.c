@@ -2225,7 +2225,6 @@ int do_testing() {
 		global_output("error mapping memory for shared state: %m\n");
 		goto out;
 	}
-	globals.cpids = try_malloc(sizeof(pid_t) * globals.proc_count, global, true);
 
 	if ((init_cgroup()) != EXIT_SUCCESS)
 		goto out;
@@ -2314,7 +2313,7 @@ int do_testing() {
 	if (globals.shared->replicated_count) {
 		log_and_output("==========================================================\n");
 		log_and_output("replicated the bug %d time%s\n",
-			globals.shared->replicated_count, 
+			globals.shared->replicated_count,
 			globals.shared->replicated_count == 1 ? "" : "s");
 		for (i = 0 ; i < globals.proc_count ; i++) {
 			if (globals.proc[i].replicated) {
@@ -2372,9 +2371,6 @@ int do_testing() {
 					}
 
 					close(globals.proc[i].memfd);
-
-//					if (i < (globals.proc_count - 1))
-//						log_and_output("\n");
 				}
 			}
 		} /* for each test proc */
@@ -2399,13 +2395,14 @@ out:
 			for (i = 0 ; i < globals.proc_count ; i++)
 				close(globals.proc[i].memfd); /* ignore errors */
 
-			munmap(globals.proc, sizeof(struct proc_args) * globals.proc_count);
+			do_munmap(globals.proc, sizeof(struct proc_args) * globals.proc_count);
 		}
-		if (globals.shared)
-			munmap(globals.shared, sizeof(struct shared_struct) + (sizeof(uint64_t) * globals.proc_count));
+
+		do_munmap(globals.shared, sizeof(struct shared_struct) + (sizeof(uint64_t) * globals.proc_count));
 		free_mem(globals.cpids);
 
 		log_and_output("results logged to %s/log.out\n", globals.canonical_base_dir_path);
+		log_and_output("per-test results are logged in %s/logs/\n", globals.canonical_base_dir_path);
 
 		clock_gettime(CLOCK_REALTIME, &globals.end_time);
 		run_time = (struct timespec){
