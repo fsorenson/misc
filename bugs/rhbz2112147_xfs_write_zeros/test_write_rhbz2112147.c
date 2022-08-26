@@ -136,9 +136,6 @@
 #define GETDENTS_BUF_SIZE	(64ULL * KiB)
 
 
-#define SHOW_RUSAGE 0 /* whether to show resource usage at end */
-#define DO_MTRACE 0	/* whether to mtrace; only useful when debugging this reproducer */
-
 #define INTERRUPT_COUNT_REALLY_EXIT	(5) /* after this many interrupts, start murdering processes */
 
 #define FILL_CHARS " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~"
@@ -416,25 +413,6 @@ pid_t gettid(void) {
 
 #define generic_output(args...) tstamp_output(args)
 
-
-#define show_rusage(scope, who) do { \
-	struct rusage usage; \
-\
-	if (getrusage(who, &usage) == -1) { \
-	} else { \
-		PASTE(scope, _output)("resource usage - %s:\n", STR(who)); \
-		PASTE(scope, _output)("\tuser CPU time:   %6lu.%03lu\n", usage.ru_utime.tv_sec, usage.ru_utime.tv_usec/1000UL); \
-		PASTE(scope, _output)("\tsystem CPU time: %6lu.%03lu\n", usage.ru_stime.tv_sec, usage.ru_stime.tv_usec/1000UL); \
-\
-		PASTE(scope, _output)("\tmaximum resident set size (KiB): %ld\n", usage.ru_maxrss); \
-\
-		PASTE(scope, _output)("\tfaults - major: %ld, minor: %ld\n", usage.ru_majflt, usage.ru_minflt); \
-		PASTE(scope, _output)("\tctx switch - vol: %ld, invol: %ld\n", usage.ru_nvcsw, usage.ru_nivcsw); \
-		PASTE(scope, _output)("\tIO blocks - in: %ld, out: %ld\n", usage.ru_inblock, usage.ru_oublock); \
-	} \
-} while (0)
-
-
 /* which thread is responsible for the write which laid down data at this offset? */
 #define WHOSE_WRITE(offset) ({ \
 	int write_num = (offset - globals.off0) / globals.buf_size; \
@@ -459,8 +437,6 @@ pid_t gettid(void) {
 
 #define BYTE_OF_PAGE4K(offset) ({ \
 	offset % PAGE_SIZE_4K; })
-
-
 
 
 // may be necessary when testing OLD systems (RHEL 7 without glibc support */
@@ -1037,12 +1013,6 @@ new_mapping:
 	}
 	pressure_output("exiting\n");
 
-#if SHOW_RUSAGE
-        show_rusage(pressure, RUSAGE_THREAD);
-        show_rusage(pressure, RUSAGE_CHILDREN);
-        show_rusage(pressure, RUSAGE_SELF);
-#endif
-
 	return 1;
 }
 
@@ -1425,11 +1395,6 @@ void *do_one_thread(void *args_ptr) {
 	}
 
 out:
-
-#if SHOW_RUSAGE
-	show_rusage(thread, RUSAGE_THREAD);
-#endif
-
 	return NULL;
 
 out_error:
@@ -1889,12 +1854,6 @@ out:
 		proc_output("error calling pthread_key_delete() for thread_key: %m\n");
 	if (pthread_keys_created && pthread_key_delete(proc_args->thread_id_key))
 		proc_output("error calling pthread_key_delete() for thread_id_key: %m\n");
-
-#if SHOW_RUSAGE
-show_rusage(proc, RUSAGE_THREAD);
-show_rusage(proc, RUSAGE_CHILDREN);
-show_rusage(proc, RUSAGE_SELF);
-#endif
 
 	close_FILE(proc_args->log_FILE, proc_args->log_fd);
 	dup3(globals.stdout_fd, fileno(stdout), 0); // restore stdout, close log
@@ -2368,13 +2327,6 @@ int do_testing() {
 	setup_handlers(setup_handlers_disable_timer); /* disable the timer */
 
 	show_progress(0);
-
-#if SHOW_RUSAGE
-	show_rusage(global, RUSAGE_THREAD);
-	show_rusage(global, RUSAGE_CHILDREN);
-	show_rusage(global, RUSAGE_SELF);
-#endif
-
 	int total_errors = 0;
 
 	if (globals.shared->replicated_count) {
@@ -2452,15 +2404,6 @@ int do_testing() {
 	} else
 		log_and_output("did not replicate the bug\n");
 out:
-
-#if SHOW_RUSAGE
-if (gettid() == globals.pid) {
-	show_rusage(global, RUSAGE_THREAD);
-	show_rusage(global, RUSAGE_CHILDREN);
-	show_rusage(global, RUSAGE_SELF);
-}
-#endif
-
 	close_fd(globals.testfile_dir_fd);
 	close_fd(globals.log_dir_fd);
 	close_fd(globals.base_dir_fd);
@@ -2702,14 +2645,6 @@ int parse_args(int argc, char *argv[]) {
 
 int main(int argc, char *argv[]) {
 	int ret = EXIT_FAILURE;
-
-#if DO_MTRACE
-#include <mcheck.h>
-setenv("MALLOC_TRACE", "mtrace.out", 0);
-global_output("creating memtrace in mtrace.out\n");
-mtrace();
-#endif
-
 
 	if ((ret = parse_args(argc, argv)) != EXIT_SUCCESS)
 		goto out;
