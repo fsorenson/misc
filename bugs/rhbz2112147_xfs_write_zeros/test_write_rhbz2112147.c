@@ -217,8 +217,8 @@ typedef struct pthread_tbarrier pthread_tbarrier_t;
 
 typedef enum { no_exit = 0, exit_after_test, exit_now_verify, exit_now, exit_kill } exit_urgency;
 
-
 typedef enum { not_exiting = 0, exit_error, exit_interrupt, exit_on_flag, exit_test_count, exit_replicated } exit_reason;
+typedef enum { process_type_main, process_type_proc, process_type_thread } process_type;
 /*
 static char *exit_reason_strings[] = {
 	[not_exiting] = "not exiting",
@@ -353,6 +353,10 @@ struct globals {
 	uint32_t verify_frequency;
 
 	pthread_key_t process_args_key;
+
+	pthread_key_t thread_id_key;
+	pthread_key_t proc_id_key;
+	pthread_key_t process_type_key;
 
 	int proc_count;
 	int test_count;
@@ -584,13 +588,17 @@ off_t find_nonzero(void *_a, size_t len) {
 
 #pragma GCC pop_options
 
+process_type my_process_type(void) {
+	process_type *my_type;
 
+	if ((my_type = (process_type *)pthread_getspecific(globals.process_type_key)))
+		return *my_type;
+	return -1;
 }
-
 int my_thread_id(void) {
 	int *my_id;
 
-	if ((my_id = (int *)pthread_getspecific(proc_args->thread_id_key)))
+	if ((my_id = (int *)pthread_getspecific(globals.thread_id_key)))
 		return *my_id;
 	return -1;
 }
@@ -598,7 +606,7 @@ struct thread_args *my_thread_ptr(void) {
 //	void *ptr = pthread_getspecific(proc_args->thread_key);
 	int *my_id_ptr, my_id;
 
-	if ((my_id_ptr = (int *)pthread_getspecific(proc_args->thread_id_key))) {
+	if ((my_id_ptr = (int *)pthread_getspecific(globals.thread_id_key))) {
 		my_id = *my_id_ptr;
 		if (my_id >= globals.thread_count || my_id < -1)
 			return NULL;
@@ -1307,10 +1315,9 @@ out:
 }
 
 bool proc_exit_test(void) {
-	if (my_thread_id() == -1) {
+	if (my_process_type() == process_type_proc) {
 		if (__atomic_load_n(&proc_args->children_exited, __ATOMIC_SEQ_CST))
 			proc_args->exit_test = true;
-
 	}
 
 	return proc_args ? proc_args->exit_test : false;
@@ -1318,9 +1325,11 @@ bool proc_exit_test(void) {
 
 void *do_one_thread(void *args_ptr) {
 	struct thread_args *thread_args = (struct thread_args *)args_ptr;
+	process_type process_type = process_type_thread;
 
 	thread_args->tid = gettid();
-	pthread_setspecific(proc_args->thread_id_key, (void *)&thread_args->id);
+	pthread_setspecific(globals.process_type_key, (void *)&process_type);
+	pthread_setspecific(globals.thread_id_key, (void *)&thread_args->id);
 	pthread_setspecific(proc_args->thread_key, (void *)thread_args);
 	pthread_setspecific(globals.process_args_key, (void *)thread_args);
 
@@ -1714,13 +1723,16 @@ int open_memfd(int proc_num) {
 }
 
 int do_one_proc(int proc_num) {
+        process_type process_type = process_type_proc;
 	int ret = EXIT_FAILURE, minusone = -1, i;
-	int pthread_keys_created = 0; 
+	int pthread_keys_created = 0;
 
 	proc_args = &globals.proc[proc_num];
 	proc_args->pid = getpid();
 
-	pthread_setspecific(proc_args->thread_id_key, (void *)&minusone);
+	pthread_setspecific(globals.process_type_key, (void *)&process_type);
+	pthread_setspecific(globals.thread_id_key, (void *)&minusone);
+	pthread_setspecific(globals.proc_id_key, (void *)&proc_args->proc_num);
 	pthread_setspecific(globals.process_args_key, (void *)proc_args);
 
 	reduce_prio();
@@ -2215,9 +2227,9 @@ out:
 
 
 int do_testing() {
+	process_type process_type = process_type_main;
 	sigset_t signal_mask;
 	int ret = EXIT_FAILURE, i;
-	pid_t cpid;
 
 	setpriority(PRIO_PROCESS, 0, -10);
 
@@ -2273,6 +2285,7 @@ int do_testing() {
 //	if ((setup_cgroup()) != EXIT_SUCCESS)
 //		goto out;
 
+	pthread_setspecific(globals.process_type_key, (void *)&process_type);
 
 	/* open log dir */
 	if ((mkdirat(globals.base_dir_fd, "logs", 0777)) && errno != EEXIST) {
@@ -2492,6 +2505,9 @@ void do_global_init(char *exe) {
 
 	setvbuf(stdout, NULL, _IONBF, 0); // make stdout unbuffered
 
+	pthread_key_create(&globals.process_type_key, NULL);
+	pthread_key_create(&globals.thread_id_key, NULL);
+	pthread_key_create(&globals.proc_id_key, NULL);
 	pthread_key_create(&globals.process_args_key, NULL);
 }
 
