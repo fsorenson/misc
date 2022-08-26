@@ -1069,16 +1069,6 @@ int init_cgroup(void) {
 out:
 	return ret;
 }
-int write_uint32_t(const char *path, uint32_t val) {
-	char buf[12];
-	snprintf(buf, sizeof(buf), "%u", val);
-	return write_into(path, buf);
-}
-int write_uint64_t(const char *path, uint64_t val) {
-	char buf[22];
-	snprintf(buf, sizeof(buf), "%lu", val);
-	return write_into(path, buf);
-}
 
 int enter_cgroup(void) {
 	if (write_cgroup_file("cgroup.procs", getpid()) == 0)
