@@ -560,17 +560,6 @@ off_t find_nonzero(void *_a, size_t len) {
 #pragma GCC pop_options
 
 
-char *tstamp(char *buf) { // buf must be at least TSTAMP_BUF_SIZE in size
-	struct timespec ts;
-	struct tm tm_info;
-	int len;
-
-	clock_gettime(CLOCK_REALTIME, &ts);
-	localtime_r(&ts.tv_sec, &tm_info);
-	len = strftime(buf, TSTAMP_BUF_SIZE, "%F %T", &tm_info);
-	len += snprintf(buf + len, TSTAMP_BUF_SIZE - len, ".%09ld", ts.tv_nsec);
-
-	return buf;
 }
 
 int my_thread_id(void) {
@@ -595,6 +584,131 @@ struct thread_args *my_thread_ptr(void) {
 void *my_process_args(void) {
 	return pthread_getspecific(globals.process_args_key);
 }
+char *tstamp(char *buf) { // buf must be at least TSTAMP_BUF_SIZE in size
+	struct timespec ts;
+	struct tm tm_info;
+	int len;
+
+	clock_gettime(CLOCK_REALTIME, &ts);
+	localtime_r(&ts.tv_sec, &tm_info);
+	len = strftime(buf, TSTAMP_BUF_SIZE, "%F %T", &tm_info);
+	len += snprintf(buf + len, TSTAMP_BUF_SIZE - len, ".%09ld", ts.tv_nsec);
+
+	return buf;
+}
+
+int pthread_tbarrier_init(pthread_tbarrier_t *tbar,
+		const pthread_barrierattr_t *restrict attr,
+		int target_count, tbarrier_csncel_func_t cancel,
+		struct timespec *freq) {
+
+	int ret = 0;
+
+	memset(tbar, 0, sizeof(pthread_tbarrier_t));
+	pthread_mutex_init(&tbar->lock, NULL);
+	pthread_mutex_lock(&tbar->lock);
+	pthread_cond_init(&tbar->cond, NULL);
+
+	tbar->target_count = target_count;
+	tbar->threads_left = target_count;
+	tbar->cycle = 0;
+
+	if (freq) /* pass freq = NULL to use default of 1.0 seconds */
+		tbar->freq = *freq;
+	else
+		tbar->freq = (struct timespec){ .tv_sec = 1, .tv_nsec = 0 };
+
+	tbar->cancel = cancel;
+	tbar->initialized = true;
+
+	pthread_mutex_unlock(&tbar->lock);
+	return ret;
+}
+int pthread_tbarrier_destroy(pthread_tbarrier_t *tbar) {
+	int ret = EINVAL;
+
+	if (!tbar->initialized)
+		goto out;
+
+	pthread_mutex_lock(&tbar->lock);
+	pthread_cond_destroy(&tbar->cond);
+	tbar->initialized = false;
+	pthread_mutex_destroy(&tbar->lock);
+	memset(tbar, 0, sizeof(*tbar));
+
+	ret = EXIT_SUCCESS;
+out:	
+	return ret;
+}
+
+int pthread_tbarrier_wait(pthread_tbarrier_t *tbar) {
+	uint32_t left, ret = 0;
+
+	pthread_mutex_lock(&tbar->lock);
+
+	if ((left = --tbar->threads_left) == 0) {
+
+		tbar->threads_left = tbar->target_count;
+		tbar->cycle++;
+
+		pthread_cond_broadcast(&tbar->cond);
+
+		ret = PTHREAD_BARRIER_SERIAL_THREAD;
+		goto out;
+	} else {
+		uint32_t cycle = tbar->cycle;
+
+		while (cycle == tbar->cycle) {
+			struct timespec wait_stop_time;
+			clock_gettime(CLOCK_REALTIME, &wait_stop_time);
+			wait_stop_time.tv_sec += tbar->freq.tv_sec;
+			wait_stop_time.tv_nsec += tbar->freq.tv_nsec;
+
+			if (tbar->cancel && tbar->cancel()) {
+				ret = PTHREAD_TBARRIER_CANCELED;
+				break;
+			}
+
+			if ((ret = pthread_cond_timedwait(&tbar->cond, &tbar->lock, &wait_stop_time)) == 0)
+				break; /* done waiting--we may continue */
+
+			if (ret == ETIMEDOUT)
+				continue; /* wait timed out... waiting again */
+
+//			thread_output("%s - pthread_cond_timedwait returned error: %s\n", __func__, strerror(ret));
+			tstamp_log_and_output("%s @%s:%d - [%d] pthread_cond_timedwait returned error: %s\n", __func__, __FILE__, __LINE__, gettid(), strerror(ret));
+		}
+
+		ret = 0;
+		goto out;
+	}
+out:
+	pthread_mutex_unlock(&tbar->lock);
+	return ret;
+
+}
+uint32_t pthread_tbarrier_get_waiters(pthread_tbarrier_t *tbar) {
+	uint32_t waiters;
+	pthread_mutex_lock(&tbar->lock);
+	waiters = tbar->target_count - tbar->threads_left;
+	pthread_mutex_unlock(&tbar->lock);
+	return waiters;
+}
+uint32_t pthread_tbarrier_get_cycle(pthread_tbarrier_t *tbar) {
+	uint32_t cycle;
+	pthread_mutex_lock(&tbar->lock);
+	cycle = tbar->cycle;
+	pthread_mutex_unlock(&tbar->lock);
+	return cycle;
+}
+bool pthread_tbarrier_get_cancel(pthread_tbarrier_t *tbar) {
+	bool cancel;
+	pthread_mutex_lock(&tbar->lock);
+	cancel = tbar->cancel;
+	pthread_mutex_unlock(&tbar->lock);
+	return cancel;
+}
+
 
 void handle_child_exit(int sig, siginfo_t *info, void *ucontext) {
 	pid_t pid;
@@ -1069,117 +1183,6 @@ out:
 	return ret;
 }
 
-int pthread_tbarrier_init(pthread_tbarrier_t *tbar,
-		const pthread_barrierattr_t *restrict attr,
-		int target_count, tbarrier_csncel_func_t cancel,
-		struct timespec *freq) {
-
-	int ret = 0;
-
-	memset(tbar, 0, sizeof(pthread_tbarrier_t));
-	pthread_mutex_init(&tbar->lock, NULL);
-	pthread_mutex_lock(&tbar->lock);
-	pthread_cond_init(&tbar->cond, NULL);
-
-	tbar->target_count = target_count;
-	tbar->threads_left = target_count;
-	tbar->cycle = 0;
-
-	if (freq) /* pass freq = NULL to use default of 1.0 seconds */
-		tbar->freq = *freq;
-	else
-		tbar->freq = (struct timespec){ .tv_sec = 1, .tv_nsec = 0 };
-
-	tbar->cancel = cancel;
-	tbar->initialized = true;
-
-	pthread_mutex_unlock(&tbar->lock);
-	return ret;
-}
-int pthread_tbarrier_destroy(pthread_tbarrier_t *tbar) {
-	int ret = EINVAL;
-
-	if (!tbar->initialized)
-		goto out;
-
-	pthread_mutex_lock(&tbar->lock);
-	pthread_cond_destroy(&tbar->cond);
-	tbar->initialized = false;
-	pthread_mutex_destroy(&tbar->lock);
-	memset(tbar, 0, sizeof(*tbar));
-
-	ret = EXIT_SUCCESS;
-out:	
-	return ret;
-}
-
-int pthread_tbarrier_wait(pthread_tbarrier_t *tbar) {
-	uint32_t left, ret = 0;
-	struct thread_args *thread_args = my_thread_ptr();
-
-	pthread_mutex_lock(&tbar->lock);
-
-	if ((left = --tbar->threads_left) == 0) {
-
-		tbar->threads_left = tbar->target_count;
-		tbar->cycle++;
-
-		pthread_cond_broadcast(&tbar->cond);
-
-		ret = PTHREAD_BARRIER_SERIAL_THREAD;
-		goto out;
-	} else {
-		uint32_t cycle = tbar->cycle;
-
-		while (cycle == tbar->cycle) {
-			struct timespec wait_stop_time;
-			clock_gettime(CLOCK_REALTIME, &wait_stop_time);
-			wait_stop_time.tv_sec += tbar->freq.tv_sec;
-			wait_stop_time.tv_nsec += tbar->freq.tv_nsec;
-
-			if (tbar->cancel && tbar->cancel()) {
-				ret = PTHREAD_TBARRIER_CANCELED;
-				break;
-			}
-
-			if ((ret = pthread_cond_timedwait(&tbar->cond, &tbar->lock, &wait_stop_time)) == 0)
-				break; /* done waiting--we may continue */
-
-			if (ret == ETIMEDOUT)
-				continue; /* wait timed out... waiting again */
-
-			thread_output("%s - pthread_cond_timedwait returned error: %s\n", __func__, strerror(ret));
-		}
-
-		ret = 0;
-		goto out;
-	}
-out:
-	pthread_mutex_unlock(&tbar->lock);
-	return ret;
-
-}
-uint32_t pthread_tbarrier_get_waiters(pthread_tbarrier_t *tbar) {
-	uint32_t waiters;
-	pthread_mutex_lock(&tbar->lock);
-	waiters = tbar->target_count - tbar->threads_left;
-	pthread_mutex_unlock(&tbar->lock);
-	return waiters;
-}
-uint32_t pthread_tbarrier_get_cycle(pthread_tbarrier_t *tbar) {
-	uint32_t cycle;
-	pthread_mutex_lock(&tbar->lock);
-	cycle = tbar->cycle;
-	pthread_mutex_unlock(&tbar->lock);
-	return cycle;
-}
-bool pthread_tbarrier_get_cancel(pthread_tbarrier_t *tbar) {
-	bool cancel;
-	pthread_mutex_lock(&tbar->lock);
-	cancel = tbar->cancel;
-	pthread_mutex_unlock(&tbar->lock);
-	return cancel;
-}
 bool proc_exit_test(void) {
 	if (my_thread_id() == -1) {
 		if (__atomic_load_n(&proc_args->children_exited, __ATOMIC_SEQ_CST))
