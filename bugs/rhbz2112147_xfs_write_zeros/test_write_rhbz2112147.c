@@ -18,13 +18,19 @@
 
 	the reproducer will:
 	 A. create <test_directory>/testfiles and <test_directory>/logs
-	 B. spawn a process to consume memory
+	 B. create a cgroup (v1 or v2)
 	 C. spawn ## (default is number of online cpus; configurable) test processes
 	  each test process will:
 	   1. redirect stdout/stderr to a logfile at <test_directory>/logs/test##.log
 	   2. delete the test file <test_directory>/testfiles/test##
 	   3. create-open the file <test_directory>/testfiles/test## for testing
-	   4. spawn 3 (default; configurable) threads
+	   4. writes non-zero data to the first 0x300 (default; configurable) bytes
+	   5. enter the test cgroup
+	   6. spawn 3 (default; configurable) threads
+
+	    ONCE: all threads will wait while the main process measures current memory usage
+		and continues once it sees that the main process has set the 'hard limit'
+
 	    the threads will work together to write as much as 300 MiB (default; configurable)
 		of non-zero data to the testfile, beginning at offset 0x300 (default; configurable)
 	    a. all threads will wait at a barrier for synchronization
@@ -42,28 +48,36 @@
 
 	    ?. exit after writing its portions of the test file
 
-	   5. the test process waits for completion of the child threads
-	   6. close the test file
-	   7. verify that the contents of the file are non-zero
+	   7. the test process waits for completion of the child threads
+	   8. close the test file
+	   9. verify that the contents of the file are non-zero
 	    a. if bug is reproduced:
 	      (1) set a flag to denote successful reproduction
 	    b. if bug is not reproduced:
 	      (1) clear the state of the threads
 	      (2) loop back to '2' above for as many as 100 (default; configurable) attempts
 
-	   (after bug is reproduced or test count is exhausted)
-	   8. close the logfile
-	   9. exit
+	   (after bug is reproduced, test count is exhausted, or instructed by main process)
+	   10. close the logfile
+	   11. exit
 
-	 D. main process waits for test process exit
+	 D. ONCE: wait for all threads to start and set cgroup limits:
+	  1. read from the cgroup's "current memory usage" file -> 'mem_min'
+	  2. set the cgroup's soft limit (v1: memory.soft_limit_in_bytes, v2: memory.high)
+		to the value:  mem_min + (mem_min / 2)
+	  3. set the cgroup's hard limit (v1: memory.limit_in_bytes, v2: memory.max)
+		to the value:  mem_min * 2
+
+	 E. main process waits for test process exit
 	  1. every 1 second (default; configurable) output message giving the status of the
 		testing, including the number of running processes, total attempts to
 		replicate the bug, and number of processes which have replicated it
-	 E. examine the process's flag which denotes whether reproduction was successful
+	 F. restarts test processes if they they exited on an error
+	 G. examine the process's flag which denotes whether reproduction was successful
 	   1. if bug is reproduced:
 	     a. sets a global flag to indicate that all processes and threads should exit
-	 F. wait for all test processes to exit
-	 G. count the number of successful tests
+	 H. wait for all test processes to exit
+	 I. count the number of successful tests
 
 
 	Program can be interrupted, and test processes should exit.
@@ -120,17 +134,17 @@
 #define DEFAULT_OFF_0		(768UL)
 
 #define DEFAULT_BUF_SIZE	(MiB)
-#define MIN_BUF_SIZE		(128ULL)
+#define MIN_BUF_SIZE		(128ULL) // arbitrary, but we should make _some_ limit
 #define MAX_BUF_SIZE		(MAX_FILE_SIZE)
 
-#define DEFAULT_FILE_SIZE	(300ULL * MiB + DEFAULT_OFF_0) /* was based on size of buffer * a constant '500' + the offset */
+#define DEFAULT_FILE_SIZE	(300ULL * MiB + DEFAULT_OFF_0)
 #define MIN_FILE_SIZE		(4ULL * KiB)
-#define MAX_FILE_SIZE		(10 * GiB)
+#define MAX_FILE_SIZE		(10 * GiB) // arbitrary, but there ought to be a limit
 
 #define DEFAULT_UPDATE_DELAY_S	(1)
 #define DEFAULT_UPDATE_DELAY_US	(0)
 
-#define TSTAMP_BUF_SIZE		(32)
+#define TSTAMP_BUF_SIZE		(32) // string at least long enough to contain timestamp:  YYYY-MM-DD HH:MM:SS.sssssssss'
 #define DUMP_BYTE_COUNT		(128)
 
 #define GETDENTS_BUF_SIZE	(64ULL * KiB)
@@ -175,13 +189,13 @@ typedef bool (*tbarrier_csncel_func_t)(void);
 struct pthread_tbarrier {
 	pthread_cond_t cond;
 	pthread_mutex_t lock;
-	struct timespec freq;
+	struct timespec freq; // how long to wait between calls to ->cancel function to check whether to break out
 
 	uint32_t target_count;
 	uint32_t threads_left; // alternatively, current_wait_count
 	uint32_t cycle;
 	bool initialized;
-	tbarrier_csncel_func_t cancel;
+	tbarrier_csncel_func_t cancel; // function to call to check whether to break out of the barrier wait
 };
 typedef struct pthread_tbarrier pthread_tbarrier_t;
 
