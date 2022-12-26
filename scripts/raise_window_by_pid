@@ -8,13 +8,128 @@
 #     with the X window ID, or the X window ID associated with an
 #     ancestor pid of <PID>
 
-pid=${1:-}
+
+me=$0
+me_exe=$(basename "$me")
+me_dir=$(dirname "$me")
+
+
 declare -a ppids
 declare -a pid_windows
 declare -a to_raise
 declare -a pids_found
 declare -a pids_not_found
+declare -A cwds_assoc=()
+declare -a cwds
+
 verbosity=0
+
+
+usage_exit() {
+	echo "usage:  $0 <PATTERN> [ <PATTERN> ... ]"
+	exit $1
+}
+[[ $# -eq 0 ]] && usage_exit 1
+
+
+proc_pid_cwd_to_pid() {
+	local OIFS=$IFS
+	IFS='/ '
+	local tmp=($1)
+	[[ ${tmp[2]} =~ ^[0-9]+$ ]] && echo ${tmp[2]}
+	IFS=$OIFS
+}
+
+
+
+build_pid_cwds() {
+
+	for pid_cwd in /proc/*/cwd ; do
+		local cwd=$(readlink -f $pid_cwd)
+		[[ -z $cwd ]] && continue
+
+		local pid=$(proc_pid_cwd_to_pid $pid_cwd)
+		[[ $pid -eq $$ ]] && continue
+
+		cwds[$pid]="$cwd"
+		local new_val="${cwds_assoc[$cwd]} $pid"
+		cwds_assoc["$cwd"]=$new_val
+
+	done
+}
+check_pwd_pattern() {
+	local cwd
+	local pids
+
+#	for pid_cwd in "${cwds[@]}" ; do
+	for cwd in "${!cwds_assoc[@]}" ; do
+		if [[ $cwd =~ $1 ]] ; then
+			pids="$pids ${cwds_assoc[$cwd]}"
+		fi
+	done
+	[[ -n $pids ]] && { echo $pids ; return 0 ; }
+	return 1
+}
+
+
+raise_by_pwd() {
+#if [[ $me_exe == "raise_window_by_pwd" ]] ; then
+#	[[ $# -eq 0 ]] && {
+#		echo "usage: $0 <directory>" >&2
+#		exit 1
+#	}
+	declare -a cwds=($@)
+	declare -A cwds_assoc=()
+	for i in $(seq 0 $(( ${#cwds[@]} - 1 )) ) ; do
+
+
+		cwds_assoc[${cwds[$i]}]=1
+	done
+
+	pid_cwds=$(echo /proc/*/cwd)
+
+#	for pid_cwd in $pid_cwds ; do
+
+
+
+
+	pids=$(
+		for pid_cwd in $pid_cwds ; do
+			cwd=$(readlink -f $pid_cwd)
+			[[ -z $cwd ]] && continue
+			if [[ -n ${cwds_assoc[$cwd]} ]] ; then
+				proc_pid_cwd_to_pid $pid_cwd
+			else
+				for pat in "${cwds[@]}" ; do
+					if [[ $cwd =~ $pat ]] ; then
+						proc_pid_cwd_to_pid $pid_cwd
+						break
+					fi
+				done
+			fi
+		done
+	)
+
+	echo "directory patterns match $(echo $pids | wc -w) pids" >&2
+#	echo $pids | egrep -v self | sort -u | paste -s - -d' '
+
+	[[ -z $pids ]] && {
+		echo "no pids found using the given patterns" >&2
+		return 1
+	}
+	echo $pids
+	return 0
+	$me_dir/raise_window_by_pid $pids
+	exit
+} # end of raise_by_pwd
+
+
+
+
+
+
+
+pid=${1:-}
 
 [[ -z $pid ]] && {
 	echo "usage: $0 <pid>" >&2
@@ -39,6 +154,7 @@ trim_running_pids() {
 	ps h -p "$pids_string" -o pid:11
 }
 get_pid_windows() {
+	local window_id foo1 pid foo2
 	while read window_id foo1 pid foo2 ; do
 		if [[ -z ${pid_windows[$pid]} ]] ; then
 			pid_windows[$pid]=$window_id
@@ -48,21 +164,12 @@ get_pid_windows() {
 	done <<< "$(wmctrl -lp)"
 }
 get_ppids() {
+	local pid ppid
 	while read pid ppid ; do
 		ppids[$pid]=$ppid
 	done <<< "$(ps h ax -o pid:1,ppid:1)"
 }
 
-running_pids=$(trim_running_pids "$*")
-[[ -z $running_pids ]] && {
-	[[ $verbosity -ge 0 ]] && echo "no pids found" >&2
-	exit 1
-}
-
-[[ $verbosity -ge 1 ]] && echo "pids: " $running_pids >&2
-
-get_pid_windows
-get_ppids
 
 mark_pids_found() {
 	local p
@@ -133,12 +240,155 @@ find_pid_window_ids() {
 	[[ $verbosity -ge 0 ]] && echo "unable to locate a window id for pid $pid" >&2
 }
 
-for pid in $running_pids ; do
-	find_pid_window_ids $pid
+raise_by_pid() {
+	for pid in $running_pids ; do
+		find_pid_window_ids $pid
+	done
+
+	if [[ ${#to_raise[*]} -gt 0 ]] ; then
+		raise_window_ids ${to_raise[*]}
+	else
+		[[ $verbosity -ge 0 ]] && echo "could not locate any windows to raise" >&2
+	fi
+
+}
+
+
+
+
+get_pid_windows
+get_ppids
+build_pid_cwds
+
+pwd_args_count=0
+cmd_args_count=0
+cmd_maybe_pwd_count=0
+pid_args=""
+
+declare -a pwd_args
+declare -a cmd_args
+declare -a cmd_maybe_pwd_args
+
+DIGITS_RE="^[0-9]+$"
+
+while [[ $# -gt 0 ]] ; do
+	arg=$1 ; shift
+
+	if [[ $arg =~ $DIGITS_RE ]] ; then
+		pid_args="$pid_args $arg"
+		echo "$arg is a pid arg"
+
+		continue
+	fi
+
+	if [[ -e $arg ]] ; then # is this a file/directory/etc.?
+		path=$(readlink -f "$arg")
+		new_pids=$(fuser "$path" 2>/dev/null)
+		[[ -z $new_pids ]] && break # couldn't find any here
+
+		pid_args="$pid_args $new_pids"
+		echo "$arg is a path - pids: $new_pids"
+
+		continue
+	fi
+
+	if [[ $arg =~ / ]] ; then # probably a partial path ... check cwds
+		if new_pids=$(check_pwd_pattern "$arg") ; then
+			pid_args="$pid_args $new_pids"
+			echo "$arg matches pwds for $new_pids"
+			continue
+		fi
+	fi
+
+	if pids=$(pgrep -f "$arg") ; then
+		pid_args="$pid_args $pids"
+
+		echo "$arg looks like a process string - pids: $pids"
+		continue
+	fi
+
+	echo "could not find a match for '$arg'"
+
+#		pwd_args[$pwd_args_count]=$arg
+#		pwd_args_count=$(($pwd_args_count + 1))
+
+#		echo "treating $arg as a CWD arg"
+
+	
+
+
+
+#		continue
+#	fi
+
+
 done
 
-if [[ ${#to_raise[*]} -gt 0 ]] ; then
-	raise_window_ids ${to_raise[*]}
-else
-	[[ $verbosity -ge 0 ]] && echo "could not locate any windows to raise" >&2
-fi
+[[ -z $pid_args ]] && {
+	echo "could not find any pids"
+	exit
+}
+
+running_pids=$(trim_running_pids $pid_args)
+[[ -z $running_pids ]] && {
+	echo "could not find any running pids"
+	usage_exit
+}
+[[ $verbosity -ge 0 ]] && echo "trying to raise windows for running pids: $running_pids" >&2
+
+
+raise_by_pid "$running_pids"
+
+
+
+exit
+
+
+	for pid in $running_pids ; do
+		find_pid_window_ids $pid
+	done
+
+	if [[ ${#to_raise[*]} -gt 0 ]] ; then
+		raise_window_ids ${to_raise[*]}
+	else
+		[[ $verbosity -ge 0 ]] && echo "could not locate any windows to raise" >&2
+	fi
+
+	if [[ ${arg:0:1} == "/" ]] && [[ -f $arg ]] ; then # file
+
+
+
+	elif [[ $arg =~ / ]] && [[ ${arg:0:1} == "/" ]] && ; then
+
+
+
+
+
+exit
+
+
+
+	$ RE="^[0-9]+$"
+[sorenson@bearskin bin]$ [[ $foo =~ $RE ]] && echo true
+true
+
+
+
+
+done
+
+
+
+
+running_pids=$(trim_running_pids "$*")
+[[ -z $running_pids ]] && {
+	[[ $verbosity -ge 0 ]] && echo "no pids found" >&2
+	exit 1
+}
+
+[[ $verbosity -ge 1 ]] && echo "pids: " $running_pids >&2
+
+
+
+
+
