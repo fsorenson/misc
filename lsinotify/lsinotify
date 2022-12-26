@@ -1,0 +1,702 @@
+#!/usr/bin/perl -w
+
+use strict;
+use warnings;
+
+use File::Find;
+no warnings 'File::Find';
+use File::stat;
+
+use Getopt::Long;
+use Data::Dumper;
+
+my $pid_grp_mntns = ();
+my %pids = ();
+# $pids{847}{5} = (
+# 	'dev' => 0xfd00002,
+# 	'ino' => 0x80ad337,
+# 	'mask' => 0xfce,
+# $pid_info{pid}{fd}{wd}
+#my %pids = (
+#	'847' => (
+#		'nsid' => '...',
+#		'comm' => '...',
+#		...
+#		'fds' => (
+#			'5' => (
+#				'1' => ( # wd
+#					'dev' => 0xfd00002,
+#					'ino' => 0x80ad337,
+#					'mask' => 0xfce,
+#				),
+#			),
+#	),
+#);
+my %nsids = (
+	'mnt' => {}
+);
+
+my %pid_grps = ();  # pid -> pid_grp
+#my %mnt_ns = ();  # mnt_ns -> pid_grp
+#my %mnt_ns = \$nsids{'mnt'};  # mnt_ns -> pid_grp
+my $mnt_ns = \$nsids{'mnt'};  # mnt_ns -> pid_grp
+my %watches = ();
+#	my %watches = {
+#		# device
+#		0xfd00002 => (
+#			# inum
+#			0x80ad337 => [
+#				{ 'pid' => 847, 'fd' => 5, 'wd' => 1 },
+#			],
+#		)
+
+my %paths;
+#	my %paths = {
+#		# device
+#		0xfd00002 => (
+#			# inum
+#			0x80ad337 => '/path/to/file'
+
+
+
+use constant { true => 1, false => 0 };
+
+
+use constant {
+	IN_ACCESS => 0x00000001,
+	IN_MODIFY => 0x00000002,
+	IN_ATTRIB => 0x00000004,
+	IN_CLOSE_WRITE => 0x00000008,
+	IN_CLOSE_NOWRITE => 0x00000010,
+	IN_OPEN => 0x00000020,
+	IN_MOVED_FROM => 0x00000040,
+	IN_MOVED_TO => 0x00000080,
+	IN_CREATE => 0x00000100,
+	IN_DELETE => 0x00000200,
+	IN_DELETE_SELF => 0x00000400,
+	IN_MOVE_SELF => 0x00000800,
+	IN_UNMOUNT => 0x00002000,
+	IN_Q_OVERFLOW => 0x00004000,
+	IN_IGNORED => 0x00008000,
+	IN_ONLYDIR => 0x01000000,
+	IN_DONT_FOLLOW => 0x02000000,
+	IN_EXCL_UNLINK => 0x04000000,
+	IN_MASK_CREATE => 0x10000000,
+	IN_MASK_ADD => 0x20000000,
+	IN_ISDIR => 0x40000000,
+	IN_ONESHOT => 0x80000000,
+};
+use constant {
+	IN_CLOSE => (IN_CLOSE_WRITE | IN_CLOSE_NOWRITE),
+	IN_MOVE => (IN_MOVED_FROM | IN_CLOSE_NOWRITE),
+	IN_ALL_EVENTS => (IN_ACCESS | IN_MODIFY | IN_ATTRIB | IN_CLOSE_WRITE |
+                          IN_CLOSE_NOWRITE | IN_OPEN | IN_MOVED_FROM |
+                          IN_MOVED_TO | IN_CREATE | IN_DELETE |
+                          IN_DELETE_SELF | IN_MOVE_SELF)
+
+};
+
+my @inotify_flags_ordered = ( IN_ALL_EVENTS, IN_CLOSE, IN_MOVE,
+	IN_ACCESS, IN_MODIFY, IN_ATTRIB, IN_CLOSE_WRITE,
+	IN_CLOSE_NOWRITE, IN_OPEN, IN_MOVED_FROM, IN_MOVED_TO, IN_CREATE,
+	IN_DELETE, IN_DELETE_SELF, IN_MOVE_SELF, IN_UNMOUNT, IN_Q_OVERFLOW,
+	IN_IGNORED, IN_ONLYDIR, IN_DONT_FOLLOW, IN_EXCL_UNLINK, IN_MASK_CREATE,
+	IN_MASK_ADD, IN_ISDIR, IN_ONESHOT, IN_CLOSE, IN_MOVE
+);
+my %inotify_flags = (
+	IN_ALL_EVENTS() => "IN_ALL_EVENTS",
+	IN_CLOSE() => "IN_CLOSE",
+	IN_MOVE() => "IN_MOVE",
+	IN_ACCESS() => "IN_ACCESS",
+	IN_MODIFY() => "IN_MODIFY",
+	IN_ATTRIB() => "IN_ATTRIB",
+	IN_CLOSE_WRITE() => "IN_CLOSE_WRITE",
+	IN_CLOSE_NOWRITE ()=> "IN_CLOSE_NOWRITE",
+	IN_OPEN ()=> "IN_OPEN",
+	IN_MOVED_FROM() => "IN_MOVED_FROM",
+	IN_MOVED_TO() => "IN_MOVED_TO",
+	IN_CREATE() => "IN_CREATE",
+	IN_DELETE() => "IN_DELETE",
+	IN_DELETE_SELF() => "IN_DELETE_SELF",
+	IN_MOVE_SELF() => "IN_MOVE_SELF",
+	IN_UNMOUNT() => "IN_UNMOUNT",
+	IN_Q_OVERFLOW() => "IN_Q_OVERFLOW",
+	IN_IGNORED() => "IN_IGNORED",
+	IN_ONLYDIR() => "IN_ONLYDIR",
+	IN_DONT_FOLLOW() => "IN_DONT_FOLLOW",
+	IN_EXCL_UNLINK() => "IN_EXCL_UNLINK",
+	IN_MASK_CREATE() => "IN_MASK_CREATE",
+	IN_MASK_ADD() => "IN_MASK_ADD",
+	IN_ISDIR() => "IN_ISDIR",
+	IN_ONESHOT() => "IN_ONESHOT",
+);
+
+sub inotify_events_string {
+	my $mask = shift;
+	my @events;
+
+	for my $i (0..$#inotify_flags_ordered) {
+		my $event_val = $inotify_flags_ordered[$i];
+
+		if (($mask & $event_val) == $event_val) {
+			push @events, $inotify_flags{$event_val};
+			$mask = $mask & (~$event_val);
+		}
+	}
+	push(@events, sprintf("0x%08x", $mask)) if ($mask);
+	return join '|', @events;
+}
+
+
+$|++;
+
+my %config = (
+	'match_mp' => false,
+	'match_mnt_src' => false,
+	'match' => '',
+	'show_all' => false,
+	'verbose' => false,
+);
+
+GetOptions(
+	'mp=s' => sub {
+		$config{'match_mp'} = true;
+		$config{'match_mnt_src'} = false;
+		$config{'show_all'} = false;
+		$config{'match'} = $_[1];
+	},
+	'dev=s', => sub {
+		$config{'match_mp'} = false;
+		$config{'match_mnt_src'} = true;
+		$config{'show_all'} = false;
+		$config{'match'} = $_[1];
+	},
+);
+$config{'show_all'} = true if (! $config{'match_mp'} && ! $config{'match_mnt_src'});
+
+
+my %pats = (
+	'numbers' => '([0-9]+)',
+	'maj_min' => '([0-9]+:[0-9]+)',
+	'field' => '([^ ]+)',
+	'optional' => '( .+)?',
+	'mount_opts' => '[^ ]+',
+	'tag' => 'shared|master|propagate_from|unbindable',
+#	'pid_state' => '[RSDZTtWXxKWPI]',
+	'pid_state' => '([a-zA-Z])',
+);
+
+my @stat_fields = ('f_type', 'f_bsize', 'f_blocks', 'f_bfree', 'f_bavail', 'f_files', 'f_ffree', 'f_fsid', 'f_namelen', 'f_frsize', 'f_flags');
+
+my @proc_pid_stat_fields = ('st_pid', 'comm', 'state', 'ppid', 'pgrp', 'session', 'tty_nr', 'tpgid', 'flags', # 1-9
+	'minflt', 'cminflt', 'majflt', 'cmajflt', 'utime', 'stime', 'cutime', 'cstime', 'prio', # 10-17
+	'nice', 'num_threads', 'itrealvalue', 'starttime', 'vsize', 'rss', 'rsslim',
+	'startcode', 'endcode', 'startstack', 'kstkesp', 'ksteip', 'sig', 'blocked',
+	'sigignore', 'sigcatch', 'wchan', 'nswqp', 'cnswap', 'exit_sig', 'processor',
+	'rt_pro', 'policy', 'delayacct_blkio_ticks', 'guest_time', 'cguest_time',
+	'start_data', 'end_data', 'start_brk', 'arg_start', 'arg_end', 'env_start',
+	'env_end', 'exit_code');
+
+my @proc_pid_mountinfo_fields = ( 'mount_id', 'parent_id', 'maj_min', 'root', 'mp', 'mount_opts', 'optional', 'fstype', 'source', 'super_opts' );
+
+#my $proc_pid_stat_splitter = qr/^([^ ]+) (.+)$/;
+my $proc_pid_stat_splitter = qr/^$pats{'numbers'} \((.*)\) $pats{'pid_state'} ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) (.+)$/;
+
+
+#36 35 98:0 /mnt1 /mnt2 rw,noatime master:1 - ext3 /dev/root rw,errors=continue
+#(1)(2)(3)   (4)   (5)      (6)      (7)   (8) (9)   (10)         (11)
+my $proc_pid_mountinfo_splitter = qr/$pats{'numbers'} $pats{'numbers'} $pats{'maj_min'} $pats{'field'} $pats{'field'} $pats{'field'}$pats{'optional'} - $pats{'field'} $pats{'field'} $pats{'field'}$/;
+
+sub split_mountinfo_line {
+	my $line = shift;
+
+	if (my @matches = $line =~ $proc_pid_mountinfo_splitter) {
+		my %match; map { $match{$proc_pid_mountinfo_fields[$_]} = $matches[$_] } (0..$#matches);
+		return \%match;
+	}
+	return undef;
+}
+
+# match a field of mountinfo
+sub match_pid_mountinfo_field {
+	my $pid = shift;
+	my $match_field = shift;
+	my $match_val = shift;
+
+	my @ret = ();
+
+	open my $fh, '<', "/proc/$pid/mountinfo", or return '';
+	my $content = do { local $/; <$fh> };
+	close($fh);
+	my @lines = split '\n', $content;
+
+
+	for my $line (@lines) {
+#		my %match;
+#		if (my ($mount_id, $parent_id, $maj_min, $root, $mp, $mount_opts, $optional, $fstype, $source, $super_opts) = $line =~ $proc_pid_mountinfo_splitter) {
+#		if (($match{'mount_id'}, $match{'parent_id'}, $match{'maj_min'}, $match{'root'}, $match{'mp'}, $match{'mount_opts'}, $match{'optional'}, $match{'fstype'}, $match{'source'}, $match{'super_opts'}) = $line =~ $proc_pid_mountinfo_splitter) {
+
+		if (my @matches = $line =~ $proc_pid_mountinfo_splitter) {
+#			my %match ; map { $match{$proc_pid_mountinfo_fields[$_]} = $matches[$_] } (0..$#matches);
+#			my %match = { map { printf "iterator is '%s', field is '%s', value is '%s'\n", $_, $proc_pid_mountinfo_fields[$_], $matches[$_]; $match{$proc_pid_mountinfo_fields[$_]} = $matches[$_] } (0..$#matches) };
+			my %match ; map { $match{$proc_pid_mountinfo_fields[$_]} = $matches[$_] } (0..$#matches);
+
+			push @ret, $line if ($match_val eq $match{$match_field});
+		}
+	}
+	return join '\n', @ret;
+}
+sub match_pid_mountinfo_source {
+	return match_pid_mountinfo_field($_[0], 'source', $_[1]);
+}
+sub match_pid_mountinfo_mountpoint {
+	return match_pid_mountinfo_field($_[0], 'mp', $_[1]);
+}
+sub match_pid_mountinfo_majmin {
+	return match_pid_mountinfo_field($_[0], 'maj_min', $_[1]);
+}
+
+sub foo1 {
+	my $c = 0;
+	while (<>) {
+		chomp;
+		if (my @matches = $_ =~ $proc_pid_mountinfo_splitter) {
+#		if (my ($mount_id, $parent_id, $maj_min, $root, $mp, $mount_opts, $optional, $fstype, $source, $super_opts) = $_ =~ $proc_pid_mountinfo_splitter) {
+			my $i = 0;
+
+			printf ">> %s\n", $_;
+			foreach my $val (@matches) {
+				if (defined $val) {
+					$val =~ s/\\([0-7]{1,3})/chr oct $1/ge;
+					printf "\t%d: %s\n", $i, $val;
+				} else {
+					printf "\t%d: NO VALUE\n", $i;
+				}
+				$i++;
+			}
+			printf "\n";
+		} else {
+			printf "no match: %s\n", $_;
+		}
+
+		$c++;
+		exit if ($c >= 40000);
+	}
+	exit;
+}
+
+sub output_file_contents {
+	my $filename = shift;
+	my $indent = shift;
+
+	$indent = "" if !defined $indent;
+
+	open my $fh, '<', $filename, or return -1;
+	while (<$fh>) {
+		printf "%s%s", $indent, $_;
+	}
+	close $fh;
+}
+
+sub get_proc_pid_nsid {
+	my $pid = shift;
+	my $type = shift;
+
+	if (my $lnk = readlink "/proc/$pid/ns/$type") {
+		if (my ($nsid) = $lnk =~ /^$type\[([0-9]+)\]$/) {
+# TODO: make generic
+			$pids{$pid}{"mnt_nsid"} = $nsid;
+
+#			$nsids{$type}{$nsid} = (
+#				'pids' => [],
+#				'pid_grps' => (),
+#			) if !defined $nsids{$type}{$nsid};
+#			push $nsids{'mnt_nsid'}{'pid_grps'}, $pid_grp
+
+			$nsids{$type}{$nsid}{'pids'}{$pid} = 1;
+			$nsids{$type}{$nsid}{'pid_grps'}{$pids{$pid}{'pgrp'}} = 1;
+
+
+		}
+	}
+}
+sub get_pid_info {
+	my $pid = shift;
+
+	open my $fh, '<', "/proc/$pid/stat", or return -1;
+	my $content = do { local $/; <$fh> };
+	close($fh);
+
+	if (my @vals = ($content =~ $proc_pid_stat_splitter)) {
+		$pids{$pid} = {};
+		$pids{$pid} = { map { $proc_pid_stat_fields[$_] => $vals[$_] } (0..$#vals ) }; #
+	} else {
+		printf "ERROR: pid %d could not match the proc_pid_stat_splitter:\n", $pid;
+		printf "\t%s\n", $content;
+		return -1;
+	}
+#	get_proc_pid_nsid($pid, 'mnt'); # TODO: track namespaces?
+	return 0;
+}
+
+sub read_fd_watches {
+	my $pid = shift;
+	my $fd = shift;
+
+#	printf "reading watches for pid %d (%s) fd %d\n", $pid, $pids{$pid}{'comm'}, $fd;
+
+	my $filename = "/proc/$pid/fdinfo/$fd";
+
+	open my $fh, '<', $filename, or return -1;
+	my $content = do { local $/; <$fh> };
+	close($fh);
+
+#	my $splitter = qr/^inotify wd:([0-9]+) ino:([0-9a-f]+) sdev:([0-9a-f]+) mask:([0-9a-f]+) ignored_mask:([0-9a-f]+)(.*)$/;
+	my $splitter = qr/^inotify\s+wd:([0-9a-f]+)\s+ino:([0-9a-f]+)\s+sdev:([0-9a-f]+)\s+mask:([0-9a-f]+)(.*)$/;
+#	my $splitter = qr/^inotify\s+wd:(.+)$/;
+#	inotify wd:2 ino:80008b5 sdev:fd00001 mask:300 ignored_mask:0 fhandle-bytes:c fhandle-type:81 f_handle:b50800080000000052ef0892
+#	inotify wd:12 ino:2c03b002 sdev:fd00004 mask:fce ignored_mask:0 fhandle-bytes:c fhandle-type:81 f_handle:02b0032c0000000017162f2b
+
+        my @lines = split '\n', $content;
+        for my $line (@lines) {
+#printf "checking: *%s*\n", $line;
+		if (my ($wd, $ino, $sdev, $mask, $remainder) = $line =~ $splitter) {
+			$wd = hex $wd;
+#printf "  watch descriptor %d\n", $wd;
+			$ino = hex $ino;
+
+			my $major = (hex $sdev) >> 20;
+			my $minor = (hex $sdev) & 0xfffff;
+			$sdev = "$major:$minor";
+			$mask = hex $mask;
+
+			$watches{$sdev}{$ino} = () if !defined $watches{$sdev}{$ino};
+			push @{$watches{$sdev}{$ino}}, {
+				'pid' => $pid,
+				'fd' => $fd,
+				'wd' => $wd,
+				'mask' => $mask,
+			};
+
+			get_pid_info($pid) if (!defined $pids{$pid});
+
+			$pids{$pid}{'fds'}{$fd}{$wd} = {
+				'dev' => $sdev,
+				'ino' => $ino,
+				'mask' => $mask,
+			};
+		}
+	}
+}
+
+# gather relevant info for a particular pid:fd
+sub get_proc_pid_fd_info {
+	my $pid = shift;
+	my $fd = shift;
+
+#	printf "getting info for proc %d fd %d\n", $pid, $fd;
+
+	my $lnk = readlink "/proc/$pid/fd/$fd";
+
+	return if !defined $lnk; # no longer exists?
+
+	if ($lnk eq "anon_inode:inotify") {
+
+#		$pids{$pid}{'fds'}{$fd}{'wds'} = ();
+		# read from /proc/$pid/fdinfo/$fd
+		# get watch descriptor, inode #, device, mask, etc.
+		# build tree of watchded devices & inodes
+		read_fd_watches($pid, $fd);
+	} # TODO: fanotify
+	# TODO: any other fd types?
+
+	return;
+}
+
+sub find_inotify_fds {
+	my $path = shift;
+
+	return if $path eq "/proc";
+
+#	printf "finding inotify fds for $path\n";
+
+	my @path_elements = split('/', substr($path, 1));
+	my $path_elements_count = scalar @path_elements;
+#	printf "*%s* has %d elements\n", $path, $path_elements_count;
+
+	return if ($path_elements_count < 2);
+
+	if ($path_elements_count == 2) {
+		if (!($path_elements[1] =~ /^[0-9]+$/)) {
+			$File::Find::prune = 1;
+			return;
+		}
+	}
+	my $pid = $path_elements[1];
+
+#if ($pid == 2 && $path_elements_count >= 2) {
+
+	if ($path_elements_count == 2) {
+#printf "getting pid info for %s\n", $pid;
+#		get_pid_info($pid);
+		return;
+	}
+
+
+	if ($path_elements_count == 3) {
+
+#		if (defined($pids{$pid}{'fds'})) { # already found 'fd' or 'fdinfo' ... now we're on the other -- only helps if we found inotify fds already
+#		if (defined($pids{$pid}{'fds'})) { # already found 'fd' or 'fdinfo' ... now we're on the other -- only helps if we found inotify fds already
+		if (defined $pids{$pid} && defined($pids{$pid}{'fds'})) { # already found 'fd' or 'fdinfo' ... now we're on the other -- only helps if we found inotify fds already
+			$File::Find::prune = 1;
+			return;
+		}
+
+#		if ($path_elements[2] eq
+		if ($path_elements[2] ne "fdinfo") {
+			$File::Find::prune = 1;
+			return;
+		}
+#		if (($path_elements[2] eq "fdinfo") || ($path_elements[2] eq "fd")) {
+#			$pids{$pid}{'fds'} = ();
+#			return;
+#		}
+		# any other files/subdirectories?
+#		$File::Find::prune = 1;
+		return;
+	}
+
+
+	if ($path_elements_count == 4) {
+#		if (($path_elements[2] eq "fdinfo") || ($path_elements[2] eq "fd")) {
+		if ($path_elements[2] eq "fdinfo") {
+			# we'd better have /proc/<PID>/fd(|info)/<FD> now
+			my $fd = $path_elements[3];
+			get_proc_pid_fd_info($pid, $fd);
+		}
+		# TODO: any other files/directories?
+
+		$File::Find::prune = 1;
+	}
+	if ($path_elements_count > 4) { # should not have gotten here
+		$File::Find::prune = 1;
+		return;
+	}
+	# prune everything else (if there is anything)
+#	$File::Find::prune;
+#	get_proc_pid_fd_info($pid, $fd);
+
+}
+sub find_inums {
+	my $mp = shift;
+	my $maj_min = shift;
+	my @inums = @_;
+
+	my %inums_to_find;
+	my %inums_found;
+
+	printf "finding inode numbers on %s\n", $mp;
+
+	if ($mp eq '/home/sos' || $mp eq '/' || $mp eq '/home/sorenson') {
+		printf "found: %d; not found: %d\n", scalar %inums_found, scalar %inums_to_find if (scalar %inums_to_find);
+
+	}
+
+#	{ map { printf "adding #%d inum %d\n", $_, $inums[$_]; $inums_to_find{$inums[$_]} = 1 } (0..$#inums) };
+	map { $inums_to_find{$inums[$_]} = 1 } (0..$#inums);
+	my $search_stats = lstat($mp);
+	my $search_dev = $search_stats->dev;
+
+
+
+if (0) {
+	for my $inum (@inums) {
+		printf "    looking for device %s inode number %d, watched by:\n", $maj_min, $inum;
+
+		for my $watch (@{$watches{$maj_min}{$inum}}) {
+			printf "        pid %d (%s), fd %d, wd %d, mask %x (%s)\n",
+				$watch->{'pid'}, $pids{$watch->{'pid'}}{'comm'},
+				$watch->{'fd'}, $watch->{'wd'}, $watch->{'mask'},
+				inotify_events_string($watch->{'mask'});
+		}
+	}
+}
+
+	find( {
+		wanted => sub {
+			my $path = $File::Find::name;
+#			map { $stats{$stat_fields[$_]} = $stat_a[$_] } (0..$#stat_a);
+
+			if (scalar (keys %inums_to_find) == 0) {
+				$File::Find::prune = 1;
+				return;
+			}
+
+			my $stats = lstat($path);
+			if (!$stats || $stats->dev != $search_stats->dev) {
+				$File::Find::prune = 1;
+				return;
+			}
+			if (defined $inums_to_find{$stats->ino}) {
+#printf "    major_minor %s inode number %d: %s\n", $maj_min, $stats->ino, $path;
+
+if (0) {
+				for my $watch (@{$watches{$maj_min}{$stats->ino}}) {
+					printf "        pid %d (%s), fd %d, wd %d, mask %x (%s)\n",
+						$watch->{'pid'}, $pids{$watch->{'pid'}}{'comm'},
+						$watch->{'fd'}, $watch->{'wd'}, $watch->{'mask'},
+						inotify_events_string($watch->{'mask'});
+
+				}
+}
+
+				$paths{$maj_min}{$stats->ino} = $path;
+				$inums_found{$stats->ino} = $path;
+				delete $inums_to_find{$stats->ino};
+			}
+		},
+		no_chdir => 1
+	}, $mp);
+
+#printf "after find\n";
+
+	printf "found: %d; not found: %d\n", scalar %inums_found, scalar %inums_to_find if (scalar %inums_to_find);
+
+#	print Dumper(@inums);
+#	printf "left to find:\n";
+#	print Dumper(\%inums_to_find);
+
+#	exit;
+#	return;
+#	$asdf{'a'}{'a.1'} = { map { $proc_pid_stat_fields[$_] => $vals[$_] } (0..$#vals ) }; # works
+#	print Dumper(\%inums_to_find);
+}
+
+printf "finding pids, namespaces, and inotify fds\n";
+# build trees of pids and namespaces
+find( {
+	wanted => sub {
+		find_inotify_fds($File::Find::name);
+	},
+}, "/proc");
+
+# get mountpoints for device ids
+
+printf "finding device majors:minors\n";
+my @maj_minors = keys %watches;
+for my $maj_min (@maj_minors) {
+#	my %mountinfo = match_pid_mountinfo_majmin($maj_min);
+	my $mountinfo_line = match_pid_mountinfo_majmin($$, $maj_min);
+
+	my $mountinfo = split_mountinfo_line($mountinfo_line);
+
+	my $mp = $mountinfo->{'mp'};
+
+	my @inums = keys %{$watches{$maj_min}};
+
+#	printf "maj_min %s (%s) has %d inums\n", $maj_min, $mp, scalar @inums;
+	find_inums($mp, $maj_min, @inums);
+}
+
+
+printf "watched files (by pid)\n";
+# print by pid
+for my $pid (sort(keys %pids)) {
+	printf "%d - %s\n", $pid, $pids{$pid}{'comm'};
+
+#               'fds' => (
+#                       '5' => (
+#                               '1' => ( # wd
+#                                       'dev' => 0xfd00002,
+
+
+
+
+	for my $fd (keys %{$pids{$pid}{'fds'}}) {
+#printf "  fd %d\n", $fd;
+		for my $wd (keys %{$pids{$pid}{'fds'}{$fd}}) {
+			my $dev = $pids{$pid}{'fds'}{$fd}{$wd}{'dev'};
+			my $ino = $pids{$pid}{'fds'}{$fd}{$wd}{'ino'};
+			my $mask = $pids{$pid}{'fds'}{$fd}{$wd}{'mask'};
+			my $path = defined($paths{$dev}{$ino}) ? $paths{$dev}{$ino} : "UNKNOWN";
+
+#			printf "Unable to find path for %s %d\n", $dev, $ino if (!defined $paths{$dev}{$ino});
+
+			printf "    %s  %s\n", $path, inotify_events_string($mask);
+		}
+
+#		printf "    %%s - %s\n", $paths{$watch{'dev'}}{$watch{'ino'}}, inotify_events_string($paths{$watch{'dev'}}{$watch{'ino'}}
+#		printf "    %s - %s\n", $paths{$watch->{'dev'}}{$watch->{'ino'}}, inotify_events_string($watch->{'mask'});
+	}
+}
+
+# print by path
+print "watched files (by path)\n";
+
+
+#print Dumper(\%watches);
+exit;
+
+
+
+#printf "%d pid groups found\n", scalar %pid_grps;
+#printf "%d mnt namespaces found\n", scalar %mnt_ns;
+
+foreach my $nsid (keys %{$mnt_ns}){
+	my @ns_pids = @{$mnt_ns->{$nsid}{'pids'}};
+	my @pid_grps = @{$mnt_ns->{$nsid}{'pid_grps'}};
+
+	my $representative_pid = $ns_pids[0];
+
+	if ($config{'show_all'}) {
+		printf "%s - %d pid groups, %d pids\n", $nsid, scalar @pid_grps, scalar @ns_pids;
+		output_file_contents("/proc/$representative_pid/mountinfo", "    ");
+	} elsif ($config{'match_mp'}) {
+		my $ret = match_pid_mountinfo_mountpoint($representative_pid, $config{'match'});
+
+		if ($ret ne '') {
+			printf "%s - %d pid groups, %d pids\n", $nsid, scalar @pid_grps, scalar @ns_pids;
+			printf "    %s\n", $ret;
+		}
+	} elsif ($config{'match_mnt_src'}) {
+		my $ret = match_pid_mountinfo_source($representative_pid, $config{'match'});
+		if ($ret ne '') {
+			printf "%s - %d pid groups, %d pids\n", $nsid, scalar @pid_grps, scalar @ns_pids;
+			printf "    %s\n", $ret;
+		}
+	}
+}
+
+
+exit;
+
+
+my $foo_str = "foo bar baz gah zeb guh";
+my $a1 = "ab cd ef gh ij kl";
+my $a2 = "mn op qr st uv wx";
+my %asdf = (
+	'a' => {
+		'a.1' => {},
+		'a.2' => {},
+	},
+	'b' => {
+		'b.1' => {},
+		'b.2' => {},
+	},
+);
+
+my @vals = split ' ', $a1;
+
+#$asdf{'a'}{'a.1'}{ @proc_pid_stat_fields } = split ' ', $a1; # not working
+#$asdf{'a'}{'a.1'}{ @proc_pid_stat_fields } = @vals; # not working
+#$asdf{'a'}{'a.1'}{ $proc_pid_stat_fields[$_] } = $vals[$_] for (0..$#vals); # works
+$asdf{'a'}{'a.1'} = { map { $proc_pid_stat_fields[$_] => $vals[$_] } (0..$#vals ) }; # works
+
+#{@headers => @strings);
+
+#print Dumper(\%asdf);
+#print Dumper(\%pids);
+
+
+
+
