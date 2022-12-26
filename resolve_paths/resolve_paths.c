@@ -12,6 +12,8 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
+#include <stddef.h>
+#include <inttypes.h>
 #include <limits.h>
 #include <stdbool.h>
 #include <fcntl.h>
@@ -22,6 +24,14 @@
 #include <sys/statfs.h>
 #include <sys/statvfs.h>
 #include <sys/fsuid.h>
+#include <sys/sysmacros.h>
+
+#ifdef STATX_TYPE
+#define HAVE_STATX 1
+#else
+#define HAVE_STATX 0
+#endif
+
 
 int verbosity = 0;
 
@@ -41,11 +51,19 @@ int verbosity = 0;
 	exit(ret); \
 } while (0)
 
+#define free_mem(ptr) do { \
+	if (ptr) \
+		free(ptr); \
+	ptr = NULL; \
+} while (0)
+
 void dedup_slashes(char **old_path) {
 	int len = strlen(*old_path), new_len = 0;
 	int i;
 	unsigned char last_ch = '\0';
 	char *new_path = NULL;
+
+//output("\n - dedup_slashes(\n'%s'\n, length: %d)\n", *old_path, len);
 
 	if (len == 0)
 		goto out;
@@ -67,16 +85,16 @@ void dedup_slashes(char **old_path) {
 	if (new_len != len) {
 		debug_output(1, "removed %d characters\n", len - new_len);
 		output("'%s' => '%s'\n", *old_path, new_path);
-		free(*old_path);
+		free_mem(*old_path);
 		*old_path = strdup(new_path);
 	}
 out:
-	if (new_path)
-		free(new_path);
+//	output("new path: \n'%s'\n, new length: %d\n", *old_path, new_len);
+
+	free_mem(new_path);
 }
 
 struct path_ele;
-
 struct path_ele {
 	char *name;
 	struct path_ele *next;
@@ -109,10 +127,9 @@ struct path_ele *new_ele(const char *name) {
 	return ele;
 }
 void free_ele(struct path_ele *ele) {
-	if (ele && ele->name)
-		free(ele->name);
 	if (ele)
-		free(ele);
+		free_mem(ele->name);
+	free_mem(ele);
 }
 bool path_empty(const struct path_ele *head) {
         return head->next == head;
@@ -132,17 +149,19 @@ int path_len(struct path_ele *head) {
 	}
 	return i;
 }
-
-
 void print_path(struct path_ele *head) {
 	struct path_ele *p;
+	int count = 0;
 
 	if (!head)
 		err_exit(EXIT_FAILURE, "path is null\n");
 
 	p = head->next;
 	while (p != head) {
-		output("/%s", p->name);
+		if (count++ > 0)
+			output("/%s", p->name);
+		else
+			output("%s", p->name);
 		p = p->next;
 	}
 }
@@ -191,14 +210,13 @@ void free_path_list(struct path_ele *head) {
 	while (!path_empty(head))
 		path_del_last(head);
 }
-
 //void path_append(struct path_ele *head, struct path_ele *ele) {
 void path_append(struct path_ele *ele, struct path_ele *head) {
 	path_add_tail(ele, head);
 }
 
 struct path_ele *string_to_path_list(char *path_str) {
-	char *tmp1, *tmp2, *p;
+	char *tmp1 = NULL, *tmp2 = NULL, *p;
 	struct path_ele *head = NULL;
 	struct path_ele *ele = NULL;
 
@@ -220,17 +238,72 @@ struct path_ele *string_to_path_list(char *path_str) {
 			p += strlen(tmp2);
 		}
 		ele = new_ele(tmp2);
-		free(tmp2);
+		free_mem(tmp2);
 		path_append(ele, head);
 	}
-	free(tmp1);
+	free_mem(tmp1);
 	return head;
 }
 
+#define MAX_LOOP_CHECKER_SIZE (32*16) /* 512 */
+//#define MAX_LOOP_CHECK_COUNT	32
+struct loop_checker_struct {
+	uint32_t major;
+	uint32_t minor;
+	uint64_t ino;
+};
+struct loop_checker_hdr {
+	uint32_t count;
+	uint32_t max_count;
+};
+struct loop_checker;
+struct loop_checker {
+	struct loop_checker_hdr;
+//	uint32_t count;
+//	uint32_t max_count;
 
+//	struct loop_checker_struct links_visited[(MAX_LOOP_CHECKER_SIZE - offsetof(struct loop_checker, links_visited)) / sizeof(struct loop_checker_struct)];
+	struct loop_checker_struct links_visited[(MAX_LOOP_CHECKER_SIZE - sizeof(struct loop_checker_hdr)) / sizeof(struct loop_checker_struct)];
+};
+#define MAX_LOOP_CHECK_COUNT ((MAX_LOOP_CHECKER_SIZE - sizeof(struct loop_checker_hdr)) / sizeof(struct loop_checker_struct))
+
+
+//static struct loop_checker *loop_checker = NULL;
+static struct loop_checker loop_checker;
+void init_loop_checker(void) {
+//	int size = sizeof(struct loop_checker) + sizeof(struct loop_checker_struct) * max_count;
+//	loop_checker = malloc(size);
+
+	memset(&loop_checker, 0, sizeof(struct loop_checker));
+//	loop_checker->max_count = max_count;
+	loop_checker.max_count = MAX_LOOP_CHECK_COUNT;
+//	return loop_checker;
+}
+void reset_loop_checker(void) {
+	init_loop_checker();
+}
+/*
+	1/true - is a loop
+	0/false - not a loop
+	-1 - not a loop, but hit max count
+*/
+int symlink_is_loop(struct loop_checker_struct *checkee) {
+	int i;
+
+//	output("checking whether major: %d  minor: %d  ino: %ld is a loop\n", checkee->major, checkee->minor, checkee->ino);
+
+	for (i = 0 ; i < loop_checker.count ; i++) {
+		if (! memcmp(&loop_checker.links_visited[i], checkee, sizeof(struct loop_checker_struct)))
+			return true;
+	}
+	if (loop_checker.count >= loop_checker.max_count)
+		return -1;
+	memcpy(&loop_checker.links_visited[loop_checker.count++], checkee, sizeof(struct loop_checker_struct));
+	return false;
+}
 
 void t_list(void) {
-	char *start_string, *temp_name, *p;
+	char *start_string = NULL, *temp_name = NULL, *p;
 	PATH_HEAD(head);
 	struct path_ele *ele;
 
@@ -260,7 +333,7 @@ output("slash: %s\n", slash);
 		output("component: %s\n", temp_name);
 
 		ele = new_ele(temp_name);
-		free(temp_name);
+		free_mem(temp_name);
 		path_append(ele, &head);
 
 	}
@@ -300,6 +373,99 @@ char mode_type_char(int mode) {
 		default: return '?'; break;
 	}
 }
+char *make_mode_string(char *buf, int mode) {
+	buf[0] = mode_type_char(mode);
+	mode_bits_string(buf + 1, mode);
+	return buf;
+}
+#if 0
+struct fsid_types {
+	unsigned long fsid;
+	const char *name;
+};
+const struct fsid_types fsid_types[] = {
+	{ 0x5a3c69f0, "aafs" },
+	{ 0xadf5, "adfs" },
+	{ 0xadff, "affs" },
+	{ 0x5346414F, "afs" },
+	{ 0x6B414653, "afs" },
+	{ 0x09041934, "anon_indoe" },
+	{ 0x0187, "autofs" },
+	{ 0x13661366, "balloon_kvm" },
+	{ 0x62646576, "bdevfs" },
+	{ 0xcafe4a11, "bff_fs" },
+	{ 0x6c6f6f70, "binderfs" },
+	{ 0x42494e4d, "bin_fmt" },
+	{ 0x73727279, "btrfs" },
+	{ 0x9123683E, "btrfs" },
+	{ 0x63677270, "cgroup2" },
+	{ 0x27e0eb, "cgroup" },
+	{ 0x73757245, "coda" },
+	{ 0x28cd3d45, "cramfs" },
+	{ 0x453dcd28, "cramfs_wend" },
+	{ 0x64646178, "daxfs" },
+	{ 0x64626720, "debugfs" },
+	{ 0x454d444d, "devmem" },
+	{ 0x1cd1, "devpts" },
+	{ 0x444d4142, "dma_buf" },
+	{ 0xf15f, "ecryptfs" },
+	{ 0xde5e81e4, "efivars" },
+	{ 0x414A53, "efs" },
+	{ 0xE0F5E1E2, "erofs" },
+	{ 0xEF53, "ext*" },
+	{ 0xF2F52010, "f2fs" },
+	{ 0xBAD1DEA, "futexfs" },
+	{ 0x00c0ffee, "hostfs" },
+	{ 0xf995e849, "hpfs" },
+	{ 0x958458f6, "hugetlbfs" },
+	{ 0x9660, "isofs" },
+	{ 0x72b6, "jffs" },
+	{ 0x2468, "minix2" },
+	{ 0x2478, "minix2" },
+	{ 0x4d5a, "minix3" },
+	{ 0x137F, "minix" },
+	{ 0x2478, "minix2" },
+	{ 0x4d5a, "minix3" },
+	{ 0x137F, "minix" },
+	{ 0x138F, "minix" },
+	{ 0x4d44, "msdos" },
+	{ 0x11307854, "mtd_inode" },
+	{ 0x564c, "ncp" },
+	{ 0x6969, "nfs" },
+	{ 0x3434, "nilfs" },
+	{ 0x6e736673, "nsfs" },
+	{ 0x7461636f, "ocfs2" },
+	{ 0x9fa1, "openprom" },
+	{ 0x794c7630, "overlay" },
+	{ 0x50495045, "pipefs" },
+	{ 0xc7571590, "ppc_cmm" },
+	{ 0x9fa0, "proc" },
+	{ 0x6165676C, "pstorefs" },
+	{ 0x002f, "qnx4" },
+	{ 0x68191122, "qnx6" },
+	{ 0x858458f6, "ramfs" },
+	{ 0x7655821, "rdtgroup" },
+	{ 0x73636673, "securityfs" },
+	{ 0x52650e4973450e72, "reiserfs" }, /* actually longer, but can't differentiate in 8 bytes */
+	{ 0xf97cff8c, "selinux" },
+	{ 0x43415d53, "smack" },
+	{ 0x517B, "smb" },
+	{ 0x534F434B, "sockfs" },
+	{ 0x73717368, "squashfs" },
+	{ 0x57AC6E9D, "stackend" },
+	{ 0x62656572, "sysfs" },
+	{ 0x01021994, "tmpfs" },
+	{ 0x74726163, "tracefs" },
+	{ 0x15013346, "udf" },
+	{ 0x9fa2, "usrdevice" },
+	{ 0x01021997, "v9fs" },
+	{ 0xabba1974, "xenfs" },
+	{ 0x58465342, "xfs" },
+	{ 0x33, "z3fold" },
+	{ 0x5a4f4653, "zonefs" },
+	{ 0x58295829, "zsmalloc" },
+};
+#endif
 char *fstype(unsigned long fsid) {
 	switch (fsid) {
 		case 0x5a3c69f0: return "aafs"; break;
@@ -384,26 +550,125 @@ char *fstype(unsigned long fsid) {
 	};
 }
 
-struct stat show_stat_info(int fd, struct path_ele *current_path, char *this_name, struct path_ele *remaining_path) {
+struct stat_info_struct {
+	uint64_t size;
+	uint64_t ino;
+	uint64_t mount_id;
+	uint32_t major;
+	uint32_t minor;
+	uid_t uid;
+	gid_t gid;
+	int mode;
+	bool stat_error;
+	bool have_mount_id;
+};
+struct stat_info_struct get_stat_info(int dfd, const char *pathname) {
+	struct stat_info_struct stat_info;
+#if HAVE_STATX
+//	struct statx stx;
+#else
+//	struct stat st;
+#endif
+	memset(&stat_info, 0, sizeof(struct stat_info_struct));
+
+#if HAVE_STATX
+	struct statx stx;
+	if ((statx(dfd, pathname, AT_SYMLINK_NOFOLLOW | (pathname[0] == '\0' ? AT_EMPTY_PATH : 0), STATX_ALL, &stx)) < 0) {
+		stat_info.stat_error = true;
+		goto out;
+	}
+
+	stat_info.uid = stx.stx_uid;
+	stat_info.gid = stx.stx_gid;
+	stat_info.mode = stx.stx_mode;
+	stat_info.ino = stx.stx_ino;
+	stat_info.size = stx.stx_size;
+	stat_info.major = stx.stx_dev_major;
+	stat_info.minor = stx.stx_dev_minor;
+#ifdef STATX_MNT_ID
+	if (stx.stx_mask & STATX_MNT_ID) {
+		stat_info.have_mount_id = true;
+		stat_info.mount_id = stx.stx_mnt_id;
+	}
+#endif /* STATX_MNT_ID */
+#else
+	struct stat st;
+	if ((fstatat(dfd, pathname, &st, AT_SYMLINK_NOFOLLOW | (pathname[0] == '\0' ? AT_EMPTY_PATH : 0))) < 0) {
+		stat_info.stat_error = true;
+		goto out;
+	}
+
+	stat_info.uid = st.st_uid;
+	stat_info.gid = st.st_gid;
+	stat_info.mode = st.st_mode;
+	stat_info.ino = st.st_ino;
+	stat_info.major = major(st.st_dev);
+	stat_info.minor = minor(st.st_dev);
+#endif
+
+out:
+	return stat_info;
+}
+
+struct stat_info_struct show_stat_info(int fd, struct path_ele *current_path, char *this_name, struct path_ele *remaining_path) {
+//	int mode, dev_major, dev_minor;
+//	bool have_mount_id = false;
 	char mode_string[11];
 	struct statfs stfs;
-	struct stat st;
+//	uint64_t inode, mount_id;
+//	uid_t uid, gid;
+	struct stat_info_struct stat_info;
 
+
+/*
+#if HAVE_STATX
+	struct statx stx;
+#else
+	struct stat st;
+#endif
+
+	memset(&stat_info, 0, sizeof(struct stat_info_struct));
+
+#if HAVE_STATX
+	statx(fd, "", AT_EMPTY_PATH|AT_SYMLINK_NOFOLLOW, STATX_ALL, &stx);
+
+	stat_info.uid = stx.stx_uid;
+	stat_info.gid = stx.stx_gid;
+	stat_info.mode = stx.stx_mode;
+	stat_info.ino = stx.stx_ino;
+	stat_info.size = stx.stx_size;
+	stat_info.major = stx.stx_dev_major;
+	stat_info.minor = stx.stx_dev_minor;
+	if (stx.stx_mask & STATX_MNT_ID) {
+		stat_info.have_mount_id = true;
+		stat_info.mount_id = stx.stx_mnt_id;
+	}
+#else
 	fstatat(fd, "", &st, AT_EMPTY_PATH|AT_SYMLINK_NOFOLLOW);
-//		fstatvfs(fd, &stvfs);
+
+	stat_info.uid = st.st_uid;
+	stat_info.gid = st.st_gid;
+	stat_info.mode = st.st_mode;
+	stat_info.ino = st.st_ino;
+	stat_info.major = major(st.st_dev);
+	stat_info.minor = minor(st.st_dev);
+#endif
+*/
+	stat_info = get_stat_info(fd, "");
+	if (stat_info.stat_error)
+		goto out;
+
 	fstatfs(fd, &stfs);
 
 
-	mode_string[0] = mode_type_char(st.st_mode);
-	mode_bits_string(mode_string + 1, st.st_mode);
-//		output("%6s %s ", fstype(stvfs.f_fsid), mode_string);
-	output("%6s %s ", fstype(stfs.f_type), mode_string);
+	output("%6s %s ", fstype(stfs.f_type), make_mode_string(mode_string, stat_info.mode));
 
-	output("uid: %d  gid: %d ", st.st_uid, st.st_gid);
-	output("inode: %ld ", st.st_ino);
+	output("uid: %d  gid: %d ", stat_info.uid, stat_info.gid);
+	output(" maj: %d  min: %d ", stat_info.major, stat_info.minor);
+	if (stat_info.have_mount_id)
+		output(" mount_id: %ld ", stat_info.mount_id);
 
-//	if (path_empty(current_path))
-//		output("/");
+	output(" inode: %ld ", stat_info.ino);
 	print_path(current_path);
 
 	if (this_name)
@@ -414,17 +679,13 @@ struct stat show_stat_info(int fd, struct path_ele *current_path, char *this_nam
 		print_path(remaining_path);
 		output(") ");
 	}
-
-//	output("\n");
-	return st;
+out:
+	return stat_info;
 }
 
 void follow_path(char *path_str) {
 	struct path_ele *current_path, *remaining_path, *tmp_list, *this_ele;
-//	char mode_string[11];
-//	struct statvfs stvfs;
-//	struct statfs stfs;
-	struct stat st;
+	struct stat_info_struct stat_info;
 	int path_count = 0;
 	int dfd, fd;
 
@@ -440,26 +701,8 @@ open_root:
 			output("ELOOP - too many path levels or symbolic links\n");
 			goto out;
 		}
-/*
-		fstatat(dfd, "", &st, AT_EMPTY_PATH|AT_SYMLINK_NOFOLLOW);
-//		fstatvfs(fd, &stvfs);
-		fstatfs(dfd, &stfs);
-
-		mode_string[0] = mode_type_char(st.st_mode);
-		mode_bits_string(mode_string + 1, st.st_mode);
-//		output("%6s %s ", fstype(stvfs.f_fsid), mode_string);
-		output("%6s %s ", fstype(stfs.f_type), mode_string);
-
-		output("uid: %ld  gid: %ld ", st.st_uid, st.st_gid);
-
-		print_path(current_path);
-		output("\n");
-//		output("/%s", this_ele->name);
-
-*/
 		this_ele = path_pop_first(remaining_path);
 
-//		if (fstatat(dfd, this_ele->name, &st, AT_SYMLINK_NOFOLLOW) < 0) {
 		if ((fd = openat(dfd, this_ele->name, O_RDONLY|O_PATH|O_NOFOLLOW)) < 0) {
 
 			output("%6s %s ", "", "??????????");
@@ -470,26 +713,14 @@ open_root:
 		}
 
 
-		st = show_stat_info(fd, current_path, this_ele->name, remaining_path);
-/*
-		fstatat(fd, "", &st, AT_EMPTY_PATH|AT_SYMLINK_NOFOLLOW);
-//		fstatvfs(fd, &stvfs);
-		fstatfs(fd, &stfs);
-
-
-		mode_string[0] = mode_type_char(st.st_mode);
-		mode_bits_string(mode_string + 1, st.st_mode);
-//		output("%6s %s ", fstype(stvfs.f_fsid), mode_string);
-		output("%6s %s ", fstype(stfs.f_type), mode_string);
-
-		output("uid: %ld  gid: %ld ", st.st_uid, st.st_gid);
-
-
-
-		print_path(current_path);
-*/
-//		output("/%s", this_ele->name);
-
+		stat_info = show_stat_info(fd, current_path, this_ele->name, remaining_path);
+		output("\n");
+		if (stat_info.stat_error) {
+			output("error checking '");
+			print_path(current_path);
+			output("%s': %m\n", this_ele->name);
+			goto out;
+		}
 
 		if (!strcmp(this_ele->name, ".")) {
 			free_ele(this_ele);
@@ -497,9 +728,6 @@ open_root:
 			continue;
 		}
 		if (!strcmp(this_ele->name, "..")) {
-//			int tmp_dfd = openat(dfd, "..", O_RDONLY|O_PATH|O_DIRECTORY);
-//			close(dfd);
-//			dfd = tmp_dfd;
 			close(dfd);
 			dfd = fd;
 			if (!path_empty(current_path))
@@ -508,7 +736,7 @@ open_root:
 			continue;
 		}
 
-		switch (st.st_mode & S_IFMT) {
+		switch (stat_info.mode & S_IFMT) {
 			case S_IFDIR: {
 				int new_dfd;
 
@@ -520,35 +748,49 @@ open_root:
 				}
 				close(dfd);
 				dfd = new_dfd;
-				output("\n");
 				path_append(this_ele, current_path);
 
 			} ; break;
 			case S_IFLNK: {
+				struct loop_checker_struct lcs;
 				char *link = NULL;
-				int link_len = st.st_size + 1, ret;
+				int is_loop, ret;
 
-				if (link_len < 2)
-					link_len = PATH_MAX;
-				link = malloc(link_len);
 
-				if ((ret = readlinkat(dfd, this_ele->name, link, link_len)) < 0) {
+				lcs = (struct loop_checker_struct) {
+					.major = stat_info.major,
+					.minor = stat_info.minor,
+					.ino = stat_info.ino
+				};
+
+				link = malloc(stat_info.size + 1);
+
+				if ((ret = readlinkat(dfd, this_ele->name, link, stat_info.size + 1)) < 0) {
 //					if (strlen(ret == 0))
 //					err_exit(EXIT_FAILURE, "Invalid link");
 					goto out_invalid_link;
 				}
+				link[ret] = '\0';
 
-				output(" => '%s'\n", link);
+				output("               => '%s'\n", link);
+
+				if ((is_loop = symlink_is_loop(&lcs)) < 0) {
+					output("ELOOP - Too many levels of symbolic links\n");
+					goto out;
+				}
+				if (is_loop) {
+					output("ELOOP - already visited this symlink\n");
+					goto out;
+				}
 
 				dedup_slashes(&link);
-//output("after deduped slashes: %s", link);
 
 				if (link[0] == '/') {
 					free_path_list(current_path);
 					close(dfd);
 					dfd = open("/", O_RDONLY|O_PATH|O_DIRECTORY);
 				} else if (!strcmp(link, this_ele->name)) {
-					free(link);
+					free_mem(link);
 					output("ELOOP - symlink loops back to itself\n");
 					goto out;
 				}
@@ -557,14 +799,7 @@ open_root:
 					path_add(path_pop_last(tmp_list), remaining_path);
 				free_ele(tmp_list);
 
-				free(link);
-/*
-output("new current_path: ");
-print_path(current_path);
-output("\nnew remaining_path: ");
-print_path(remaining_path);
-output("\n");
-*/
+				free_mem(link);
 				if (path_empty(current_path))
 					goto open_root;
 			} break;
@@ -627,7 +862,6 @@ out_not_dir:
 	goto out;
 }
 
-
 void check_component(int dfd, char *parent_path, char *this_path_ele, char *remaining_path) {
 	struct stat st;
 	char *current_path = NULL;
@@ -649,40 +883,24 @@ void check_component(int dfd, char *parent_path, char *this_path_ele, char *rema
 		current_path = strdup("/");
 
 
-
-output("    current path: %s\n", current_path);
-slash = index(remaining_path, '/');
-if (slash) {
-	next_path_ele = strndup(remaining_path, slash - remaining_path);
-	while (*slash == '/')
-		slash++;
-	next_path_remaining = strdup(slash);
-	output("found slash at index %ld of '%s' (next path '%s', next path remaining '%s')\n", slash - remaining_path, remaining_path, next_path_ele, next_path_remaining);
-} else {
-	next_path_ele = strdup(remaining_path);
-	next_path_remaining = strdup("");
-	output("no slash found in '%s' (next path '%s', next path remaining '%s')\n", remaining_path, next_path_ele, next_path_remaining);
-}
-
-
-
+	output("    current path: %s\n", current_path);
+	slash = index(remaining_path, '/');
+	if (slash) {
+		next_path_ele = strndup(remaining_path, slash - remaining_path);
+		while (*slash == '/')
+			slash++;
+		next_path_remaining = strdup(slash);
+		output("found slash at index %ld of '%s' (next path '%s', next path remaining '%s')\n", slash - remaining_path, remaining_path, next_path_ele, next_path_remaining);
+	} else {
+		next_path_ele = strdup(remaining_path);
+		next_path_remaining = strdup("");
+		output("no slash found in '%s' (next path '%s', next path remaining '%s')\n", remaining_path, next_path_ele, next_path_remaining);
+	}
 
 
 	output("%s", current_path);
 
-
-
-#if 0
-	if (!strcmp(this_path_ele, ".")) {
-#		check_component(dfd, 
-		goto out;
-                        check_component(new_dfd, current_path, next_path_ele, next_path_remaining);
-
-
-#endif
-
 	if (fstatat(dfd, this_path_ele, &st, AT_SYMLINK_NOFOLLOW) < 0) {
-//		if (errno == E
 		output(" does not exist: %m (%d)\n", errno);
 		goto out;
 	}
@@ -730,21 +948,20 @@ if (slash) {
 			if (link_len < 2)
 				link_len = PATH_MAX;
 			link = malloc(link_len);
+			memset(link, 0, link_len);
 
 			if ((ret = readlinkat(dfd, this_path_ele, link, link_len)) < 0) {
 //				if (strlen(ret == 0))
 				output("Invalid link");
 			}
 
+			link[st.st_size] = '\0';
+
+output("read link for '%s', link len: %d\n", this_path_ele, link_len);
 
 			output(" => '%s'\n", link);
 
-
-//			output("link size: %d\n", st.st_size);
-//			      output("bah\n");
-
-
-			free(link);
+			free_mem(link);
 		} ; break;
 		default:
 			output("bah\n");
@@ -766,7 +983,7 @@ if (slash) {
 
 out:
 	if (current_path)
-		free(current_path);
+		free_mem(current_path);
 }
 
 
@@ -814,14 +1031,9 @@ void resolve_path(char *path) {
 	}
 #endif
 
-
-
-
-
 //	check_component(AT_FDCWD, "", "/", "var/tmp/util-linux-2.36.2-1.fc34.src.rpm");
 
-	if (start_path_str)
-		free(start_path_str);
+	free_mem(start_path_str);
 }
 
 #define test_dedup(s) do { \
@@ -834,17 +1046,24 @@ void resolve_path(char *path) {
 	free(tmp2); \
 } while (0)
 
+int usage(const char *exe, int ret) {
+	output("%s <path> [<path> ... ]\n", exe);
+	return ret;
+}
+
 int main(int argc, char *argv[]) {
 	int i;
 
 	output("running with fsuid: %d, fsgid: %d\n", setfsuid(-1), setfsgid(-1));
 	if (argc > 1) {
 		for (i = 1 ; i < argc ; i++) {
+			reset_loop_checker();
 			resolve_path(argv[i]);
 			if (i < argc)
 				output("\n");
 		}
 	} else {
+		return usage(argv[0], EXIT_FAILURE);
 //		int dfd = open("/", O_RDONLY|O_DIRECTORY);
 
 //		check_component(dfd, "/", "var", "tmp/util-linux-2.36.2-1.fc34.src.rpm");
@@ -853,10 +1072,7 @@ int main(int argc, char *argv[]) {
 //		check_component(AT_FDCWD, "", "/", "var/tmp/util-linux-2.36.2-1.fc34.src.rpm");
 //		check_component(AT_FDCWD, "", "/", "var/tmp/util-linux-2.36.2-1.fc34.src.rpm");
 //		resolve_path("/var/tmp/util-linux-2.36.2-1.fc34.src.rpm");
-	resolve_path("foo");
-//		resolve_path("foo/bar");
-
-//void check_component(int dfd, char *parent_path, char *this_path_ele, char *remaining_path) {
+		resolve_path("foo");
 	}
 
 	return EXIT_SUCCESS;
