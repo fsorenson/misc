@@ -1,0 +1,75 @@
+#!/bin/bash
+
+#	Frank Sorenson <sorenson@redhat.com>, 2022
+
+num_files=8
+num_writers=3
+
+KiB=1024
+MiB=$(( $KiB * $KiB ))
+GiB=$(( $KiB * $KiB * $KiB ))
+
+file_size=$(( 500 * $MiB ))
+#file_size=$(( 1 * $GiB ))
+write_size=$(( 1 * $MiB ))
+start_offset=512
+
+num_loops=$(( ($file_size - $start_offset + (($num_writers * $write_size) - 1)) / ($num_writers * $write_size) ))
+total_size=$(( ($num_loops * $num_writers * $write_size) + $start_offset ))
+
+cgroup_path=/sys/fs/cgroup/test_write_bug
+mkdir -p $cgroup_path || { echo "unable to create cgroup" ; exit ; }
+
+max_mem=$(( 40 * $MiB ))
+high_mem=$(( ($max_mem * 9) / 10 ))
+echo $high_mem >$cgroup_path/memory.high
+echo $max_mem >$cgroup_path/memory.max
+
+mkdir -p testfiles
+rm -f testfiles/expected
+xfs_io -f -c "pwrite -b $((1 * $MiB)) -S 0x40 0 $total_size" testfiles/expected >/dev/null 2>&1
+expected_sum=$(md5sum testfiles/expected | awk '{print $1}')
+
+echo $$ > $cgroup_path/cgroup.procs || exit # put ourselves in the cgroup
+
+do_one_testfile() {
+	filenum=$1
+	cpids=""
+	offset=$start_offset
+
+	rm -f testfiles/test$filenum
+	xfs_io -f -c "pwrite -b $start_offset -S 0x40 0 $start_offset" testfiles/test$filenum >/dev/null 2>&1
+
+	while [[ $offset -lt $file_size ]] ; do
+		cpids=""
+		for i in $(seq 1 $num_writers) ; do
+			xfs_io -f -c "pwrite -b $write_size -S 0x40 $(( ($offset + (($num_writers - $i) * $write_size)  ) )) $write_size" testfiles/test$filenum >/dev/null 2>&1 &
+			cpids="$cpids $!"
+		done
+		wait $cpids
+		offset=$(( $offset + ($num_writers * $write_size) ))
+	done
+}
+
+round=1
+while [[ 42 ]] ; do
+	echo "test round: $round"
+	cpids=""
+	for i in $(seq 1 $num_files) ; do
+		do_one_testfile $i &
+		cpids="$cpids $!"
+	done
+	wait $cpids
+
+	replicated="" # now check the files
+	for i in $(seq 1 $num_files) ; do
+		sum=$(md5sum testfiles/test$i | awk '{print $1}')
+		[[ $sum == $expected_sum ]] || replicated="$replicated testfiles/test$i"
+	done
+
+	[[ -n $replicated ]] && break
+	round=$(($round + 1))
+done
+echo "replicated bug with: $replicated"
+echo $$ > /sys/fs/cgroup/cgroup.procs
+rmdir $cgroup_path
