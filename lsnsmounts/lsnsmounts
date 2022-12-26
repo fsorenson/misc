@@ -1,0 +1,370 @@
+#!/usr/bin/perl -w
+
+use strict;
+use warnings;
+
+use File::Find;
+use Getopt::Long;
+use Data::Dumper;
+
+my $pid_grp_mntns = ();
+my %pids = ();
+my %pid_grps = ();  # pid -> pid_grp
+my %mnt_ns = ();  # mnt_ns -> pid_grp
+
+use constant { true => 1, false => 0 };
+
+$|++;
+
+my %config = (
+	'match_mp' => false,
+	'match_mnt_src' => false,
+	'match' => '',
+	'show_all' => false,
+	'show_processes' => false,
+	'show_lsof' => false,
+	'verbose' => false,
+
+	'maxlinewidth' => 110.
+#	'maxlinewidth' => GetTerminalSize()[0], # requires: use Term::ReadKey;
+);
+
+GetOptions(
+	'mp=s' => sub {
+		$config{'match_mp'} = true;
+		$config{'match_mnt_src'} = false;
+		$config{'show_all'} = false;
+		$config{'match'} = $_[1];
+	},
+	'dev=s' => sub {
+		$config{'match_mp'} = false;
+		$config{'match_mnt_src'} = true;
+		$config{'show_all'} = false;
+		$config{'match'} = $_[1];
+	},
+	'ps' => sub {
+		$config{'show_processes'} = true;
+	},
+	'lsof' => sub {
+		$config{'show_lsof'} = true;
+	},
+);
+$config{'show_all'} = true if (! $config{'match_mp'} && ! $config{'match_mnt_src'});
+
+
+my %pats = (
+	'numbers' => '([0-9]+)',
+	'maj_min' => '([0-9]+:[0-9]+)',
+	'field' => '([^ ]+)',
+	'optional' => '( .+)?',
+	'mount_opts' => '[^ ]+',
+	'tag' => 'shared|master|propagate_from|unbindable',
+#	'pid_state' => '[RSDZTtWXxKWPI]',
+	'pid_state' => '([a-zA-Z])',
+);
+
+my @proc_pid_stat_fields = ('st_pid', 'comm', 'state', 'ppid', 'pgrp', 'session', 'tty_nr', 'tpgid', 'flags', # 1-9
+	'minflt', 'cminflt', 'majflt', 'cmajflt', 'utime', 'stime', 'cutime', 'cstime', 'prio', # 10-17
+	'nice', 'num_threads', 'itrealvalue', 'starttime', 'vsize', 'rss', 'rsslim',
+	'startcode', 'endcode', 'startstack', 'kstkesp', 'ksteip', 'sig', 'blocked',
+	'sigignore', 'sigcatch', 'wchan', 'nswap', 'cnswap', 'exit_sig', 'processor',
+	'rt_prio', 'policy', 'delayacct_blkio_ticks', 'guest_time', 'cguest_time',
+	'start_data', 'end_data', 'start_brk', 'arg_start', 'arg_end', 'env_start',
+	'env_end', 'exit_code');
+
+
+
+
+
+
+my @proc_pid_mountinfo_fields = ( 'mount_id', 'parent_id', 'maj_min', 'root', 'mp', 'mount_opts', 'optional', 'fstype', 'source', 'super_opts' );
+
+#my $proc_pid_stat_splitter = qr/^([^ ]+) (.+)$/;
+my $proc_pid_stat_splitter_v26 = qr/^$pats{'numbers'} \((.*)\) $pats{'pid_state'} ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) (.+)$/;
+my $proc_pid_stat_splitter_v3 = qr/^$pats{'numbers'} \((.*)\) $pats{'pid_state'} ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) ([^ ]+) (.+)$/;
+
+#1118679 (NFSv4 callback) S 2 0 0 0 -1 2097216 0 0 0 0 0 0 0 0 20 0 1 0 743207336 0 0 18446744073709551615 0 0 0 0 0 0 0 2147483647 0 0 0 0 17 3 0 0 0 0 0 0 0 0 0 0 0 0 0
+
+
+#36 35 98:0 /mnt1 /mnt2 rw,noatime master:1 - ext3 /dev/root rw,errors=continue
+#(1)(2)(3)   (4)   (5)      (6)      (7)   (8) (9)   (10)         (11)
+my $proc_pid_mountinfo_splitter = qr/$pats{'numbers'} $pats{'numbers'} $pats{'maj_min'} $pats{'field'} $pats{'field'} $pats{'field'}$pats{'optional'} - $pats{'field'} $pats{'field'} $pats{'field'}$/;
+
+# match a field of mountinfo
+sub match_pid_mountinfo_field {
+	my $pid = shift;
+	my $match_field = shift;
+	my $match_val = shift;
+
+	my @ret = ();
+
+	open my $fh, '<', "/proc/$pid/mountinfo", or return '';
+	my $content = do { local $/; <$fh> };
+	close($fh);
+	my @lines = split "\n", $content;
+
+
+	for my $line (@lines) {
+#		my %match;
+#		if (my ($mount_id, $parent_id, $maj_min, $root, $mp, $mount_opts, $optional, $fstype, $source, $super_opts) = $line =~ $proc_pid_mountinfo_splitter) {
+#		if (($match{'mount_id'}, $match{'parent_id'}, $match{'maj_min'}, $match{'root'}, $match{'mp'}, $match{'mount_opts'}, $match{'optional'}, $match{'fstype'}, $match{'source'}, $match{'super_opts'}) = $line =~ $proc_pid_mountinfo_splitter) {
+
+		if (my @matches = $line =~ $proc_pid_mountinfo_splitter) {
+#printf "going to map %d fields and %d matching fields\n", $#proc_pid_mountinfo_fields, $#matches;
+
+#			my %match ; map { $match{$proc_pid_mountinfo_fields[$_]} = $matches[$_] } (0..$#matches);
+
+#			my %match = { map { printf "iterator is '%s', field is '%s', value is '%s'\n", $_, $proc_pid_mountinfo_fields[$_], $matches[$_]; $proc_pid_mountinfo_fields[$_] => $matches[$_] } (0..$#matches) }; #
+#			my %match = { map { printf "iterator is '%s', field is '%s', value is '%s'\n", $_, $proc_pid_mountinfo_fields[$_], $matches[$_]; $match{$proc_pid_mountinfo_fields[$_]} = $matches[$_] } (0..$#matches) };
+			my %match ; map { $match{$proc_pid_mountinfo_fields[$_]} = $matches[$_] } (0..$#matches);
+
+			push @ret, $line if ($match_val eq $match{$match_field});
+		}
+	}
+	return join "\n", @ret;
+}
+sub match_pid_mountinfo_source {
+	return match_pid_mountinfo_field($_[0], 'source', $_[1]);
+}
+sub match_pid_mountinfo_mountpoint {
+	return match_pid_mountinfo_field($_[0], 'mp', $_[1]);
+}
+
+sub foo1 {
+	my $c = 0;
+	while (<>) {
+		chomp;
+		if (my @matches = $_ =~ $proc_pid_mountinfo_splitter) {
+#		if (my ($mount_id, $parent_id, $maj_min, $root, $mp, $mount_opts, $optional, $fstype, $source, $super_opts) = $_ =~ $proc_pid_mountinfo_splitter) {
+			my $i = 0;
+
+			printf ">> %s\n", $_;
+			foreach my $val (@matches) {
+				if (defined $val) {
+					$val =~ s/\\([0-7]{1,3})/chr oct $1/ge;
+					printf "\t%d: %s\n", $i, $val;
+				} else {
+					printf "\t%d: NO VALUE\n", $i;
+				}
+				$i++;
+			}
+			printf "\n";
+		} else {
+			printf "no match: %s\n", $_;
+		}
+
+		$c++;
+		exit if ($c >= 40000);
+	}
+	exit;
+}
+
+
+# DEV="/dev/loop1" ; for pid in $(lsns -nt mnt -o pid) ; do nsenter -t $pid -m /usr/bin/awk -vPID=$pid -vDEV="$DEV" '$9==DEV {print PID}' /proc/self/mountinfo 2>/dev/null ; done
+# MOUNT="/mnt/tmp" ; for pid in $(lsns -nt mnt -o pid) ; do nsenter -t $pid -m /usr/bin/awk -vPID=$pid -vMOUNT="$MOUNT" '$6==MOUNT {print PID}' /proc/self/mountinfo 2>/dev/null ; done
+
+sub pid_lsof {
+#	my $pid = shift;
+	my @pids = @_;
+
+	my $pid = $pids[0];
+	my $cmd = sprintf("nsenter -t %d lsof -b -p %s 2>/dev/null", $pid, join(",", @pids));
+	open (CMD, "$cmd|") or die("Failed to exec lsof command: $!");
+	while (<CMD>) {
+		printf "%s", $_;
+	}
+	close(CMD);
+
+}
+
+sub read_file_contents {
+	my $filename = shift;
+	my $indent = shift;
+
+	$indent = "" if !defined $indent;
+	my $ret = "";
+
+	open my $fh, '<', $filename or return "";
+	while (<$fh>) {
+		$ret .= $indent . $_;
+	}
+	return $ret;
+}
+
+sub output_file_contents {
+	my $filename = shift;
+	my $indent = shift;
+
+	$indent = "" if !defined $indent;
+
+	open my $fh, '<', $filename, or return -1;
+	while (<$fh>) {
+		printf "%s%s", $indent, $_;
+	}
+	close $fh;
+}
+
+sub read_cmdline {
+	my $pid = shift;
+
+	open my $fh, '<', "/proc/$pid/cmdline", or return -1;
+	my $content = do { local $/ ; <$fh> };
+	close($fh);
+
+ 	my @args = split("\0", $content);
+	my $cmdline = "";
+	for my $arg (@args) {
+#	for my $arg (split("\0", $content)) {
+		$cmdline .= " " if ($cmdline ne "");
+
+		$cmdline .= "'" if (scalar @args > 1 && $arg =~ /[ \[\]\(\)]/);
+
+		$cmdline .= $arg;
+		$cmdline .= "'" if (scalar @args > 1 && $arg =~ /[ \[\]\(\)]/);
+	}
+	return $cmdline;
+}
+
+sub get_pid_info {
+	my $pid = shift;
+
+	open my $fh, '<', "/proc/$pid/stat", or return -1;
+	my $content = do { local $/; <$fh> };
+	close($fh);
+#	my ($st_pid, $comm, $state, $ppid, $pgrp, $session, $tty_nr, $tpgid, $flags,
+#		$minflt, $cminflt, $majflt, $utime, $stime, $cutime, $cstime, $prio,
+#		$nice, $num_threads, $itrealvalue, $starttime, $vsize, $rss, $rsslim,
+#		$startcode, $endcode, $startstack, $kstkesp, $ksteip, $sig, $blocked,
+#		$sigignore, $sigcatch, $wchan, $nswap, $cnswap, $exit_sig, $processor,
+#		$rt_prio, $policy, $delayacct_blkio_ticks, $guest_time, $cguest_time,
+#		$start_data, $end_data, $start_brk, $arg_start, $arg_end, $env_start,
+#		$env_end, $exit_code) = split ' ', $content;
+#	my @st = split ' ', $content;
+
+	my @vals;
+#	if (my @vals = ($content =~ $proc_pid_stat_splitter)) {
+	if (@vals = ($content =~ $proc_pid_stat_splitter_v3) or @vals = ($content =~ $proc_pid_stat_splitter_v26)) {
+		$pids{$pid} = {};
+
+		$pids{$pid} = { map { $proc_pid_stat_fields[$_] => $vals[$_] } (0..$#vals ) }; #
+	} else {
+		printf "ERROR: pid %d could not match the proc_pid_stat_splitter:\n", $pid;
+		printf "\t%s\n", $content;
+		return -1;
+	}
+
+	$pids{$pid}{'cmdline'} = read_cmdline $pid;
+	$pids{$pid}{'cmdline'} = '[' . $pids{$pid}{'comm'} . ']' if ($pids{$pid}{'cmdline'} eq "");
+
+	return 0;
+}
+
+sub get_pid_group {
+	my $pid = shift;
+
+	open my $fh, '<', "/proc/$pid/stat", or return -1;
+	my $content = do { local $/; <$fh> };
+	close($fh);
+	my @st = split ' ', $content;
+	return $st[4];
+}
+
+sub find_proc_nsids {
+#	my $pid = shift;
+	my $path = shift;
+
+	return if $path eq "/proc";
+
+	my @path_elements = split('/', substr($path, 1));
+	my $pid = $path_elements[(scalar @path_elements) - 1];
+
+	if ($pid =~ /^[0-9]+$/ && (my $lnk = readlink "$pid/ns/mnt")) {
+		if (my ($nsid) = $lnk =~ /^mnt:\[([0-9]+)\]$/) {
+#			my $pid_grp = get_pid_group $pid;
+
+			return if (get_pid_info($pid) == -1);
+
+			my $pid_grp = $pids{$pid}{'pgrp'};
+
+			printf "pid grp is not defined for pid %d\n", $pid if !defined($pid_grp);
+			printf "nsid is not defined for pid %d\n", $pid if !defined($nsid);
+
+#			printf "pid %d in pid group %d has mnt nsid: %s\n", $pid, $pids{$pid}{'pgrp'}, $nsid;
+#			printf "pid %d in pid group %d has mnt nsid: %s\n", $pid, $pid_grp, $nsid;
+
+			if (! defined $pid_grps{$pid_grp}) {
+				$pid_grps{$pid_grp} = {
+					'mnt_ns' => $nsid,
+					'cpids' => [$pid]
+				};
+			} else {
+				push @{$pid_grps{$pid_grp}{'cpids'}}, $pid;
+			}
+
+			if (! defined $mnt_ns{$nsid}) {
+				$mnt_ns{$nsid} = {
+					'pids' => [$pid],
+					'pid_grps' => [$pid_grp]
+				};
+			} else {
+				push @{$mnt_ns{$nsid}{'pids'}}, $pid;
+#				push(@{$mnt_ns{$nsid}{'pid_grps'}}, $pid_grp) unless (grep($_ == $pid_grp), @{$mnt_ns{$nsid}{'pid_grps'}});
+				if (! grep($_ == $pid_grp, @{$mnt_ns{$nsid}{'pid_grps'}}) ) {
+#					printf "pid grp %d is not in mnt_ns pid_grps\n", $pid_grp;
+					push(@{$mnt_ns{$nsid}{'pid_grps'}}, $pid_grp);
+				}
+			}
+		}
+	}
+	$File::Find::prune = 1;
+}
+sub show_processes {
+	my @pids = @_;
+
+	printf "%8s %4s  %s\n", "PID", "STAT", "COMMAND";
+#	foreach my $pid (@pids) {
+#		printf "%s\n", substr(sprintf("  %8d %4s  %s",
+#			$pid, $pids{$pid}{'state'}, $pids{$pid}{'cmdline'}), 0, $config{'maxlinewidth'});
+#	}
+	map {
+		printf "%s\n", substr(sprintf("  %8d %4s  %s",
+			$_, $pids{$_}{'state'}, $pids{$_}{'cmdline'}), 0, $config{'maxlinewidth'});
+	} @pids;
+
+}
+
+# build trees of pids and namespaces
+find( {
+	wanted => sub {
+		find_proc_nsids($File::Find::name);
+	},
+}, "/proc");
+
+#printf "%d pid groups found\n", scalar %pid_grps;
+#printf "%d mnt namespaces found\n", scalar %mnt_ns;
+
+foreach my $nsid (sort (keys %mnt_ns)) {
+	my @ns_pids = @{$mnt_ns{$nsid}{'pids'}};
+	my @pid_grps = @{$mnt_ns{$nsid}{'pid_grps'}};
+
+	my $representative_pid = $ns_pids[0];
+
+	my $ret = "";
+	my $matched = false;
+	if ($config{'show_all'}) {
+		$ret = read_file_contents("/proc/$representative_pid/mountinfo");
+	} elsif ($config{'match_mp'}) {
+		$ret = match_pid_mountinfo_mountpoint($representative_pid, $config{'match'});
+	} elsif ($config{'match_mnt_src'}) {
+		$ret = match_pid_mountinfo_source($representative_pid, $config{'match'});
+	}
+	if ($ret ne "") {
+		printf "mount namespace id %s - %d pid groups, %d pids\n", $nsid, scalar @pid_grps, scalar @ns_pids;
+		show_processes(@ns_pids) if $config{'show_processes'};
+		printf "\n";
+
+		printf "%s\n\n", join("\n", map { substr("    " . $_, 0, $config{'maxlinewidth'}) } split("\n", $ret));
+
+		pid_lsof(@ns_pids) if $config{'show_lsof'};
+	}
+}
