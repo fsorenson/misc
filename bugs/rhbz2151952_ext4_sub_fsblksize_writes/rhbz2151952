@@ -1,0 +1,256 @@
+#!/bin/bash
+
+# Frank Sorenson <sorenson@redhat.com>, 2022
+
+default_fstypes="ext4 xfs"
+default_fsblock_sizes="2k 4k"
+default_write_sizes="512 1k 2k 4k 8k 16k"
+
+default_file_size="16G"
+default_runtime="300s"
+default_ramp_time="20s"
+default_directio="1"
+
+
+fstypes=${fstypes:-"$default_fstypes"}
+fsblock_sizes=${fsblock_sizes:-$default_fsblock_sizes}
+write_sizes=${write_sizes:-$default_write_sizes}
+
+file_size=${file_size:-$default_file_size}
+runtime=${runtime:-$default_runtime}
+ramp_time=${ramp_time:-$default_ramp_time}
+directio=${directio:-$default_directio}
+[[ X$directio != X0 ]] && directio=1
+FIO=/usr/bin/fio
+
+
+usage_exit() {
+	echo "usage: $0 <device> <mountpoint>"
+	echo
+	echo " *** filesystem on the device will be re-created during the testing ***"
+	echo
+	echo "use the following environment variables to run with non-default settings (defaults shown here):"
+	echo "  fstypes='<fstype> ...'       - test these filesystem types"
+	echo "      default: '$default_fstypes'"
+	echo "  fsblock_sizes='<size> ...'   - test with these filesystems block sizes"
+	echo "      default: '$default_fsblock_sizes'"
+	echo "  write_sizes='<size> ...'     - write using these write sizes"
+	echo "      default: '$default_write_sizes'"
+	echo
+	echo "the following will also control fio run parameters"
+	echo "  file_size=<size>   - fio testfile size (default: '$default_file_size')"
+	echo "  runtime=<time>     - fio runtime (default: '$default_runtime')"
+	echo "  ramp_time=<time>   - fio 'ramp_time' (default: '$default_ramp_time')"
+	echo "  directio=[0|1]     - fio will use directio (default: '$default_directio')"
+	exit $1
+}
+
+[[ $# -ne 2 ]] && usage_exit 1
+
+
+dev=$1
+mp=$2
+
+[[ -b $dev ]] || {
+	[[ -a $dev ]] && echo "$dev is not a block device" || echo "device $dev does not exist"
+	usage_exit 1
+}
+[[ -d $mp ]] || {
+	[[ -a $mp ]] && echo "$mp is not a directory" || echo "directory $mp does not exist"
+	usage_exit 1
+}
+
+fio_testfile="$mp/fio_io_test"
+
+EXTRA_EXT4_MKFS_OPTS=""
+EXTRA_XFS_MKFS_OPTS=""
+
+# fio output will go here
+log_file=$(pwd)/test.log
+
+do_umount() {
+	local count=0 # don't loop forever
+	local out
+
+	while ! out=$(umount "$1" 2>&1) ; do
+		[[ $out =~ not\ mounted ]] && break			# nothing mounted there
+		[[ $out =~ no\ mount\ point\ specified ]] && break 	# path doesn't exist
+
+		count=$(($count + 1))
+		[[ $out =~ target\ is\ busy ]] && [[ $count -ge 5 ]] && { echo "Mount '%s' is busy" ; exit 1 ; }
+		[[ $count -ge 10 ]] && { echo -e "error unmounting '$1':\n$out" ; exit 1 ; }
+		sleep 0.25
+	done
+}
+center_str() {
+	local str=$1
+	local field_width=$2
+
+	local center_width=$(( ${#str} + ( ($field_width - ${#str}) / 2) ))
+	[[ $center_width -gt $field_width ]] && center_width=$field_width
+	printf "%*s%*s" $center_width "$str" $(($field_width - $center_width)) ""
+}
+
+to_bytes() {
+	local val=$(expr match "$1" '\([0-9\.]\+\)')
+	local unit=$(expr match "$1" '[0-9\.]\+\(.*\)')
+
+	case ${unit,,} in
+		gib|gib/s|g) val=$(echo "scale=2 ; $val * 1024" | bc) ;&
+		mib|mib/s|m) val=$(echo "scale=2 ; $val * 1024" | bc) ;&
+		kib|kib/s|k) val=$(echo "scale=2 ; $val * 1024" | bc) ;;
+		gb|gb/s) val=$(echo "scale=2 ; $val * 1000" | bc) ;&
+		mb|mb/s) val=$(echo "scale=2 ; $val * 1000" | bc) ;&
+		kb|kb/s) val=$(echo "scale=2 ; $val * 1000" | bc) ;;
+		b/s|b|"") ;;
+		*) : ;;
+	esac
+	echo $val
+	return 0
+}
+
+bytes_to_KiB() { echo "scale=2 ; $1 / 1024" | bc ; }
+bytes_to_MiB() { echo "scale=2 ; $1 / 1024 / 1024" | bc ; }
+get_system_mem() { to_bytes $(awk '$1=="MemTotal:" { printf "%s%s", $2, $3 }' /proc/meminfo) ; }
+get_num_cpus() { lscpu | grep '^CPU(s)' | awk '{print $NF}' ; }
+get_iodepth() { cat /sys/class/block/$1/queue/nr_requests ; }
+get_physical_block_size() { cat /sys/class/block/$1/queue/physical_block_size ; }
+get_scheduler() {
+	awk '{for (i = 1 ; i <= NF ; i++) { if (substr($i,1,1)=="[" && substr($i, length($i),1)=="]") { print substr($i,2,length($i)-2) ; exit }}}' /sys/class/block/$1/queue/scheduler
+}
+make_fio_config() {
+	local write_size=$1
+	local iodepth=$2
+	local thread_count=$3
+
+	cat << EOF
+[global]
+ioengine=libaio
+direct=$directio
+group_reporting
+overwrite=1
+thread
+size=$file_size
+filename=$fio_testfile
+readwrite=write
+ramp_time=$ramp_time
+runtime=$runtime
+numjobs=$thread_count
+[${fstype}_${fsblock_size}_${write_size}_test]
+blocksize=$write_size
+iodepth=$iodepth
+allow_file_create=0
+EOF
+}
+
+left_col_width=13 # if you change this, you may also need to change the '\' layout
+col_width=14  # don't use a number lower than 12--nothing will line up
+dashes='--------------------'
+output_table_header() {
+	local num_fstypes=$(echo $fstypes | wc -w)
+	local num_fsblock_sizes=$(echo $fsblock_sizes | wc -w)
+
+	local header1=""
+	local header2=""
+	local header3=""
+
+	local fstype_count=0
+	for fstype in $fstypes ; do
+		fstype_count=$(($fstype_count + 1))
+
+		local fsblock_size_count=0
+		for fsblock_size in $fsblock_sizes ; do
+			fsblock_size_count=$(($fsblock_size_count + 1))
+
+			header1="$header1$(center_str $fstype $col_width)"
+			[[ $fsblock_size_count -eq $num_fsblock_sizes ]] && header1="$header1|" || header1="$header1 "
+
+			local str="$fsblock_size fs blocks"
+			local centered_str=$(center_str "$str" $col_width)
+			header2="$header2$centered_str|"
+			header3="$header3${dashes:0:$col_width}|"
+		done
+	done
+
+	direct_str="directio: 0"
+	[[ $directio == 1 ]] && direct_str="directio: 1"
+
+#	echo '\'
+#	echo ' \'
+#	echo '  \'
+#	echo '   \'
+	echo "    \            $(hostname -s) @ $(date +'%F %T')"
+	echo "     \           $(uname -r)"
+	echo "      \          cpus: $num_cpus, memory: $(bytes_to_MiB $system_mem) MiB"
+	echo "       \         "
+	echo "        \        $dev - physical blocksize: $physical_block_size"
+	echo "         \       nr_requests; $iodepth, sched: $scheduler"
+	echo "          \     "
+	echo "           \     Values are in MiB/s"
+	echo "$direct_str \   "
+	echo "             \  $header1"
+	echo "write size    \ $header2"
+	echo "---------------|$header3"
+}
+
+do_one_test() {
+	local fstype=$1
+	local fsblock_size=$2
+	local write_size=$3
+	local out
+
+	echo "$fstype filesystem with $fsblock_size filesystem blocks; write size: $write_size" >>$log_file
+	case $fstype in
+		ext[234])
+			out=$(mkfs.$fstype $EXTRA_EXT4_MKFS_OPTS -F -b $fsblock_size $dev 2>&1 | tee -a $log_file) || { echo "error: $out" ; exit ; } ;;
+		xfs)
+			out=$(mkfs.xfs $EXTRA_XFS_MKFS_OPTS -f -b size=$fsblock_size $dev 2>&1 | tee -a $log_file) || { echo "error: $out" ; exit ; } ;;
+		*)
+			echo "what filesystem?" ; exit ;;
+	esac
+
+	mount $dev $mp || exit 1
+	mountpoint -q $mp || exit 1
+
+	fallocate -l $file_size $fio_testfile >/dev/null 2>&1 || {
+		dd if=/dev/zero of=$fio_testfile bs=1M count=$(( ($(to_bytes $file_size) + 1048575)/1048576 )) >/dev/null 2>&1
+	}
+
+	local out_full=$($FIO <(make_fio_config $write_size $iodepth $num_cpus) 2>&1 | tee -a $log_file)
+
+	do_umount $mp
+
+	local rate=$(to_bytes $(echo "$out_full" | awk '$1=="WRITE:" { if (substr($2, 1, 3)=="bw=") { printf "%s", substr($2,4)} }'))
+	[[ -z $rate ]] && rate=0
+
+	bytes_to_MiB $rate
+}
+
+#################################################################################
+
+bdev=$(basename $dev)
+iodepth=$(get_iodepth $bdev)
+system_mem=$(get_system_mem)
+num_cpus=$(get_num_cpus)
+scheduler=$(get_scheduler $bdev)
+physical_block_size=$(get_physical_block_size $bdev)
+
+do_umount $mp
+
+>$log_file
+echo "full fio results logged to $log_file"
+echo
+
+output_table_header
+
+for write_size in $write_sizes ; do
+	printf "%13s  |" $(to_bytes $write_size)
+
+	for fstype in $fstypes ; do
+		for fsblock_size in $fsblock_sizes ; do
+			rate=$(do_one_test $fstype $fsblock_size $write_size)
+			printf "%*s  |" $(($col_width - 2)) $rate
+		done
+	done
+	echo
+done
