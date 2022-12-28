@@ -1,0 +1,634 @@
+
+#%{
+##include <linux/slub_def.h>
+#%}
+
+
+@define list_for_each_module_entry(entry, head, module, type, field) %(
+	for (@entry = ((@cast(@head, "struct list_head", "kernel")->next) - (&@cast(0, @type, @module)->@field)) ;
+		&@cast(@entry, @type, @module)->@field != @head ; 
+		@entry = (&@cast(@entry, @type, @module)->@field->next) - (&@cast(0, @type, @module)->@field)) %)
+
+@define list_for_each_entry(entry, head, type, field) %( /* module is actually 'kernel' */
+	@list_for_each_module_entry(@entry, @head, "kernel", @type, @field) %)
+
+
+@define next_kmem_cache_list_entry(entry) %(
+	@cast(&@cast(@entry, "struct kmem_cache", "kernel")->list->next, "struct kmem_cache", "kernel") %)
+
+/*
+function next_kmem_cache_val(entry) %{
+	struct kmem_cache *kmem_cache = (struct kmem_cache *)STAP_ARG_entry;
+
+	STAP_RETVALUE = (long)kmem_cache->list.next;
+%}
+*/
+function next_kmem_cache_val(entry) {
+	addr = &@cast(entry, "struct kmem_cache", "kernel")->list->next
+	return kernel_pointer(addr)
+}
+function per_cpu_ptr(ptr, cpu) %{
+	STAP_RETVALUE = (long)per_cpu_ptr((void *)STAP_ARG_ptr, STAP_ARG_cpu);
+%}
+function page_to_virt(page) %{
+	struct page *p = (struct page *)STAP_ARG_page;
+	STAP_RETVALUE = (long)page_to_virt(p);
+%}
+#function page_to_phys(page) %{
+#	struct page *p = (struct page *)STAP_ARG_page;
+#	STAP_RETVALUE = (long)page_to_phys(p);
+#%}
+function page_to_nid:long(page:long) %{
+	struct page *page = (struct page *)STAP_ARG_page;
+	STAP_RETVALUE = page_to_nid(page);
+%}
+function kallsyms_lookup_name:long(sym:string) %{
+	STAP_RETVALUE = (long)(unsigned char *)kallsyms_lookup_name(STAP_ARG_sym);
+%}
+function num_online_cpus:long() %{
+	STAP_RETVALUE = num_online_cpus();
+%}
+function cpu_online:long(cpu:long) %{
+	STAP_RETVALUE = cpu_online(STAP_ARG_cpu);
+%}
+
+
+@define list_for_each_kmem_cache_entry(entry, head) %(
+	for (@entry = &@module_container_of(@head->next, "kernel", "struct kmem_cache", list) ;
+		next_kmem_cache_val(@entry) != @head ;
+		@entry = &@module_container_of(next_kmem_cache_val(@entry), "kernel", "struct kmem_cache", list)) %)
+
+#	for (@entry = &@module_container_of(@head->next, "kernel", "struct kmem_cache", list) ;
+#		@next_kmem_cache_list_entry(@entry) != @head ;
+#		@entry = &@module_container_of(@next_kmem_cache_list_entry(@entry), "kernel", "struct kmem_cache", list)) %)
+
+
+#	for (@entry = &@module_container_of(&@cast(@head, "struct list_head", "kernel")->next, "kernel", "struct kmem_cache", list) ;
+#		next_kmem_cache_list_entry(@entry) != @head ;
+#		@entry = &@module_container_of(next_kmem_cache_list_entry(@entry), "kernel", "struct kmem_cache", list)) %)
+
+
+
+#		&@cast(@entry, "struct kmem_cache", "kernel")->list->next != @head ;
+#		@entry = @next_kmem_cache_entry(@entry)) %)
+
+
+#	for (@entry = &@cast(&@cast(@head, "struct list_head", "kernel")->next, "struct kmem_cache", "kernel") ;
+#		&@cast(@entry, "struct kmem_cache", "kernel")->list->next != @head ;
+#		@entry = @next_kmem_cache_entry(@entry)) %)
+
+
+
+# &@cast(&@cast(@entry, "struct kmem_cache", "kernel")->list->next - (&@cast(0, "struct kmem_cache", "kernel")->list), "struct kmem_cache", "kernel") %)
+
+
+#	for (@entry = ((&@cast(@head, "struct list_head", "kernel"))) ;
+
+
+function get_file_name(filp) {
+	filename = ""
+	try {
+		if (filp) {
+			path = &@cast(filp, "struct file", "kernel")->f_path
+			if (path)
+				return fullpath_struct_path(path)
+/*
+			dentry = @choose_defined(
+			@cast(filp, "struct file", "kernel")->f_path->dentry,
+			@cast(filp, "struct file", "kernel")->f_dentry)
+			if (dentry) {
+				dname = &@cast(dentry, "struct dentry", "kernel")->d_name
+				if (dname)
+					filename = kernel_string_n(
+						@cast(dname, "struct qstr", "kernel")->name,
+						@cast(dname, "struct qstr", "kernel")->len)
+			}
+*/
+		}
+	} catch { return "" }
+	return filename
+}
+
+
+
+function do_kmem_cache_slub(filp_cache) {
+	filp_cache = &@cast(filp_cache, "struct kmem_cache", "kernel")
+
+	cpu_slab_addr = filp_cache->cpu_slab
+	for (cpu = 0 ; cpu < num_online_cpus() ; cpu++) {
+
+		if (! cpu_online(cpu)) {
+			printf("CPU %d [OFFLINE]\n", cpu)
+			continue
+		}
+
+		cpu_slab = &@cast(per_cpu_ptr(cpu_slab_addr, cpu), "struct kmem_cache_cpu", "kernel")
+		printf("CPU %d KMEM_CACHE_CPU:\n  %p\n", cpu, cpu_slab);
+
+#		printf("cpu %d kmem_cache_cpu: %p\n", cpu, cpu_slab)
+
+		printf("CPU %d SLAB:\n%s", cpu, cpu_slab ? "" : "  (empty)\n");
+
+		if (cpu_slab) {
+#			if (page_to_nid(...) ### not sure what exactly this part does
+
+			do_slab_slub(cpu_slab)
+		}
+		do_cpu_partial_slub(filp_cache, cpu)
+	}
+
+#	for (n = 0 ; n < numnodes ; n++) {
+# do something if numa, etc.
+
+
+#	}
+}
+function do_slab_slub(cpu_slab) {
+#	paddr = page_to_phys(cpu_slab)
+	node = page_to_nid(cpu_slab)
+#	vaddr = PTOV(paddr)
+	vaddr = page_to_virt(cpu_slab)
+
+	inuse = cpu_slab->inuse
+	freelist = cpu_slab->freelist
+
+	// objects = slub_page_objects(...
+	//
+
+}
+function do_cpu_partial_slub(kmem_cache, cpu) {
+}
+function do_partial_slub(kmem_cache, cpu) {
+}
+
+
+
+
+
+probe begin {
+
+# crash> list -h 0xffff9eaf41004000 -o kmem_cache.list -s kmem_cache.name
+#	kmem_cache = @var("kmem_cache@mm/slab_common.c")
+#	printf("kmem_cache: %p\n", kmem_cache)
+
+#crash> list -H slab_caches -s kmem_cache.name -o kmem_cache.list
+#	slab_caches = @var("slab_caches@mm/slab_common.c")
+#	printf("slab_caches: %p\n", slab_caches)
+
+
+#crash> p slab_caches
+#slab_caches = $13 = {
+#  next = 0xffff9eaf42075e20, 
+#  prev = 0xffff9eaf41004060
+#}
+#crash> p &slab_caches
+#$14 = (struct list_head *) 0xffffffffb1cd8fc0
+
+
+	slab_caches = &@cast(kallsyms_lookup_name("slab_caches"), "struct list_head", "kernel")
+#	printf("slab_caches:  expected: %p, have: %p\n", 0xffffffffb1cd8fc0, slab_caches)
+#	printf("slab_caches: %s\n", (slab_caches)$$)
+
+/*
+	count = 0
+#	@list_for_each_entry(kmem_cache, slab_caches, "struct kmem_cache", list) {
+#	@list_for_each_kmem_cache_entry(kmem_cache, slab_caches) {
+	@list_for_each_module_entry(kmem_cache, slab_caches, "kernel", "struct kmem_cache", list) {
+#	@define list_for_each_module_entry(entry, head, module, type, field) %(
+
+#		printf(" %p - %s\n", kmem_cache, kernel_string(kmem_cache->name))
+		if (count == 0)
+			expect = 0xffff9eaf42075dc0
+		else if (count == 1)
+			expect = 0xffff9eaf420779c0
+		else if (count == 2)
+			expect = 0xffff9eaf412fd6c0
+		else if (count == 3)
+			expect = 0xffff9eaf677d9f80
+		else if (count == 4)
+			expect = 0xffff9eaf677db100
+
+		printf(" %d - expect: %p ; have: %p - %s\n", count, expect, kmem_cache, kmem_cache == expect ? "OKAY" : "ERROR")
+
+		cache_name = kernel_string(&@cast(kmem_cache, "struct kmem_cache", "kernel")->name)
+
+		cname_addr = &@cast(kmem_cache, "struct kmem_cache", "kernel")->name
+		printf(" address of name expected: %p ; have %p - %s\n", 0xffff9eaf42075e18, cname_addr, cname_addr == 0xffff9eaf42075e18 ? "OKAY" : "ERROR")
+
+		cname = kernel_string(kernel_pointer(cname_addr))
+		printf("    %s\n", cname)
+
+		next_entry = next_kmem_cache_val(kmem_cache)
+		printf(" expect: %p ; have:  %p - %s\n", expect, kmem_cache, cache_name)
+		printf("    next entry: %p\n", next_entry)
+
+		count++
+		if (count >= 5)
+			break
+#slab_caches: 0xffffffffb1cd8fc0
+#crash> list -H slab_caches -s kmem_cache.name -o kmem_cache.list | head
+#ffff9eaf42075dc0
+#  name = 0xffff9eaf4c852810 "fat_inode_cache"
+#ffff9eaf420779c0
+#  name = 0xffff9eaf4c8525c0 "fat_cache"
+#ffff9eaf412fd6c0
+#  name = 0xffff9eaf461adae0 "isofs_inode_cache"
+#ffff9eaf677d9f80
+#  name = 0xffff9eaf434c3b40 "ext4_inode_cache"
+#ffff9eaf677db100
+#  name = 0xffff9eaf42359eb0 "ext4_free_data"
+
+#ffff9eaf42075e20
+#ffff9eaf42077a20
+#ffff9eaf412fd720
+#ffff9eaf677d9fe0
+#ffff9eaf677db160
+#px (0xffff9eaf42075e20-0xffff9eaf42075dc0)
+	}
+*/
+	filp_cache = 0
+
+	count = 0
+	listp = slab_caches->next
+	while (listp->next != slab_caches) {
+		kmem_cache = &@module_container_of(listp, "kernel", "struct kmem_cache", list)
+
+		count++
+
+		cname = kernel_string(kmem_cache->name)
+		printf(" %p -   %s\n", kmem_cache, cname)
+
+		if (cname == "filp")
+			filp_cache = kmem_cache
+
+		listp = listp->next
+		if (count >= 275) {
+			printf("breaking out of loop\n")
+			break
+		}
+
+	}
+
+printf("online cpus: %d\n", num_online_cpus())
+printf("NR_CPUS: %d\n", @const("NR_CPUS"))
+
+#for (i = 0 ; i < num_online_cpus() ; i++)
+#	printf("cpu %d - online? %d\n", i, cpu_online(i))
+
+if (! filp_cache)
+	next
+
+do_kmem_cache_slub(filp_cache)
+
+
+
+		printf("cpu %d slab:\n", cpu)
+
+
+
+
+printf("%20s %12s %12s %10s %10s %10s %s\n",
+	"CACHE", "OBJSIZE", "ALLOCATED", "TOTAL", "SLABS", "SSIZE", "NAME")
+printf("%20p %12d %12d %10d %10d %10d %10d %s\n",
+	filp_cache, filp_cache->size, 0, 0, 0, 0, 0, kernel_string(filp_cache->name))
+
+
+printf("  object_size: %d, size: %d\n", filp_cache->object_size, filp_cache->size)
+
+#        slab_flags_t flags;
+#        unsigned long min_partial;
+#        unsigned int size;      /* The size of an object including meta data */
+#        unsigned int object_size;/* The size of an object without meta data */
+#        unsigned int offset;    /* Free pointer offset. */
+##ifdef CONFIG_SLUB_CPU_PARTIAL
+#        /* Number of per cpu partial objects to keep around */
+#        unsigned int cpu_partial;
+##endif
+#        struct kmem_cache_order_objects oo;
+#
+#        /* Allocation and freeing of slabs */
+#        struct kmem_cache_order_objects max;
+#        struct kmem_cache_order_objects min;
+#        gfp_t allocflags;       /* gfp flags to use on each alloc */
+#        int refcount;           /* Refcount for slab cache destroy */
+#        void (*ctor)(void *);
+#        unsigned int inuse;             /* Offset to metadata */
+#        unsigned int align;             /* Alignment */
+#        unsigned int red_left_pad;      /* Left redzone padding size */
+#        const char *name;       /* Name (only for display!) */
+#        struct list_head list;  /* List of slab caches */
+##ifdef CONFIG_SYSFS
+#        struct kobject kobj;    /* For sysfs */
+##endif
+
+
+#CACHE             OBJSIZE  ALLOCATED     TOTAL  SLABS  SSIZE  NAME
+#ffff9eaf78416a00      256       3794      5952    186     8k  filp
+#CPU 0 KMEM_CACHE_CPU:
+#  ffff9eaf77030c90
+#CPU 0 SLAB:
+#  SLAB              MEMORY            NODE  TOTAL  ALLOCATED  FREE
+#  fffff3b0800b8380  ffff9eaf42e0e000     0     32         20    12
+#  FREE / [ALLOCATED]
+#  [ffff9eaf42e0e000]
+
+
+
+#	printf("found filp slab cache: %p\n", filp_cache)
+
+
+#	cpu_slab_base = filp_cache->cpu_slab
+	cpu_slab_addr = filp_cache->cpu_slab
+
+	for (cpu = 0 ; cpu < num_online_cpus() ; cpu++) {
+		if (cpu_online(cpu)) {
+			cpu_slab = &@cast(per_cpu_ptr(cpu_slab_addr, cpu), "struct kmem_cache_cpu", "kernel")
+			printf("cpu %d kmem_cache_cpu: %p\n", cpu, cpu_slab)
+
+			printf("cpu %d slab:\n", cpu)
+//			printf("%
+
+
+			page = &@cast(cpu_slab->page, "struct page", "kernel")
+			printf("    page: %p - address: %p\n", page, page_to_virt(page))
+
+			printf("total: %d, allocated: %d, free: %d\n",
+				page->objects, page->inuse, page->objects - page->inuse)
+
+
+			addr = page_to_virt(page)
+			for (i = 0 ; i < page->objects ; i++) {
+				this_obj_addr = addr + (i * filp_cache->size)
+				filp = &@cast(this_obj_addr, "struct file", "kernel")
+
+				filename = get_file_name(filp)
+
+				printf("filp at %p - %s\n", filp, filename)
+
+			}
+/*
+      slab_cache = 0xffff9eaf78416a00, 
+      freelist = 0xffff9eaf42e0fd00, 
+      {
+        s_mem = 0x200018, 
+        counters = 2097176, 
+        {
+          inuse = 24, 
+          objects = 32, 
+          frozen = 0
+        }
+      }
+    {
+      {
+        slab_list = {
+          next = 0xfffff3b080d8df08, 
+          prev = 0xfffff3b0800f2488
+        }, 
+        {
+          next = 0xfffff3b080d8df08, 
+          pages = -2146491256, 
+          pobjects = -3152
+        }
+      }, 
+      slab_cache = 0xffff9eaf78416a00, 
+      freelist = 0xffff9eaf42e0fd00, 
+      {
+        s_mem = 0x200018, 
+        counters = 2097176, 
+        {
+          inuse = 24, 
+          objects = 32, 
+          frozen = 0
+        }
+      }
+    }, 
+    {
+*/
+			freelist = cpu_slab->freelist
+			printf("    freelist: %p\n", freelist)
+
+			partial = &@cast(cpu_slab->partial, "struct page", "kernel")
+			printf("    partial: %p - address: %p\n", partial, page_to_virt(partial))
+
+
+#struct kmem_cache_cpu {
+#	void **freelist;	/* Pointer to next available object */
+#	unsigned long tid;	/* Globally unique transaction id */
+#	struct page *page;	/* The slab from which we are allocating */
+#ifdef CONFIG_SLUB_CPU_PARTIAL
+#	struct page *partial;	/* Partially allocated frozen slabs */
+#endif
+#ifdef CONFIG_SLUB_STATS
+#	unsigned stat[NR_SLUB_STAT_ITEMS];
+
+
+
+
+
+
+		}
+	}
+
+
+
+
+	for (i = 0 ; i < 2 ; i++) {
+		node = filp_cache->node[i]
+
+		printf("node %d: %p\n", i, node)
+
+#		printf("  total slabs: %d\n", node->total_slabs)
+#		printf("  free slabs: %d\n", node->free_slabs)
+#		printf("  free objects: %d\n", node->free_objects)
+#		printf("  free limit: %d\n", node->free_limit)
+
+		printf("  nr_partial: %d\n", node->nr_partial)
+
+count = 0
+partial_head = &node->partial
+	@list_for_each_entry(p, partial_head, "struct page", slab_list) {
+	p = &@cast(p, "struct page", "kernel")
+printf("page: %p\n", p)
+
+count++
+
+if (count >= 10)
+	break
+if (p->slab_list->next == p || p->slab_list->next == partial_head)
+	break
+
+
+	}
+
+
+
+
+#  nr_partial = 45, 
+#  partial = {
+#    next = 0xfffff3b0810ddb88, 
+#    prev = 0xfffff3b080ebdd08
+#  }, 
+#  nr_slabs = {
+#    counter = 99
+#  }, 
+#  total_objects = {
+#    counter = 3168
+#  }, 
+#  full = {
+#    next = 0xffff9eaf78402e30, 
+#    prev = 0xffff9eaf78402e30
+
+
+#		printf("  partial list: %p\n", node->slabs_partial)
+#		printf("  full list: %p\n", node->slabs_full)
+#		printf("  free list: %p\n", node->slabs_free)
+
+
+	}
+/*
+        struct list_head slabs_partial; // partial list first, better asm code 
+        struct list_head slabs_full;
+        struct list_head slabs_free;
+        unsigned long total_slabs;      // length of all slab lists 
+        unsigned long free_slabs;       // length of free slab list only 
+        unsigned long free_objects;
+        unsigned int free_limit;
+        unsigned int colour_next;       // Per-node cache coloring 
+        struct array_cache *shared;     // shared per node 
+        struct alien_cache **alien;     // on other nodes 
+        unsigned long next_reap;        // updated without locking 
+        int free_touched;               // updated without locking 
+#endif
+
+#ifdef CONFIG_SLUB
+        unsigned long nr_partial;
+        struct list_head partial;
+
+*/
+
+
+
+
+
+	exit()
+}
+
+%{
+#if 0
+struct kmem_cache {
+        struct kmem_cache_cpu __percpu *cpu_slab;
+        /* Used for retriving partial slabs etc */
+        slab_flags_t flags;
+        unsigned long min_partial;
+        unsigned int size;      /* The size of an object including meta data */
+        unsigned int object_size;/* The size of an object without meta data */
+        unsigned int offset;    /* Free pointer offset. */
+#ifdef CONFIG_SLUB_CPU_PARTIAL
+        /* Number of per cpu partial objects to keep around */
+        unsigned int cpu_partial;
+#endif
+        struct kmem_cache_order_objects oo;
+
+        /* Allocation and freeing of slabs */
+        struct kmem_cache_order_objects max;
+        struct kmem_cache_order_objects min;
+        gfp_t allocflags;       /* gfp flags to use on each alloc */
+        int refcount;           /* Refcount for slab cache destroy */
+        void (*ctor)(void *);
+        unsigned int inuse;             /* Offset to metadata */
+        unsigned int align;             /* Alignment */
+        unsigned int red_left_pad;      /* Left redzone padding size */
+        const char *name;       /* Name (only for display!) */
+        struct list_head list;  /* List of slab caches */
+#ifdef CONFIG_SYSFS
+        struct kobject kobj;    /* For sysfs */
+#endif
+
+        RH_KABI_REPLACE(struct work_struct kobj_remove_work,
+                        struct reciprocal_value reciprocal_size)
+        RH_KABI_DEPRECATE(struct memcg_cache_params, memcg_params)
+        RH_KABI_DEPRECATE(unsigned int, max_attr_size)
+        RH_KABI_DEPRECATE(struct kset *, memcg_kset)
+
+#ifdef CONFIG_SLAB_FREELIST_HARDENED
+        unsigned long random;
+#endif
+
+#ifdef CONFIG_NUMA
+        /*
+         * Defragmentation by allocating from a remote node.
+         */
+        unsigned int remote_node_defrag_ratio;
+#endif
+
+#ifdef CONFIG_SLAB_FREELIST_RANDOM
+        unsigned int *random_seq;
+#endif
+
+#ifdef CONFIG_KASAN
+        struct kasan_cache kasan_info;
+#endif
+
+        unsigned int useroffset;        /* Usercopy region offset */
+        unsigned int usersize;          /* Usercopy region size */
+
+        struct kmem_cache_node *node[MAX_NUMNODES];
+};
+
+#endif
+%}
+
+%{
+#if 0
+
+struct kmem_cache_cpu {
+	void **freelist;	/* Pointer to next available object */
+	unsigned long tid;	/* Globally unique transaction id */
+	struct page *page;	/* The slab from which we are allocating */
+#ifdef CONFIG_SLUB_CPU_PARTIAL
+	struct page *partial;	/* Partially allocated frozen slabs */
+#endif
+#ifdef CONFIG_SLUB_STATS
+	unsigned stat[NR_SLUB_STAT_ITEMS];
+#endif
+};
+#endif
+%}
+
+%{
+#if 0
+struct kmem_cache_node {
+	spinlock_t list_lock;
+
+#ifdef CONFIG_SLAB
+	struct list_head slabs_partial;	/* partial list first, better asm code */
+	struct list_head slabs_full;
+	struct list_head slabs_free;
+	unsigned long total_slabs;	/* length of all slab lists */
+	unsigned long free_slabs;	/* length of free slab list only */
+	unsigned long free_objects;
+	unsigned int free_limit;
+	unsigned int colour_next;	/* Per-node cache coloring */
+	struct array_cache *shared;	/* shared per node */
+	struct alien_cache **alien;	/* on other nodes */
+	unsigned long next_reap;	/* updated without locking */
+	int free_touched;		/* updated without locking */
+#endif
+
+#ifdef CONFIG_SLUB
+	unsigned long nr_partial;
+	struct list_head partial;
+#ifdef CONFIG_SLUB_DEBUG
+	atomic_long_t nr_slabs;
+	atomic_long_t total_objects;
+	struct list_head full;
+#endif
+#endif
+
+};
+#endif
+%}
+
+
+
+
