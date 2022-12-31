@@ -1,0 +1,701 @@
+#!/bin/bash
+
+CLREOL='\033[0K'
+
+#####
+BASE_REPO_URL=http://download-node-02.eng.bos.redhat.com/rhel-8/rel-eng/RHEL-8
+BASE_REPO_TYPE=install
+BASE_REPO_BASE_SUBPATH=/compose/BaseOS/x86_64/os
+BASE_REPO_SOURCE_SUBPATH=/compose/BaseOS/source/tree
+BASE_REPO_DEBUGINFO_SUBPATH=/compose/BaseOS/x86_64/debug/tree
+
+UPDATES_REPO_URL=http://download-node-02.eng.bos.redhat.com/rhel-8/rel-eng/updates/RHEL-8
+UPDATES_REPO_TYPE=install
+UPDATES_REPO_BASE_SUBPATH=/compose/BaseOS/x86_64/os
+UPDATES_REPO_SOURCE_SUBPATH=/compose/BaseOS/source/tree
+UPDATES_REPO_DEBUGINFO_SUBPATH=/compose/BaseOS/x86_64/debug/tree
+
+
+NFS_PKGS_PATH="/mnt/RH/rpms-rhel8"
+ARCH=x86_64
+DNF_RELEASEVER="--releasever=whatever"
+
+#####
+DEBUG_SCRIPT=1
+
+
+pwd=$(pwd)
+#core=core.86881.automount
+core=coredump
+root_path=$pwd/root
+dnf_conf=$pwd/dnf.conf
+hooks_path=$pwd/hooks.so
+rpms_path=$pwd/rpms
+exe=""
+core_arch=""
+lib_path=""
+exe_rpm_path=""
+
+sos_installed_file=""
+declare -A sos_installed_rpms
+
+##### regexes
+NVRA_RE='^(.*)-([^-]{1,})-([^-]{1,})\.([^-.]+)$'
+CANDIDATE_SPLIT_RE='^(.+)#(.+)#(.+)#(.+)$'
+
+# filesystem rpm regexes
+PRETRANS_LUA_RE='^pretrans scriptlet .using <lua>.:$'
+RETURN_RE='^return 0$'
+POSIX_MKDIR_RE='^posix\.mkdir\("([^"]+)"\)$'
+POSIX_SYMLINK_RE='^posix\.symlink\("([^"]+)", "([^"]+)"\)$'
+POSIX_CHMOD_RE='posix\.chmod\("([^"]+)", ([0-7]+)\)$'
+OS_REMOVE_RE='os\.remove\("([^"]+)"\)$'
+
+DEBUGINFO_REQUIRES_DEBUGINFO_RE='^(.+)-debuginfo\(([^\)]+)\) = ([0-9]+:)?([^-]{1,})-([^-]{1,})$'
+
+SPLIT_PROBABLE_RE='^(.*)-(([^-]{1,})-([^-]{1,})).src.rpm ([^ ]+) (.+)$'
+PATH_N_VRA_RE='^(/.+)/([^/]+)-([^-/]{1,}-[^-/]{1,}\.[^-./]+.rpm)$'
+
+get_core_details() {
+# old/alternate method
+#	exe=$(file $core | awk '{for (i = 1 ; i <= NF ; i++) { if ($i == "execfn:") { exe = $(i+1) ; if (substr(exe,1,1)==sprintf("%c", 0x27)) {exe=substr(exe,2)} ; if (substr(exe,length(exe)-1,2)==sprintf("%c,", 0x27)) {exe=substr(exe,1,length(exe)-2)}; print exe } }}')
+#    psargs: /usr/sbin/automount --systemd-service --dont-check-daemon
+	exe=$(eu-readelf -a $core | awk '$1=="psargs"{print $2}')
+
+	local objdump_arch=$(objdump -a $core | awk '$2=="file"&&$3=="format"{print $NF}')
+	case $objdump_arch in
+		elf64-x86-64) core_arch="x86_64" ; lib_path=/lib64 ;;
+		elf32-i386)   core_arch="i686" ; lib_path=/lib ;;
+		*) echo "Unrecognized coredump archigecture: $objdump_arch" ; exit 1 ;;
+	esac
+}
+map_arch() { # rpm dependencies like to use 'x86-64', while the rpm will use 'x86_64' as the arch...  map from whatever to the package arch
+	case $1 in
+		x86-64) echo x86_64 ;;
+		i386|i686) echo i686 ;;
+		*) echo $1 ;;
+	esac
+}
+
+debug_script() {
+	local debug_level=$1 ; shift
+	[[ $DEBUG_SCRIPT -lt $debug_level ]] && return
+	(
+		echo -n "${FUNCNAME[1]} @ ${BASH_SOURCE[1]}:${BASH_LINENO[1]} - $@"
+	) >&2
+}
+
+
+find_sos_installed() {
+	sos_installed_file=$(echo sos*/installed-rpms | awk '{print $1}')
+	if [[ -z $sos_installed_file ]] || [[ ! -f $sos_installed_file ]] ; then
+		echo "Unable to find sosreport*/installed-rpms" >&2
+		echo "please create a symlink from sosreport to a sosreport directory containing the installed-rpms" >&2
+		exit
+	fi
+	local rpm date pkg
+
+	debug_script 1 "found installed-rpms file: $sos_installed_file"
+	debug_script 1 "reading list of installed rpms from $sos_installed_file"
+	for pkg in $(awk '{print $1}' $sos_installed_file) ; do
+		debug_script 2 "processing sos*/installed - $pkg"
+		if [[ $pkg =~ $NVRA_RE ]] ; then
+			local n=${BASH_REMATCH[1]}
+			local v=${BASH_REMATCH[2]}
+			local r=${BASH_REMATCH[3]}
+			local a=${BASH_REMATCH[4]}
+
+			local value_str="$v-$r.$a"
+			[[ -n ${sos_installed_rpms[$n]} ]] && value_str="${sos_installed_rpms[$n]} $value_str"
+			sos_installed_rpms[$n]="$value_str"
+		else
+			:
+		fi
+	done
+}
+
+download_rpms() {
+	local debuginfo_str=""
+	[[ $@ =~ debug(info|source) ]] && debuginfo_str="--enablerepo='*debuginfo*'"
+
+	debug_script 1 "downloading rpms: $@"
+	LD_PRELOAD=$hooks_path dnf $DNF_RELEASEVER -q -c $dnf_conf $debuginfo_str download --downloadonly --downloaddir=$rpms_path $@ >&2
+}
+download_sos_installed_rpms() { # takes one or more %{NAME} and downloads all of the ${sos_installed_rpm[%{NAME}]}
+	local pkg_str n vra
+	local include_debuginfo=""
+	[[ $1 == "include_debuginfo" ]] && include_debuginfo=$1 && shift
+
+	for n in $@ ; do
+		for vra in ${sos_installed_rpms[$n]} ; do
+			pkg_str="$pkg_str $n-$vra"
+			[[ -n $include_debuginfo ]] && pkg_str="$pkg_str $n-debuginfo-$vra $n-debugsource-$vra" # may not work, due to different naming for debuginfo package
+		done
+	done
+	download_rpms $pkg_str
+}
+install_filesystem_rpm() {
+#	local filesystem_rpm=$(egrep -o '^filesystem-[^ ]+' $sos_installed_file)
+	local filesystem_rpm=filesystem-${sos_installed_rpms[filesystem]}
+	local fs_rpm_path
+	debug_script 1 "installing filesystem rpm: $filesystem_rpm"
+
+	local to_download
+
+	download_sos_installed_rpms filesystem
+
+	fs_rpm_path="$rpms_path/$filesystem_rpm.rpm"
+
+
+	[[ -f $fs_rpm_path ]] && echo "found filesystem rpm: $fs_rpm_path" || { echo "did not find filesystem rpm at $fs_rpm_path" ; exit ; }
+
+	local found_pretrans_lua=0
+	local new_script=$(mktemp)
+	echo "#!/bin/bash" >$new_script
+
+	echo "mkdir -p $root_path" >>$new_script
+	echo "cd $root_path" >>$new_script
+	echo "mkdir -p var" >>$new_script
+
+	local line
+	rpm -qp --scripts $fs_rpm_path | while read line ; do
+		[[ $line =~ $PRETRANS_LUA_RE ]] && found_pretrans_lua=1
+		if [[ $found_pretrans_lua -eq 1 ]] ; then
+			[[ $line =~ $RETURN_RE ]] && break
+
+			if [[ $line =~ $POSIX_MKDIR_RE ]] ; then
+				while [[ ${BASH_REMATCH[1]:0:1} == '/' ]] ; do
+					BASH_REMATCH[1]=${BASH_REMATCH[1]:1}
+				done
+				echo "mkdir -p ${BASH_REMATCH[1]}" >>$new_script
+			elif [[ $line =~ $POSIX_SYMLINK_RE ]] ; then
+				while [[ ${BASH_REMATCH[2]:0:1} == '/' ]] ; do
+					BASH_REMATCH[2]=${BASH_REMATCH[2]:1}
+				done
+				echo "ln -s ${BASH_REMATCH[1]} ${BASH_REMATCH[2]}" >>$new_script
+			elif [[ $line =~ $POSIX_CHMOD_RE ]] ; then
+				while [[ ${BASH_REMATCH[1]:0:1} == '/' ]] ; do
+					BASH_REMATCH[1]=${BASH_REMATCH[1]:1}
+				done
+				echo "chmod ${BASH_REMATCH[2]} ${BASH_REMATCH[1]}" >>$new_script
+			elif [[ $line =~ $OS_REMOVE_RE ]] ; then
+				while [[ ${BASH_REMATCH[1]:0:1} == '/' ]] ; do
+					BASH_REMATCH[1]=${BASH_REMATCH[1]:1}
+				done
+				echo "rm -f ${BASH_REMATCH[1]}" >>$new_script
+			fi
+		fi
+	done
+
+	chmod u+x $new_script
+	$new_script
+	rpm --root=$root_path -ivh --nodeps --noscripts $fs_rpm_path
+	rm -f $new_script
+
+	chmod u+w root
+}
+
+build_dnf_config() {
+
+	debug_script 1 "building dnf.conf file"
+
+	mkdir -p dnf-cache
+	mkdir -p root/dnf/logs
+	ln -s /home/dnf_repos/rhel8 root/dnf/cache
+
+(
+cat << EOFEOFEOF
+[main]
+gpgcheck=0
+installonly_limit=10
+strict=false
+assumeyes=1
+
+releasever=whatever
+# 7-day metadata
+metadata_expire=$((7*24*60*60))
+
+max_parallel_downloads = 10
+skip_if_unavailable = 1
+
+
+# this can be outside the installroot
+system_cachedir = $(pwd)/dnf-cache
+
+installroot = $(pwd)/root
+
+# these are relative to the installroot
+persistdir = dnf/
+cachedir = dnf/cache
+logdir = dnf/logs
+
+reposdir =
+
+EOFEOFEOF
+
+for repo_name in BASE UPDATES ; do
+	this_url=$(eval echo \$${repo_name}_REPO_URL)
+	repo_url=$this_url
+	this_repo_type=$(eval echo \$${repo_name}_REPO_TYPE)
+	this_base_subpath=$(eval echo \$${repo_name}_REPO_BASE_SUBPATH)
+	this_source_subpath=$(eval echo \$${repo_name}_REPO_SOURCE_SUBPATH)
+	this_debuginfo_subpath=$(eval echo \$${repo_name}_REPO_DEBUGINFO_SUBPATH)
+
+debug_script 1 "trying to dump repo url: $repo_url"
+
+	lynx --dump --listonly $repo_url | \
+		awk \
+		-vrepo_type=$this_repo_type \
+		-vbase_subpath=$this_base_subpath \
+		-vsource_subpath=$this_source_subpath \
+		-vdebuginfo_subpath=$this_debuginfo_subpath \
+'
+function print_repo_description(tag, description, baseurl, enabled) {
+	printf "[%s]\n", tag
+	printf "name = %s\n", description
+	printf "baseurl = %s\n", baseurl
+	printf "enabled = %d\n", enabled
+}
+
+(substr($2,1,7) == "http://") {
+	url = $2
+	oFS = FS
+	FS = "/"
+	$0 = url
+	tag = $(NF-1)
+	FS = oFS
+
+	if (tag ~ /^RHEL-8.[0-9]+.[0-9]+-(|updates-)[0-9.]+/) {
+		print_repo_description(tag, "RHEL Repo "repo_type""tag, url""base_subpath, 1)
+		print_repo_description(tag"-source", "RHEL Repo "repo_type""tag" source", url""source_subpath, 1)
+		print_repo_description(tag"-debuginfo", "RHEL Repo "repo_type""tag" debuginfo", url""debuginfo_subpath, 1)
+		printf "\n"
+	}
+}'
+
+done
+
+) >$dnf_conf.tmp
+if [[ -f $dnf_conf ]] ; then
+	if diff -q $dnf_conf $dnf_conf.tmp >/dev/null 2>&1 ; then
+		echo "dnf configuration not changed"
+		rm -f $dnf_conf.tmp
+	else
+		echo "dnf configuration updated--replacing with updated version"
+		mv $dnf_conf.tmp $dnf_conf
+	fi
+fi
+
+}
+build_hooks() {
+	gcc $pwd/hooks.c -o $hooks_path -shared -fPIC -rdynamic -ldl -g -O0
+}
+
+whatprovides_from_sos() {
+	local what=$1
+	local candidates candidate
+
+#	candidates=$(LD_PRELOAD=$hooks_path dnf $DNF_RELEASEVER -q -c $pwd/dnf.conf repoquery --whatprovides "$what" --queryformat "%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}#%{source_debug_name}-%{VERSION}-%{RELEASE}.%{ARCH}")
+	candidates=$(LD_PRELOAD=$hooks_path dnf $DNF_RELEASEVER -q -C -c $pwd/dnf.conf repoquery --whatprovides "$what" --queryformat "%{NAME}#%{VERSION}-%{RELEASE}.%{ARCH}#%{source_name}#%{debug_name}\n")
+
+#echo "for '$1', candidates:" >&2
+#echo "$candidates" | sed 's/^/    /g' >&2
+
+
+#$ objdump -p /lib64/libc.so.6 | grep 'file format'
+#/lib64/libc.so.6:     file format elf64-x86-64
+
+	local found=""
+	local n vra source_name debug_name
+	for candidate in ${candidates[*]} ; do
+		if [[ $candidate =~ $CANDIDATE_SPLIT_RE ]] ; then
+			n=${BASH_REMATCH[1]}
+			vra=${BASH_REMATCH[2]}
+			source_name=${BASH_REMATCH[3]}
+			debug_name=${BASH_REMATCH[4]}
+
+			if [[ -n ${sos_installed_rpms[$n]} ]] ; then
+#			if egrep -q "^$n-$vra\s" $sos_installed_file ; then
+				found="$found $n-$vra"
+
+#				found=1
+#				break
+				:
+				# maybe we need to see what happens if more than one rpm
+			fi
+		fi
+	done
+
+	if [[ -n $found ]] ; then
+#		echo "found:" >&2
+#		echo "$n-$vra" >&2
+		[[ -n $debug_name ]] && echo "$debug_name-$vra"
+		return 0
+	fi
+	return 1
+}
+whatprovides_raw() {
+	local obj candidate candidates
+
+#echo "in whatprovides_raw - need what provides $@" >&2
+
+	candidates=$(LD_PRELOAD=$hooks_path dnf $DNF_RELEASEVER -q -C -c $pwd/dnf.conf shell <(
+#	candidates=$(LD_PRELOAD=$hooks_path dnf $DNF_RELEASEVER -v -c $pwd/dnf.conf shell <(
+			for obj in $@ ; do
+				echo "repoquery --whatprovides '$obj' --queryformat '%{NAME}#%{VERSION}-%{RELEASE}.%{ARCH}#%{source_name}#%{debug_name}\n'"
+			done
+		)
+	)
+#	echo "candidates: $candidates" >&2
+
+	for candidate in $candidates ; do
+                if [[ $candidate =~ $CANDIDATE_SPLIT_RE ]] ; then
+                        local n=${BASH_REMATCH[1]}
+                        local vra=${BASH_REMATCH[2]}
+                        local source_name=${BASH_REMATCH[3]}
+                        local debug_name=${BASH_REMATCH[4]}
+			local sos_vra
+
+			[[ -z ${sos_installed_rpms[$n]} ]] && continue
+
+			for sos_vra in ${sos_installed_rpms[$n]} ; do
+				if [[ $vra == $sos_vra ]] ; then
+					echo "$n-$vra"
+					[[ -n $debug_name ]] && echo "$debug_name-$vra ${debug_name/debuginfo/debugsource}"
+				fi
+			done
+		fi
+	done
+}
+
+
+
+mkdir -p $rpms_path
+#exe_rpms=$(whatprovides_from_sos /usr/sbin/automount)
+#LD_PRELOAD=$hooks_path dnf -q -c $dnf_conf --enablerepo='*debuginfo*' download --downloadonly --downloaddir=$rpms_path $exe_rpms
+
+#for rpm in $exe_rpms ; do
+#	rpm --root=$root_path -ivh --nodeps --noscripts $rpm
+#done
+
+
+declare -A rpms_downloaded
+declare -A rpms_installed
+declare -A objs_installed
+find_fetch_install() {
+	local thang=$1
+	local rpm
+
+	[[ -n ${objs_installed[$thang]} ]] && return
+
+#echo "find_fetch_install $thang" >&2
+
+#	local rpms=$(whatprovides_from_sos "$thang")
+	local rpms=$(whatprovides_raw "$thang")
+	if [[ -n $rpms ]] ; then
+		local to_download=""
+		local to_install=""
+
+		for rpm in $rpms ; do
+			[[ -z ${rpms_installed[$rpm]} ]] && [[ -z ${rpms_downloaded[$rpm]} ]] && to_download="$to_download $rpm"
+			[[ -z ${rpms_installed[$rpm]} ]] && to_install="$to_install $rpm"
+		done
+		if [[ -n $to_download ]] ; then
+#echo "downloading $to_download" >&2
+
+			local debuginfo_str=""
+			[[ $to_download =~ debug(info|source) ]] && debuginfo_str="--enablerepo='*debuginfo*'"
+
+			LD_PRELOAD=$hooks_path dnf $DNF_RELEASEVER -q -c $dnf_conf $debuginfo_str download --downloadonly --downloaddir=$rpms_path $to_download
+
+
+
+			for rpm in $to_download ; do
+				rpms_downloaded[$rpm]=1
+			done
+		fi
+		if [[ -n $to_install ]] ; then
+			local not_found=0
+#echo "installing $to_install" >&2
+			for rpm in $to_install ; do
+#				[[ -f $rpms_path/$rpm.rpm ]] && echo "installing rpm $rpms_path/$rpm" >&2
+				[[ ! -f $rpms_path/$rpm.rpm ]] && echo "could not find $rpms_path/$rpm.rpm" >&2 && not_found=1 && continue
+				rpm --root=$root_path -ivh --nodeps --noscripts $rpms_path/$rpm.rpm
+				rpms_installed[$rpm]=1
+			done
+			[[ $not_found == 0 ]] && objs_installed[$thang]="$rpms"
+		fi
+	else
+		echo "UNABLE TO FIND RPM PROVIDING '$thang'"
+exit
+	fi
+}
+internal_ldd() {
+	if [[ -e $root_path/$1 ]] ; then
+		objdump -p $root_path/$1 | awk -vlib_path=$lib_path '($1=="NEEDED"){print lib_path"/"$2}' | sort -u
+	else
+		echo $1
+	fi
+}
+install_exe_and_libs() {
+	local last_count=0
+	local current_count
+	local current_libs_list=""
+	local to_install=$1
+	local obj
+
+	find_fetch_install "$to_install"
+
+#	current_libs_list=$(objdump -p $root_path$exe | awk '($1=="NEEDED"){print "root/lib64/"$2}' | sort -u)
+#	to_install=$(objdump -p $root_path$to_install | awk '($1=="NEEDED"){print $2}' | sort -u)
+	to_install=$(internal_ldd $1)
+#	current_count=$(echo $current_libs_list | wc -w)
+local iter=0
+	while [[ -n $to_install ]] ; do
+		local next_to_install=""
+
+iter=$(($iter + 1))
+echo "iteration $iter - need to install: $to_install"
+
+		for obj in $to_install ; do
+			[[ -n ${objs_installed[$obj]} ]] && continue
+			find_fetch_install "$obj"
+			[[ -f $root_path/$obj ]] && next_to_install="$next_to_install $(internal_ldd $obj)"
+
+
+		done
+		to_install=""
+		for obj in $next_to_install ; do
+			[[ -n ${objs_installed[$obj]} ]] && continue
+			to_install="$to_install $obj"
+		done
+#		to_install=$next_to_install
+	done
+
+}
+determine_core_needed_objs() {
+	eu-readelf -a $core | egrep '/usr/lib' | awk '{print $NF}' | sort -u
+}
+determine_needed_objs() {
+	local obj
+
+	local needed_objs
+	needed_objs=$(for obj in $@ ; do
+		internal_ldd $obj
+	done | sort -u)
+	local still_need=$(for obj in $needed_objs ; do
+		[[ ! -f $root_path/$obj ]] && echo "still need $obj" >&2 && echo $obj
+	done)
+	echo $still_need
+}
+
+determine_needed_rpms() {
+#	local all_needed_libs=$(eu-readelf -a $core | egrep '/usr/lib' | awk '{print $NF}' | sort -u)
+	local all_needed_libs="$@"
+	local candidate
+
+	echo "need $(echo $exe $all_needed_libs | wc -w) libs" >&2
+	needed_count=$(echo $exe $all_needed_libs | wc -w)
+	local candidate_count=0
+	local count=0
+
+	local selected_rpms
+
+	declare -A selected_rpms
+
+if [[ 42 -ne 42 ]] ; then
+	##### this stuff skipped
+	for obj in $exe $all_needed_libs ; do
+		echo -en "for $count/$needed_count files, found candidate rpms: $candidate_count, selected: ${#selected_rpms[@]}\r" >&2
+
+#		local new_candidates=$(LD_PRELOAD=$hooks_path dnf $DNF_RELEASEVER -q -C -c $pwd/dnf.conf repoquery --queryformat "%{NAME}#%{VERSION}-%{RELEASE}.%{ARCH}#%{source_name}#%{debug_name}" --whatprovides $obj)
+
+
+		count=$(($count + 1))
+
+		for candidate in $new_candidates ; do
+			echo -en "${CLREOL}checking $candidate for $obj\r" >&2
+			if [[ $candidate =~ $CANDIDATE_SPLIT_RE ]] ; then
+				local rpm=${BASH_REMATCH[1]}
+				local vra=${BASH_REMATCH[2]}
+				local source_name=${BASH_REMATCH[3]}
+				local debug_name=${BASH_REMATCH[4]}
+
+				if egrep -q "^$rpm-$vra\s" $sos_installed_file ; then
+					selected_rpms[$rpm-$vra]=1
+
+					echo -e "${CLREOL}for $obj - found $rpm-$vra" >&2
+					if [[ -n $debug_name ]] ; then
+						selected_rpms[$debug_name-$vra]=1 ## may need debugsource as well
+						echo -e "${CLREOL}for $obj - found $debug_name-$vra" >&2
+					fi
+				fi
+
+			fi
+		done
+		candidate_count=$(($candidate_count + $(echo $new_candidates | wc -w) ))
+	done
+	echo -e "$CLREOL" >&2
+
+	echo "selected ${#selected_rpms[@]} rpms ${!selected_rpms[@]}" >&2
+	echo ${!selected_rpms[@]}
+else
+	local needed=$(whatprovides_raw $exe $all_needed_libs)
+
+	echo $needed
+fi
+
+
+}
+download_selected_rpms() {
+#	LD_PRELOAD=$hooks_path dnf $DNF_RELEASEVER -q -c $dnf_conf --enablerepo='*debuginfo*' download --downloadonly --downloaddir=$rpms_path ${!selected_rpms[@]}
+	echo downloading rpms: $@ >&2
+	LD_PRELOAD=$hooks_path dnf $DNF_RELEASEVER -q -c $dnf_conf --enablerepo='*debuginfo*' download --downloadonly --downloaddir=$rpms_path $@
+
+	local rpm
+	local downloaded_rpms=""
+
+#	for rpm in ${!selected_rpms[@]} ; do
+	for rpm in $@ ; do
+		if [[ -f $rpms_path/$rpm.rpm ]] ; then
+			downloaded_rpms="$downloaded_rpms $rpms_path/$rpm.rpm"
+		fi
+	done
+	echo $downloaded_rpms
+}
+install_rpms() {
+	local f
+
+	echo "installing rpms" >&2
+	for f in $@ ; do
+		[[ -f $f ]] && rpm --root=$root_path -ivh --nodeps --noscripts $f
+	done
+}
+do_installs() {
+	local core_objs=$(determine_core_needed_objs) # needed objects based on what the core file says
+	echo "the core dump says we need $core_objs" >&2
+
+	local selected_rpms=$(determine_needed_rpms $core_objs)
+	local downloaded_rpms=$(download_selected_rpms $selected_rpms)
+
+	echo "downloaded rpms: $downloaded_rpms" >&2
+
+	install_rpms $downloaded_rpms
+
+	# we may need to run throught this more than once
+
+	#echo "after installing rpms, need to check which of the following we might still need: $core_objs $exe"
+	needed_objs=$(determine_needed_objs $core_objs $exe)
+	while [[ -n $needed_objs ]] ; do
+		selected_rpms=$(determine_needed_rpms $needed_objs)
+
+		[[ -z $selected_rpms ]] && echo "found no rpms to install" && break
+
+		downloaded_rpms=$(download_selected_rpms $selected_rpms)
+		echo "downloaded rpms: $downloaded_rpms" >&2
+
+		install_rpms $downloaded_rpms
+		needed_objs=$(determine_needed_objs $needed_objs)
+	done
+}
+
+
+### some debuginfo rpms also like to require another debuginfo (libmount-debuginfo from util-linux also wants util-linux-debuginfo, for example)
+get_additional_debuginfos() {
+	local also_need_debuginfo=$(rpm --root=$root_path -qa '*debuginfo*' --requires | grep debuginfo | sort | while read l ; do
+		if [[ $l =~ $DEBUGINFO_REQUIRES_DEBUGINFO_RE ]] ; then
+			local n=${BASH_REMATCH[1]}
+			local a=$(map_arch ${BASH_REMATCH[2]})
+			local e=${BASH_REMATCH[3]}
+			local v=${BASH_REMATCH[4]}
+			local r=${BASH_REMATCH[5]}
+
+			echo "$n-debuginfo-$v-$r.$a $n-debugsource-$v-$r.$a"
+			debug_script 1 "also need debuginfo/debugsource $n-$v-$r.$a"
+		else
+			echo "didn't match regex" >&2
+		fi
+	done | sort -u)
+
+	[[ -z $also_need_debuginfo ]] && debug_script 1 "don't need any additional debuginfo/debugsource rpms" && return
+	debug_script 1 "installed debuginfo rpms would also like these as well: $also_need_debuginfo"
+
+	local downloaded_rpms=$(download_selected_rpms $also_need_debuginfo)
+	if [[ -n $downloaded_rpms ]] ; then
+		debug_script 1 "downloaded rpms: $downloaded_rpms"
+		install_rpms $downloaded_rpms
+	fi
+}
+# try to get any debugsource for all of the debuginfo installed
+get_additional_debugsources() {
+	local all_debuginfos=$(rpm --root=$root_path -qa '*debuginfo*' | sort)
+
+	local rpm  debugsources=""
+	for rpm in $all_debuginfos ; do
+		debugsources="$debugsources ${rpm/-debuginfo-/-debugsource-}"
+	done
+
+	local downloaded_rpms=$(download_selected_rpms $debugsources)
+	if [[ -n $downloaded_rpms ]] ; then
+		echo "downloaded rpms: $downloaded_rpms" >&2
+		install_rpms $downloaded_rpms
+	fi
+}
+create_run_gdb() {
+
+cat << EOFEOFRUNGDB >$pwd/run_gdb
+#!/bin/bash
+
+pwd=\$(pwd)
+debug_root=root
+#debug_root_absolute="\$root_path"
+debug_root_absolute="\$pwd/\$debug_root"
+corefile=coredump
+core_executable="$exe"
+exe=\$debug_root\$core_executable
+
+(cat << EOFEOFGDBINIT >\$pwd/gdb_init
+set debug symtab-create 0
+set sysroot \$debug_root_absolute
+set use-deprecated-index-sections on
+set debug-file-directory \$debug_root/usr/lib/debug
+set substitute-path /usr/src/debug \$debug_root/usr/src/debug
+set solib-search-path \$debug_root
+noshared
+shared
+EOFEOFGDBINIT
+)
+exec gdb -ix \$pwd/gdb_init \$exe \$corefile
+EOFEOFRUNGDB
+
+	chmod +x run_gdb
+}
+
+#########################################################################
+
+echo "getting info about the core file"
+get_core_details
+
+echo "setting up dnf config and downloading repo data"
+build_dnf_config
+build_hooks
+
+echo "getting the list of installed rpms"
+find_sos_installed
+
+echo "doing initial 'root' filesystem setup"
+install_filesystem_rpm
+
+echo "Installing rpms"
+do_installs
+
+echo "checking for and installing additional debuginfo rpms"
+get_additional_debuginfos
+
+echo "checking for and installing debugsource rpms"
+get_additional_debugsources
+
+echo "setting up 'run_gdb' script"
+create_run_gdb
+
+echo "process complete.  Run './run_gdb' to enter debug environment"
