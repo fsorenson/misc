@@ -3,6 +3,8 @@
 use strict;
 use warnings;
 
+use Data::Dumper;
+
 sub trim {
 	my $s = shift;
 	$s =~ s/^\s+|\s+$//g;
@@ -695,8 +697,29 @@ my $filter = "(nfs.name || nfs.pathname.component) && nfs.fh.hash";
 #open (my $input_fh, "-|", "tshark -2n -r " . $input_file . " -Tfields -E header=n -e frame.number -e rpc.programversion -e rpc.msgtyp -e nfs.opcode -e nfs.status3 -e nfs.nfsstat4 -e nfs.fh.hash -e nfs.name -e nfs.pathname.component -e _ws.col.Info '$filter'") or die "could no open file $input_file: $!";
 
 #my $cmd = "tshark -2n -r " . $input_file . " -Tfields -E header=n -e frame.number -e rpc.programversion -e rpc.msgtyp -e nfs.procedure_v3 -e nfs.opcode -e nfs.status3 -e nfs.nfsstat4 -e nfs.fh.hash -e nfs.name -e nfs.pathname.component -e _ws.col.Info '$filter'";
-my $cmd = "tshark -n -r " . $input_file . " -Tfields -E header=n -e frame.number -e rpc.programversion -e rpc.msgtyp -e rpc.xid -e nfs.procedure_v3 -e nfs.opcode -e nfs.status3 -e nfs.nfsstat4 -e nfs.fh.hash -e nfs.name -e nfs.pathname.component -e _ws.col.Info '$filter'";
+
+
+my @tshark_columns = (
+	'frame.number', 'rpc.programversion', 'rpc.msgtyp', 'rpc.xid',
+	'nfs.procedure_v3', 'nfs.opcode', 'nfs.status3', 'nfs.nfsstat4',
+	'nfs.fh.hash', 'nfs.name', 'nfs.pathname.component',
+	'_ws.col.Info'
+);
+
+my %tshark_col_nums;
+my $cmd = 'tshark -n -r ' . $input_file . ' -Tfields -E header=n';
+
+for (my $i = 0 ; $i < scalar(@tshark_columns) ; $i++) {
+	$tshark_col_nums{$tshark_columns[$i]} = $i;
+	$cmd .= ' -e ' . $tshark_columns[$i];
+}
+
+#my $cmd = "tshark -n -r " . $input_file . " -Tfields -E header=n -e frame.number -e rpc.programversion -e rpc.msgtyp -e rpc.xid -e nfs.procedure_v3 -e nfs.opcode -e nfs.status3 -e nfs.nfsstat4 -e nfs.fh.hash -e nfs.name -e nfs.pathname.component -e _ws.col.Info '$filter'";
+
+$cmd .= '"' . $filter . '"';
+
 printf "executing: %s\n", $cmd;
+
 
 #open (my $input_fh, "-|", $cmd);
 #open (my $input_fh, "out");
@@ -734,6 +757,16 @@ while (<$input_fh>) {
 #	my $names_count = scalar @names;
 
 	my $path_component_str = $fields[10];
+
+	my $info = join " ", @fields[11 .. (scalar(@fields) - 1)];
+
+if (0) {
+	for (my $i = 0 ; $i < scalar(@tshark_columns) ; $i++) {
+		printf "fields[%d] (%s): %s\n", $i, $tshark_columns[$i], $fields[$i];
+	}
+	printf "fields[%d - %d] (%s): %s\n", scalar(@tshark_columns) - 1, scalar(@fields) - 1, $tshark_columns[scalar(@tshark_columns) - 1], $info;
+}
+
 
 	if ($rpc_programversion eq "3") {
 		parse_nfsv3($line, $frame, $rpc_programversion, $rpc_msgtyp, $rpc_xids_str, $procedures_str, $nfs_status3_str, $fhs_str, $names_str, $path_component_str);
