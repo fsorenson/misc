@@ -3,6 +3,8 @@
 use strict;
 use warnings;
 
+use Data::Dumper;
+
 sub trim {
 	my $s = shift;
 	$s =~ s/^\s+|\s+$//g;
@@ -140,6 +142,7 @@ sub collapse_var {
 }
 
 sub all_nfs_status3_success {
+	printf "comparing collapsed '%s' with zero\n", collapse_var($_[0]);
 	return 1 if (collapse_var($_[0]) == 0);
 	return 0;
 }
@@ -308,8 +311,19 @@ sub parse_nfsv3 {
 
 	return if ($rpc_msgtyp eq "MIXED"); # would this ever happen?
 
-	return if (!all_nfs_status3_success($nfs_status3_str)); # TODO: partial success?
+	if ($rpc_msgtyp == 0) { # calls
+
+
+
+	} else { # replies
+		return if (!all_nfs_status3_success($nfs_status3_str)); # TODO: partial success?
+
+
+	}
+
 	return if (scalar @procedures > 1); # TODO: frames with more than one nfs procedure (multiple RPCs)
+
+
 
 	printf "frame %d\n", $frame;
 
@@ -345,8 +359,6 @@ printf "names: %s (%d)\n", join("|", @names), scalar @names;
 			printf "unexpected number of fhs (%d) or names (%d); expected 1\n", $fhs_count, $names_count;
 		}
 		return;
-
-
 
 #119     3,3     0       8                               0xec1e5351      testfile2               V3 CREATE Call, DH: 0xec1e5351/testfile2 Mode: UNCHECKED
 #120     3,3     1       8               0               0x5c30715e,0xec1e5351   testfile2               V3 CREATE Reply (Call In 119)
@@ -695,8 +707,29 @@ my $filter = "(nfs.name || nfs.pathname.component) && nfs.fh.hash";
 #open (my $input_fh, "-|", "tshark -2n -r " . $input_file . " -Tfields -E header=n -e frame.number -e rpc.programversion -e rpc.msgtyp -e nfs.opcode -e nfs.status3 -e nfs.nfsstat4 -e nfs.fh.hash -e nfs.name -e nfs.pathname.component -e _ws.col.Info '$filter'") or die "could no open file $input_file: $!";
 
 #my $cmd = "tshark -2n -r " . $input_file . " -Tfields -E header=n -e frame.number -e rpc.programversion -e rpc.msgtyp -e nfs.procedure_v3 -e nfs.opcode -e nfs.status3 -e nfs.nfsstat4 -e nfs.fh.hash -e nfs.name -e nfs.pathname.component -e _ws.col.Info '$filter'";
-my $cmd = "tshark -n -r " . $input_file . " -Tfields -E header=n -e frame.number -e rpc.programversion -e rpc.msgtyp -e rpc.xid -e nfs.procedure_v3 -e nfs.opcode -e nfs.status3 -e nfs.nfsstat4 -e nfs.fh.hash -e nfs.name -e nfs.pathname.component -e _ws.col.Info '$filter'";
+
+
+my @tshark_columns = (
+	'frame.number', 'rpc.programversion', 'rpc.msgtyp', 'rpc.xid',
+	'nfs.procedure_v3', 'nfs.opcode', 'nfs.status3', 'nfs.nfsstat4',
+	'nfs.fh.hash', 'nfs.name', 'nfs.pathname.component',
+	'_ws.col.Info'
+);
+
+my %tshark_col_nums;
+my $cmd = 'tshark -n -r ' . $input_file . ' -Tfields -E header=n';
+
+for (my $i = 0 ; $i < scalar(@tshark_columns) ; $i++) {
+	$tshark_col_nums{$tshark_columns[$i]} = $i;
+	$cmd .= ' -e ' . $tshark_columns[$i];
+}
+
+#my $cmd = "tshark -n -r " . $input_file . " -Tfields -E header=n -e frame.number -e rpc.programversion -e rpc.msgtyp -e rpc.xid -e nfs.procedure_v3 -e nfs.opcode -e nfs.status3 -e nfs.nfsstat4 -e nfs.fh.hash -e nfs.name -e nfs.pathname.component -e _ws.col.Info '$filter'";
+
+$cmd .= '"' . $filter . '"';
+
 printf "executing: %s\n", $cmd;
+
 
 #open (my $input_fh, "-|", $cmd);
 #open (my $input_fh, "out");
@@ -713,6 +746,9 @@ while (<$input_fh>) {
 	my $frame = $fields[0];
 
 	my $rpc_programversion = parse_programversion($fields[1]);
+
+printf "rpc program version: %d\n", $rpc_programversion;
+
 	my $rpc_msgtyp = $fields[2];
 
 	my $rpc_xids_str = $fields[3];
@@ -734,6 +770,16 @@ while (<$input_fh>) {
 #	my $names_count = scalar @names;
 
 	my $path_component_str = $fields[10];
+
+	my $info = join " ", @fields[11 .. (scalar(@fields) - 1)];
+
+if (0) {
+	for (my $i = 0 ; $i < scalar(@tshark_columns) ; $i++) {
+		printf "fields[%d] (%s): %s\n", $i, $tshark_columns[$i], $fields[$i];
+	}
+	printf "fields[%d - %d] (%s): %s\n", scalar(@tshark_columns) - 1, scalar(@fields) - 1, $tshark_columns[scalar(@tshark_columns) - 1], $info;
+}
+
 
 	if ($rpc_programversion eq "3") {
 		parse_nfsv3($line, $frame, $rpc_programversion, $rpc_msgtyp, $rpc_xids_str, $procedures_str, $nfs_status3_str, $fhs_str, $names_str, $path_component_str);
