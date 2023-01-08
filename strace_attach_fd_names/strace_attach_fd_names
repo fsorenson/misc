@@ -1397,13 +1397,13 @@ $patterns{'possible_renameat2_flags'} = "(?:, $patterns{'renameat2_flags'})?",
 	'timerfd_settime',
 
 	'connect', "setsockopt", 'bind', 'listen', 'shutdown', 'accept', 'accept4',
-	'send', 'sendto', 'sendmsg',
+	'send', 'sendto', 'sendmsg', 'sendmmsg',
 
 );
 
 @generic_dfd_pathname_functions = ( "faccessat", "fchownat", "unlinkat", "fchmodat",
 	"utimensat", "futimensat", "mkdirat", "fstatat", "fstatat64", 'statx',
-	"newfstatat",
+	"newfstatat", "readlinkat",
 	"name_to_handle_at",
 );
 
@@ -1411,101 +1411,92 @@ $patterns{'possible_renameat2_flags'} = "(?:, $patterns{'renameat2_flags'})?",
 # fsync ioctl select
 #       int symlinkat(const char *target, int newdirfd, const char *linkpath);
 @no_parsing_functions = (
-	'getpid', 'getuid', 'geteuid', 'getgid', 'getegid',
-	'setpgid', 'getpgid', 'chown', 'lchown',
-	'futex', 'access', 'stat', 'stat64', 'lstat',
-	'brk', 'munmap', 'mprotect',
-	'prctl', 'arch_prctl', 'uname', 'prlimit', 'prlimit64', 'set_robust_list', 'set_tid_address',
-	'wait4', 'kill', 'exit_group', 'statfs',
-	'getrlimit', 'setrlimit', 'getxattr', 'lgetxattr',
-	'mremap', 'madvise',
-	'clock_gettime', 'clock_getres',
-	'sched_yield', 'sched_getaffinity', 'sched_setaffinity',
-	'mkdir', 'rmdir', 'link', 'unlink',
+	'access', 'alarm', 'arch_prctl',
 
-
-	# TODO:
-	'mmap', 'mmap2',
-
-	# TODO: gettid
-	'gettid',
+	'brk',
 
 	'capget', 'capset',
+	"chmod", 'chown', 'clock_gettime', 'clock_getres',
 
+	'exit_group',
+
+	'futex',
 
 	# TODO:
-	'poll', 'select',
 
+	'io_cancel', # TODO: parse args for the fds
+	'io_destroy', # TODO: parse args for the fd
 	'io_getevents', # TODO: parse args for fds
+	'io_setup', # TODO: parse args for the fds
 	'io_submit', # TODO: parse args for fds
 
+	'io_uring_enter',
+	'io_uring_register',
+	'io_uring_setup',
+	'ioprio_get',
+	'ioprio_set',
 
-	"alarm",
-	"chmod",
+
+
+
 	"get_mempolicy",
-	"getgroups",
-	"getpgrp",
-	"getppid",
-	"getpriority",
-	"getrandom",
-	"getresgid",
-	"getresuid",
-	"getrusage",
-	"getsid",
-	"getsockname",
-	"getsockopt",
-	'getxattr',
-	"keyctl",
-	'listxattr',
-	'mbind',
-	'mlock',
+	"getgroups", "getpgrp", 'getpid', "getppid", "getpriority",
+	"getrandom", 'getrlimit', "getrusage", "getsid",
+	"getsockname", "getsockopt", 'getxattr', 'lgetxattr',
+	'getuid', 'geteuid', 'getreuid', 'getresuid',
+	'getgid', 'getegid', 'getresgid',
+	'gettid', # TODO:
+	'getpgid',
+
+
+	"keyctl", 'kill',
+
+	'lchown', 'listxattr', 'lstat',
+
+	'madvise', 'mbind', 'mkdir', 'mknod',
+	'mlock', 'mprotect', 'mremap', 'munmap',
+	'mount',
+	'mmap', 'mmap2', # TODO:
+
 	"nanosleep",
-	"pipe2",
-	"ppoll",
-	"pselect6",
-	"recvfrom",
-	"recvmsg",
-	"rename",
-	'rt_sigaction',
-	"rt_sigpending",
-	'rt_sigprocmask',
-	'rt_sigqueueinfo',
-	'rt_sigreturn',
-	"rt_sigtimedwait",
-	"sched_setscheduler",
-	"sched_get_priority_min",
-	"sched_get_priority_max",
-	"sched_setpriority_min",
-	"sched_setpriority_max",
-	"sched_setscheduler",
-	"semctl",
-	"semget",
-	"semop",
-	"setgid",
-	"setgroups",
-	"setpriority",
-	"setregid",
-	"setresgid",
-	"setresuid",
-	"setreuid",
-	'setsid',
-	"setuid",
-	'setxattr',
-	"shmat",
-	"shmctl",
-	"shmdt",
-	"shmget",
-	"sigaltstack",
-	"sysinfo",
-	"symlink", # TODO: relative paths
-	"symlinkat", # TODO: 2nd arg is a dfd
-	'times',
-	"tgkill",
-	"umask",
 
-	'timer_delete',
 
+	'pipe2', 'ppoll', 'prlimit', 'prlimit64',
+	'pselect', 'pselect6', # TODO find the fds
+	'poll', # TODO: parse args for the fds
+
+
+	"recvfrom", "recvmsg", "rename", 'rmdir',
+	'rt_sigaction', "rt_sigpending", 'rt_sigprocmask', 'rt_sigqueueinfo',
+	'rt_sigreturn', "rt_sigtimedwait",
+	'prctl',
+
+	"sched_setscheduler", "sched_get_priority_min", "sched_get_priority_max",
+	"sched_setpriority_min", "sched_setpriority_max",
+	"semctl", "semget", "semop",
+	"setgid", "setgroups", "setpriority",
+	'setrlimit',
+	"setregid", "setresgid", 'setsid',
 	'set_thread_area',
+	'setpgid',
+	'select', # TODO: parse args for the fds
+	'stat', 'stat64',
+
+	'setuid', 'seteuid', 'setreuid', 'setresuid',
+	'sched_yield', 'sched_getaffinity', 'sched_setaffinity',
+	'set_robust_list', 'set_tid_address', 'statfs',
+
+
+	'setxattr',
+	"shmat", "shmctl", "shmdt", "shmget",
+	"sigaltstack", "sysinfo",
+	"symlink", # TODO: relative paths "symlinkat", # TODO: 2nd arg is a dfd
+
+	"tgkill", 'timer_delete', 'times',
+
+	'umount', 'umount2',
+	'uname', 'unlink', "umask",
+	'wait4', 'waitpid',
 );
 
 
