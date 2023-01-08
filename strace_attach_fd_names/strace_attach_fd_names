@@ -3,13 +3,13 @@
 use strict;
 use warnings FATAL => 'all';
 
-use List::MoreUtils qw/indexes/;
+#use List::MoreUtils qw/indexes/;
 use File::Basename qw/basename/;
 use Scalar::Util qw(looks_like_number);
 use Getopt::Long;
 
 use Data::Dumper;
-use Devel::StackTrace;
+#use Devel::StackTrace;
 use constant { true => 1, false => 0 };
 use Errno qw( :POSIX);
 
@@ -167,9 +167,9 @@ sub output_errors {
 	}
 }
 sub dump_backtrace {
-	my $trace = Devel::StackTrace->new;
+#	my $trace = Devel::StackTrace->new;
 	printf("\n");
-	print $trace->as_string;
+#	print $trace->as_string;
 	printf("\n");
 }
 sub print_pattern {
