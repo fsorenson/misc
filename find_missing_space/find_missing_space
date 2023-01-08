@@ -99,6 +99,44 @@ END {
 	exit;
 }
 
+sub fs_magic_to_fstype {
+	my $magic = shift;
+	my %fstype = (
+		4989		=> "ext",	# 0x0000137D
+		61265		=> "ext2_old",	# 0x0000EF51
+		61267		=> "ext2",	# 0x0000EF53
+		0xef53		=> "ext3",
+		0xef53		=> "ext4",
+
+		0x58465342	=> "xfs",
+	);
+	return $fstype{$magic} if (defined($fstype{$magic}));
+	return "";
+}
+
+sub do_statfs {
+	my @fields = ('f_type', 'f_bsize', 'f_blocks', 'f_bfree', 'f_bavail', 'f_files', 'f_ffree', 'f_fsid', 'f_namelen', 'f_frsize', 'f_flags');
+	my $dir = shift;
+	my $buf = '\0'x512;
+	my $ret = syscall(&SYS_statfs, $dir, $buf);
+	my %stats = ();
+	if ($ret == 0) {
+		my @parts = unpack "Q10L1", $buf;
+
+		for (my $i = 0 ; $i < scalar(@fields) ; $i++) {
+			$stats{$fields[$i]} = $parts[$i];
+		}
+		$stats{'f_type'} = fs_magic_to_fstype($stats{'f_type'});
+		my @tmp = unpack("L2", pack("Q", $stats{'f_fsid'}));
+		$stats{'f_fsid'} = \@tmp;
+	} else {
+		for (my $i = 0 ; $i < scalar(@fields) ; $i++) {
+			$stats{$fields[$i]} = '';
+		}
+	}
+	return %stats;
+}
+
 sub max_string_len {
 	my $max_len = 0;
 	while (scalar @_) {
@@ -735,6 +773,14 @@ for my $dir (@ARGV) {
 			next;
 		}
 	}
+
+	# look for 'deleted-but-open' files, if possible
+	my %statfs = do_statfs($dir);
+
+	if ($statfs{'f_type'} eq "xfs") { # for xfs, we may be able to use xfs_db to find deleted-but-open inodes
+	}
+	# can we do the same for other filesystems?
+
 
 	if ($config{'do_mount'}) {
 		# get this thing bind-mounted
