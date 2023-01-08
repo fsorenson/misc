@@ -143,8 +143,29 @@ my %syscall_functions;
 my @generic_fd_functions;
 my @generic_dfd_pathname_functions;
 my @no_parsing_functions;
+my @logged_errors;
 
 
+sub log_error {
+	while (scalar @_) {
+		my $str = shift;
+#printf "logging error: %s\n", $str;
+		push @logged_errors, $str;
+	}
+}
+sub output_errors {
+	printf "%d errors:\n", scalar(@logged_errors) if scalar @logged_errors;
+	my $i = 1;
+#	for my $i (0..scalar(@logged_errors)-1) {
+#		printf("error %d: %s\n", $i, $logged_errors[$i]);
+#	}
+	while (scalar @logged_errors) {
+		my $str = shift(@logged_errors);
+		printf("error %d: %s\n", $i, trim($str)) if defined $str;
+#		printf "%s\n", $str;
+		$i++;
+	}
+}
 sub dump_backtrace {
 	my $trace = Devel::StackTrace->new;
 	printf("\n");
@@ -2524,7 +2545,8 @@ printf "%s is a do-not-parse\n", $trace_entry{'syscall'} if ($config{'debug'} >=
 		$trace_entry{'msg'} = sprintf("+++ killed by %s +++", $kill_sig);
 
 	} elsif (($old_pid_string, $old_timestamp_string, $old_delay_string, my $partial_line) = $trace_entry{'line'} =~ $regexes{'strace_partial_line'}) {
-		printf("line is a partial strace line, perhaps the trace was truncated\n") if ($config{'debug'} >= 1);
+#		printf("line is a partial strace line, perhaps the trace was truncated\n") if ($config{'debug'} >= 1);
+		log_error(sprintf("line is a partial strace line, perhaps the trace was truncated\n"));
 		if (defined($trace_entry{'pid'})) {
 			$trace_entry{'this_line_execname'} = get_execname($trace_entry{'pid'}) if ($trace_entry{'this_line_execname'} eq "");
 			$trace_entry{'line'} = sprintf("%d (%s) %s%s%s",
@@ -2534,8 +2556,9 @@ printf "%s is a do-not-parse\n", $trace_entry{'syscall'} if ($config{'debug'} >=
 				$partial_line);
 		}
 	} else {
-printf "didn't match: %s\n", $trace_entry{'line'};
-		printf("didn't match any patterns: %s\n", $trace_entry{'line'}) if ($config{'debug'} >= 1);
+#printf "didn't match: %s\n", $trace_entry{'line'};
+#		printf("didn't match any patterns: %s\n", $trace_entry{'line'}) if ($config{'debug'} >= 1);
+		log_error(sprintf("didn't match any patterns: %s\n", $trace_entry{'line'}));
 	}
 
 	$trace_entry{'line'} = reconstruct_line(\%trace_entry);
@@ -2567,5 +2590,7 @@ compute_overall_stats();
 output_overall_stats() if ($config{'combined_stats'});
 output_per_pid_stats() if ($config{'proc_stats'});
 display_pidtree() if $config{'pidtree'};
+
+output_errors();
 
 #print Dumper(\%tracking_data);
