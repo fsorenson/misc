@@ -142,6 +142,7 @@ sub collapse_var {
 }
 
 sub all_nfs_status3_success {
+	printf "comparing collapsed '%s' with zero\n", collapse_var($_[0]);
 	return 1 if (collapse_var($_[0]) == 0);
 	return 0;
 }
@@ -358,8 +359,6 @@ printf "names: %s (%d)\n", join("|", @names), scalar @names;
 			printf "unexpected number of fhs (%d) or names (%d); expected 1\n", $fhs_count, $names_count;
 		}
 		return;
-
-
 
 #119     3,3     0       8                               0xec1e5351      testfile2               V3 CREATE Call, DH: 0xec1e5351/testfile2 Mode: UNCHECKED
 #120     3,3     1       8               0               0x5c30715e,0xec1e5351   testfile2               V3 CREATE Reply (Call In 119)
@@ -747,6 +746,9 @@ while (<$input_fh>) {
 	my $frame = $fields[0];
 
 	my $rpc_programversion = parse_programversion($fields[1]);
+
+printf "rpc program version: %d\n", $rpc_programversion;
+
 	my $rpc_msgtyp = $fields[2];
 
 	my $rpc_xids_str = $fields[3];
