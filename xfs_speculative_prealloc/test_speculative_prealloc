@@ -1,0 +1,127 @@
+#!/bin/bash
+
+file_size_GB=60
+fallocate_size_GB=1
+
+file_size=$(($file_size_GB * 1024*1024*1024))
+write_size=$((2 * 1024*1024))
+write_count=$(($file_size / $write_size))
+block_size=$(stat -c %B .)
+file_blocks=$(($file_size / $block_size))
+
+watch_size() {
+	local start_time end_time sizes expected_blocks
+
+	start_time=$SECONDS
+	sizes=( $(stat -c "%s %b %B" testfile) )
+	expected_blocks=$(( (${sizes[0]} + ${sizes[2]} - 1)/${sizes[2]} ))
+
+	while [[ ${sizes[1]} -ne $expected_blocks ]] ; do
+		sleep 0.25
+		sizes=( $(stat -c "%s %b %B" testfile) )
+	done
+	end_time=$SECONDS
+	echo "$(($SECONDS-$st)) - preallocation reclaimed after $(( $end_time - $start_time )) seconds"
+}
+add_fill() {
+	local i=0 phase=$1
+
+	while fallocate -l 1G filler_${phase}_$i ; do
+		i=$(($i + 1))
+	done
+}
+write_file() {
+	# write twice
+	echo "$(($SECONDS-$st)) - creating file"
+	dd if=/dev/zero of=testfile bs=2M count=$write_count
+	echo "$(($SECONDS-$st)) - overwriting file"
+	dd if=/dev/zero of=testfile bs=2M count=$write_count
+	echo "$(($SECONDS-$st)) - file creation complete"
+}
+
+rm -f filler* testfile
+
+fsstat=( $(stat -f -c "%b %S" .) )
+total_blocks=${fsstat[0]}
+
+#xfs_io -f -c 'pwrite -b 2M 0 60G' testfile
+
+st=$SECONDS
+echo "$(($SECONDS-$st)) - initial disk fill - $(df -k .)"
+write_file &
+write_pid=$!
+last_file_write_size=( 0 0 )
+while [[ 42 ]] ; do
+	kill -0 $write_pid >/dev/null 2>&1 || break
+
+	file_write_size=( $(stat -c"%s %b" testfile) )
+	[[ ${file_write_size[0]} -ne ${last_file_write_size[0]} || ${file_write_size[1]} -ne ${last_file_write_size[1]} ]] && {
+		pct=$(echo "scale=1; (${file_write_size[0]} * 100) / $file_size" | bc)
+		echo "$(($SECONDS-$st)) - file size: $((${file_write_size[0]}/1024)) KiB, apparent size: $((${file_write_size[1]}*$block_size/1024)) KiB - $pct %"
+	}
+	last_file_size=( ${file_size[@]} )
+	sleep 1
+done
+
+echo "$(($SECONDS-$st)) - setup complete, starting test"
+st=$SECONDS
+ls -lnsh testfile
+echo "0 - $(df -k .)"
+
+#xfs_io -f -c 'pwrite -b 2M 0 60G' testfile
+watch_size &
+watch_pid=$!
+add_fill a &
+fill_pid=$!
+
+last_free_space=$(stat -f -c%f .)
+last_filler_count=0
+last_testfile_size=0
+last_testfile_blocks=0
+while [[ 42 ]] ; do
+	[[ -z $watch_pid && -z $fill_pid ]] && break
+	[[ -n $watch_pid ]] && {
+		kill -0 $watch_pid >/dev/null 2>&1 || {
+			echo "$(($SECONDS-$st)) - watch pid '$watch_pid' complete"
+			watch_pid=""
+
+			if [[ -n $fill_pid ]] ; then
+				kill $fill_pid # might as well exit
+			else
+				# now try to add some more fill
+				echo "$(($SECONDS-$st)) - trying to add more filler files"
+				add_fill b &
+				fill_pid=$!
+			fi
+		}
+	}
+	[[ -n $fill_pid ]] && {
+		kill -0 $fill_pid >/dev/null 2>&1 || {
+			echo "$(($SECONDS-$st)) - fill pid '$fill_pid' complete"
+			echo "$(($SECONDS-$st)) - $(ls -1 filler* | wc -l) filler files created"
+			echo "$(($SECONDS-$st)) - $(df -k .)"
+			fill_pid=""
+		}
+	}
+	free_space=$(stat -f -c%f .)
+	filler_count=$(ls -1f filler* | wc -l)
+
+
+	[[ $free_space -ne $last_free_space || $filler_count -ne $last_filler_count ]] && {
+		fill=$(echo "scale=3; ($total_blocks - $free_space) / $total_blocks * 100" | bc)
+		echo "$(($SECONDS-$st)) - $(ls -lnsh testfile), $filler_count filler files, full: $fill %"
+##		df -h . | sed 's/^/    /g'
+	}
+	last_free_space=$free_space
+	last_filler_count=$filler_count
+	sleep 0.25
+done
+
+
+echo "$(($SECONDS-$st)) - test complete"
+echo "$(($SECONDS-$st)) - $(df -k .)"
+fill_a=$(ls -1f filler_a_* | wc -l)
+fill_b=$(ls -1f filler_b_* | wc -l)
+echo "$(($SECONDS-$st)) - $(($fill_a+$fill_b)) filler files; phase 1: $fill_a, phase 2: $fill_b"
+
+
