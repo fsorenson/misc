@@ -1126,9 +1126,9 @@ exit;
 #	'clone_flags' => '(0|(?:\|CLONE_[^\|, ]+
 #	'clone_flags' => '(0|(?:\|CLONE_CHILD_CLEARTID|CLONE_CHILD_SETTID|CLONE_DETACHED|CLONE_FILES|CLONE_FS|CLONE_IO|CLONE_NEWIPC|CLONE_NEWNET|CLONE_NEWNS|CLONE_NEWPID|CLONE_NEWUTS|CLONE_PARENT|CLONE_PARENT_SETTID|CLONE_PID|CLONE_PTRACE|CLONE  _SETTID|CLONE_SETTLS|CLONE_SIGHAND|CLONE_STOPPED|CLONE_SYSVSEM|CLONE_THREAD|CLONE_UNTRACED|CLONE_VFORK|CLONE_VM)+)',
 
-	'signal_name' => '(?:SIG[A-Z0-9]+)',
-	'signal_name_or_val' => '(?:[0-9]+|SIG[A-Z0-9]+)',
-	'siginfo_t' => "(?:\{si_signo=(?:SIG[A-Z0-9]+), si_code.+\})",
+	'signal_name' => '(?:SIG[A-Z0-9_]+)',
+	'signal_name_or_val' => '(?:[0-9]+|SIG[A-Z0-9_]+)',
+	'siginfo_t' => "(?:\{si_signo=(?:SIG[A-Z0-9_]+), si_code.+\})",
 
 	'clone_flags' => '(0|(?:\\||CLONE_[A-Z0-9_]+|SIG[A-Z0-9]+)+)',
 
