@@ -1,0 +1,767 @@
+#!/usr/bin/perl -w
+
+use strict;
+use warnings;
+use Fcntl;
+use Data::Dumper;
+
+use constant (
+	false => 0,
+	true => 1,
+);
+
+$|++;
+
+my $save = 1;
+my $savedir;
+my $VERBOSITY = 1;
+
+my @spinner = ( '|', '/', '-', '\\', '|', '/', '-', '\\' );
+my $line_count = -1;
+my $spinner_num = 0;
+
+my %pats = (
+	'rpc_dir' => '(?:[01])',
+	'rpc_programversion' => '(?:[34])',
+	'number' => '(?:[0-9]+)',
+	'hex_digit' => '(?:[0-9a-f])',
+);
+%pats = (%pats,
+	'hex_byte' => "(?:$pats{'hex_digit'}\{2})",
+);
+%pats = (%pats,
+	'hex8' => "(?:0x(?:$pats{'hex_byte'}){4})",
+);
+%pats = (%pats,
+	'hex8_list' => "(?:(?:$pats{'hex8'})(?:,$pats{'hex8'})*)",
+	'xid' => $pats{'hex8'},
+	'fhash' => $pats{'hex8'},
+);
+%pats = (%pats,
+	'number_list' => "(?:(?:$pats{'number'})(?:,$pats{'number'})*)",
+	'rpc_dir_list' => "(?:(?:$pats{'rpc_dir'})(?:,$pats{'rpc_dir'})*)",
+	'rpc_programversion_list' => "(?:(?:$pats{'rpc_programversion'})(?:,$pats{'rpc_programversion'})*)",
+
+#	'fhash_list' => "(?:(?:$pats{'fhash'})(?:,$pats{'fhash'})*)",
+	'xid_list' => $pats{'hex8_list'},
+	'fhash_list' => $pats{'hex8_list'},
+#	'hex_string' => "(?:(?:$pats{'hex_digits'})+)",
+	'hex_string' => "(?:(?:$pats{'hex_byte'})+)",
+	'nfs_name' => '(?:[^\s]+)',
+);
+%pats = (%pats,
+#	'frame' => '[0-9]+',
+#	'opcode' => '(?:[0-9]+)',
+	'frame' => $pats{'number'},
+	'v3_procedure' => $pats{'number'},
+	'v4_opcode' => $pats{'number'},
+	'v3_procedure_list' => $pats{'number_list'},
+	'v4_opcode_list' => $pats{'number_list'},
+	'offset_list' => $pats{'number_list'},
+	'count_list' => $pats{'number_list'},
+	'nfs_name_list' => "(?:(?:$pats{'nfs_name'})(?:,$pats{'nfs_name'})*)",
+	'hex_string_list' => "(?:(?:$pats{'hex_string'})(?:,$pats{'hex_string'})*)",
+	'nfs_data' => "(?:(?:$pats{'hex_string'})|<MISSING>)",
+);
+%pats = (%pats,
+	'nfs_data_list' => "(?:(?:$pats{'nfs_data'})(?:,$pats{'nfs_data'})*)",
+#	'opcode_list' => "(?:$pats{'opcode'})(?:,$pats{'opcode'})*",
+);
+
+#%pats = (%pats,
+#%pats = (%pats, 
+#	'fhash' => '(?:(?:0x[0-9a-f]{8})(?:,
+
+
+
+# frame.number nfs.opcode nfs.fh.hash nfs.name nfs.offset4 nfs.count4 nfs.data) 'nfs.name && nfs.opcode==write && rpc.msgtyp==0' >file.pcap3-deets &
+#tshark -2n -r file.pcap3.gz $(tshark_fields frame.number nfs.opcode nfs.fh.hash nfs.name nfs.write.offset nfs.data) 'nfs.name && nfs.opcode==write && rpc.msgtyp==0' >file.pcap3 &
+#
+#
+#
+# nfs v4:  frame.number nfs.opcode nfs.fh.hash nfs.name nfs.offset4 nfs.count4 nfs.data) 
+#
+#my $line_re = qr/^([0-9]+)\s(.*)\s([0-9a-fx,]+)\s([^\s]+)\s([0-9,]+)\s([0-9,]+)\s([0-9a-f,]+)$/;
+#my $z_re = qr/^((?:(?:(?:0x(?:(?:(?:[0-9a-f])\{2}){4}))(?:,(?:0x(?:(?:(?:[0-9a-f])\{2}){4}))*))$/
+
+# tshark -2n -r file.pcap3.gz $(tshark_fields frame.number rpc.xid rpc.msgtyp nfs.opcode nfs.fh.hash nfs.name nfs.offset4 nfs.count4 nfs.data) 'nfs' >file.pcap3-all_nfs
+
+if (scalar @ARGV != 1) {
+	printf "usage: save_nfs_files <filename.pcap>\n";
+	exit;
+}
+
+
+my $pcap_name = $ARGV[0];
+
+my $fh;
+my $stdin_pipe = 0;
+
+my @tshark_fields = qw( frame.number rpc.programversion rpc.xid rpc.msgtyp nfs.procedure_v3 nfs.opcode nfs.fh.hash nfs.name nfs.offset3 nfs.count3 nfs.offset4 nfs.count4 nfs.write.data_length nfs.read.data_length nfs.data );
+
+if (! -t STDIN) {
+	$stdin_pipe = 1;
+	$fh = \*STDIN;
+	$savedir = "nfs_savefiles";
+} else {
+	if (! -e $pcap_name) {
+		printf "file '%s' does not exist\n", $pcap_name;
+		exit;
+	}
+
+	my $tshark_cmd = "tshark -2n -r $pcap_name -Tfields -E header=n ";
+	for my $field (@tshark_fields) {
+		$tshark_cmd .= " -e $field";
+	}
+#	$tshark_cmd .= " nfs 2>&1 |";
+	$tshark_cmd .= " 'nfs.procedure_v3 in { READ WRITE } || nfs.opcode in { READ WRITE }' 2>&1 |";
+
+	open $fh, $tshark_cmd || die "failed to execute tshark: $!\n";
+	$savedir = "$pcap_name.savefiles";
+}
+
+mkdir $savedir if $save;
+
+#my $line_re = qr/^($pats{'frame'})\s($pats{'rpc_programversion_list'})\s($pats{'xid_list'})\s($pats{'rpc_dir_list'})\s($pats{'v3_procedure_list'})?\s($pats{'v4_opcode_list'})?\s($pats{'fhash_list'})\s($pats{'nfs_name_list'})?\s($pats{'offset_list'})?\s($pats{'count_list'})?\s($pats{'offset_list'})?\s($pats{'count_list'})?\s($pats{'hex_string_list'})?$/;
+my $line_re = qr/^($pats{'frame'})\s($pats{'rpc_programversion_list'})\s($pats{'xid_list'})\s($pats{'rpc_dir_list'})\s($pats{'v3_procedure_list'})?\s($pats{'v4_opcode_list'})?\s($pats{'fhash_list'})?\s($pats{'nfs_name_list'})?\s($pats{'offset_list'})?\s($pats{'count_list'})?\s($pats{'offset_list'})?\s($pats{'count_list'})?\s($pats{'count_list'})?\s($pats{'count_list'})?\s($pats{'nfs_data_list'})?$/;
+
+my $foo = "
+frame.number
+          frame.number == 16002
+
+rpc.programversion
+    rpc.programversion == 4
+    rpc.programversion == 4
+
+rpc.xid
+               rpc.xid == 0x1924a08d
+
+rpc.msgtyp
+            rpc.msgtyp == Call
+
+nfs.procedure_v3
+
+nfs.opcode
+            nfs.opcode == RELEASE_LOCKOWNER
+
+nfs.fh.hash
+nfs.name
+nfs.offset3
+nfs.count3
+nfs.offset4
+nfs.count4
+nfs.data
+";
+
+
+
+
+my %rpc_msgtyp_names = (
+	0 => "Call",
+	1 => "Reply",
+);
+
+my %procedure_names = ( # procedure_v3 or opcode
+	3 => {
+		0 => "NULL",
+		1 => "GETATTR",
+		2 =>"SETATTR",
+		3 =>"LOOKUP",
+		4 =>"ACCESS",
+		5 =>"READLINK",
+		6 =>"READ",
+		7 =>"WRITE",
+		8 =>"CREATE",
+		9 =>"MKDIR",
+		10 =>"SYMLINK",
+		11 =>"MKNOD",
+		12 =>"REMOVE",
+		13 =>"RMDIR",
+		14 =>"RENAME",
+		15 =>"LINK",
+		16 =>"READDIR",
+		17 =>"READDIRPLUS",
+		18 =>"FSSTAT",
+		19 =>"FSINFO",
+		20 =>"PATHCONF",
+		21 =>"COMMIT",
+	},
+	4 => {
+		3 => "ACCESS",
+		4 => "CLOSE",
+		5 => "COMMIT",
+		6 => "CREATE",
+		7 => "DELEGPURGE",
+		8 => "DELEGRETURN",
+		9 => "GETATTR",
+		10 => "GETFH",
+		11 => "LINK",
+		12 => "LOCK",
+		13 => "LOCKT",
+		14 => "LOCKU",
+		15 => "LOOKUP",
+		16 => "LOOKUPP",
+		17 => "NVERIFY",
+		18 => "OPEN",
+		19 => "OPENATTR",
+		20 => "OPEN_CONFIRM",
+		21 => "OPEN_DOWNGRADE",
+		22 => "PUTFH",
+		23 => "PUTPUBFH",
+		24 => "PUTROOTFH",
+		25 => "READ",
+		26 => "READDIR",
+		27 => "READLINK",
+		28 => "REMOVE",
+		29 => "RENAME",
+		30 => "RENEW",
+		31 => "RESTOREFH",
+		32 => "SAVEFH",
+		33 => "SECINFO",
+		34 => "SETATTR",
+		35 => "SETCLIENTID",
+		36 => "SETCLIENTID_CONFIRM",
+		37 => "VERIFY",
+		38 => "WRITE",
+		39 => "RELEASE_LOCKOWNER",
+		40 => "BACKCHANNEL_CTL",
+		41 => "BIND_CONN_TO_SESSION",
+		42 => "EXCHANGE_ID",
+		43 => "CREATE_SESSION",
+		44 => "DESTROY_SESSION",
+		45 => "FREE_STATEID",
+		46 => "GET_DIR_DELEGATION",
+		47 => "GETDEVINFO",
+		48 => "GETDEVLIST",
+		49 => "LAYOUTCOMMIT",
+		50 => "LAYOUTGET",
+		51 => "LAYOUTRETURN",
+		52 => "SECINFO_NO_NAME",
+		53 => "SEQUENCE",
+		54 => "SET_SSV",
+		55 => "TEST_STATEID",
+		56 => "WANT_DELEG",
+		57 => "DESTROY_CLIENTID",
+		58 => "RECLAIM_COMPLETE",
+		59 => "ALLOCATE",
+		60 => "COPY",
+		61 => "COPY_NOTIFY",
+		62 => "DEALLOCATE",
+		63 => "IO_ADVISE",
+		64 => "LAYOUTERROR",
+		65 => "LAYOUTSTATS",
+		66 => "OFFLOAD_CANCEL",
+		67 => "OFFLOAD_STATUS",
+		68 => "READ_PLUS",
+		69 => "SEEK",
+		70 => "WRITE_SAME",
+		71 => "CLONE",
+		72 => "GETXATTR",
+		73 => "SETXATTR",
+		74 => "LISTXATTRS",
+		75 => "REMOVEXATTR",
+		10044 => "ILLEGAL",
+	},
+);
+
+
+my %expected_name_counts = (
+	3 => { # nfs v3
+		0 => { # v3 calls
+			'GETATTR' => 1,
+			'SETATTR' => 1,
+			'LOOKUP' => 3, # guess - failure will have 0-1; success will have 2-3
+			'ACCESS' => 1,
+			'READLINK' => 2, # guess
+			'READ' => 1,
+			'WRITE' => 1,
+			'CREATE' => 3,
+			'MKDIR' => 2,
+			'SYMLINK' => 2, # guess
+			'MKNOD' => 2, # guess
+			'REMOVE' => 1, # unknown
+			'RMDIR' => 2, # guess
+			'RENAME' => 4, # guess
+			'LINK' => 0, # unknown
+			'READDIR' => 1, #
+			'READDIRPLUS' => 1, #
+			'FSSTAT' => 0, # guess
+			'FSINFO' => 0, # guess
+			'PATHCONF' => 0, # guess
+			'COMMIT' => 1, # guess
+		},
+		1 => { # v3 replies
+			'GETATTR' => 1,
+			'SETATTR' => 1,
+			'LOOKUP' => 3, # guess - failure will have 0-1; success will have 2-3
+			'ACCESS' => 1,
+			'READLINK' => 2, # guess
+			'READ' => 1,
+			'WRITE' => 1,
+			'CREATE' => 2,
+			'MKDIR' => 2,
+			'SYMLINK' => 2, # guess
+			'MKNOD' => 2, # guess
+			'REMOVE' => 1, # unknown
+			'RMDIR' => 2, # guess
+			'RENAME' => 4, # guess
+			'LINK' => 0, # unknown
+			'READDIR' => 1000, # variable
+			'READDIRPLUS' => 1000, # variable
+			'FSSTAT' => 0, # guess
+			'FSINFO' => 0, # guess
+			'PATHCONF' => 0, # guess
+			'COMMIT' => 1, # guess
+		},
+	},
+	4 => { # nfs v4
+		0 => { # v4 calls
+			"ACCESS" => 0,
+			"CLOSE" => 0,
+			"COMMIT" => 0,
+			"CREATE" => 0,
+			"DELEGPURGE" => 0,
+			"DELEGRETURN" => 0,
+			"GETATTR" => 0,
+			"GETFH" => 1,
+			"LINK" => 0,
+			"LOCK" => 0,
+			"LOCKT" => 0,
+			"LOCKU" => 0,
+			"LOOKUP" => 0,
+			"LOOKUPP" => 0,
+			"NVERIFY" => 0,
+			"OPEN" => 1,
+			"OPENATTR" => 0,
+			"OPEN_CONFIRM" => 0,
+			"OPEN_DOWNGRADE" => 0,
+			"PUTFH" => 1,
+			"PUTPUBFH" => 0,
+			"PUTROOTFH" => 0,
+			"READ" => 0,
+			"READDIR" => 0,
+			"READLINK" => 0,
+			"REMOVE" => 0,
+			"RENAME" => 0,
+			"RENEW" => 0,
+			"RESTOREFH" => 0,
+			"SAVEFH" => 0,
+			"SECINFO" => 0,
+			"SETATTR" => 0,
+			"SETCLIENTID" => 0,
+			"SETCLIENTID_CONFIRM" => 0,
+			"VERIFY" => 0,
+			"WRITE" => 0,
+			"RELEASE_LOCKOWNER" => 0,
+			"BACKCHANNEL_CTL" => 0,
+			"BIND_CONN_TO_SESSION" => 0,
+			"EXCHANGE_ID" => 0,
+			"CREATE_SESSION" => 0,
+			"DESTROY_SESSION" => 0,
+			"FREE_STATEID" => 0,
+			"GET_DIR_DELEGATION" => 0,
+			"GETDEVINFO" => 0,
+			"GETDEVLIST" => 0,
+			"LAYOUTCOMMIT" => 0,
+			"LAYOUTGET" => 0,
+			"LAYOUTRETURN" => 0,
+			"SECINFO_NO_NAME" => 0,
+			"SEQUENCE" => 0,
+			"SET_SSV" => 0,
+			"TEST_STATEID" => 0,
+			"WANT_DELEG" => 0,
+			"DESTROY_CLIENTID" => 0,
+			"RECLAIM_COMPLETE" => 0,
+			"ALLOCATE" => 0,
+			"COPY" => 0,
+			"COPY_NOTIFY" => 0,
+			"DEALLOCATE" => 0,
+			"IO_ADVISE" => 0,
+			"LAYOUTERROR" => 0,
+			"LAYOUTSTATS" => 0,
+			"OFFLOAD_CANCEL" => 0,
+			"OFFLOAD_STATUS" => 0,
+			"READ_PLUS" => 0,
+			"SEEK" => 0,
+			"WRITE_SAME" => 0,
+			"CLONE" => 0,
+			"GETXATTR" => 0,
+			"SETXATTR" => 0,
+			"LISTXATTRS" => 0,
+			"REMOVEXATTR" => 0,
+			"ILLEGAL" => 0,
+		},
+		1 => { # v4 calls
+			"ACCESS" => 0,
+			"CLOSE" => 0,
+			"COMMIT" => 0,
+			"CREATE" => 0,
+			"DELEGPURGE" => 0,
+			"DELEGRETURN" => 0,
+			"GETATTR" => 0,
+			"GETFH" => 1,
+			"LINK" => 0,
+			"LOCK" => 0,
+			"LOCKT" => 0,
+			"LOCKU" => 0,
+			"LOOKUP" => 0,
+			"LOOKUPP" => 0,
+			"NVERIFY" => 0,
+			"OPEN" => 0,
+			"OPENATTR" => 0,
+			"OPEN_CONFIRM" => 0,
+			"OPEN_DOWNGRADE" => 0,
+			"PUTFH" => 1,
+			"PUTPUBFH" => 0,
+			"PUTROOTFH" => 0,
+			"READ" => 0,
+			"READDIR" => 0,
+			"READLINK" => 0,
+			"REMOVE" => 0,
+			"RENAME" => 0,
+			"RENEW" => 0,
+			"RESTOREFH" => 0,
+			"SAVEFH" => 0,
+			"SECINFO" => 0,
+			"SETATTR" => 0,
+			"SETCLIENTID" => 0,
+			"SETCLIENTID_CONFIRM" => 0,
+			"VERIFY" => 0,
+			"WRITE" => 0,
+			"RELEASE_LOCKOWNER" => 0,
+			"BACKCHANNEL_CTL" => 0,
+			"BIND_CONN_TO_SESSION" => 0,
+			"EXCHANGE_ID" => 0,
+			"CREATE_SESSION" => 0,
+			"DESTROY_SESSION" => 0,
+			"FREE_STATEID" => 0,
+			"GET_DIR_DELEGATION" => 0,
+			"GETDEVINFO" => 0,
+			"GETDEVLIST" => 0,
+			"LAYOUTCOMMIT" => 0,
+			"LAYOUTGET" => 0,
+			"LAYOUTRETURN" => 0,
+			"SECINFO_NO_NAME" => 0,
+			"SEQUENCE" => 0,
+			"SET_SSV" => 0,
+			"TEST_STATEID" => 0,
+			"WANT_DELEG" => 0,
+			"DESTROY_CLIENTID" => 0,
+			"RECLAIM_COMPLETE" => 0,
+			"ALLOCATE" => 0,
+			"COPY" => 0,
+			"COPY_NOTIFY" => 0,
+			"DEALLOCATE" => 0,
+			"IO_ADVISE" => 0,
+			"LAYOUTERROR" => 0,
+			"LAYOUTSTATS" => 0,
+			"OFFLOAD_CANCEL" => 0,
+			"OFFLOAD_STATUS" => 0,
+			"READ_PLUS" => 0,
+			"SEEK" => 0,
+			"WRITE_SAME" => 0,
+			"CLONE" => 0,
+			"GETXATTR" => 0,
+			"SETXATTR" => 0,
+			"LISTXATTRS" => 0,
+			"REMOVEXATTR" => 0,
+			"ILLEGAL" => 0,
+		},
+	},
+);
+
+#00000000  38 38 31 34 09  09 30 78  32 37 38 38 63 65 33 36  |8814..0x2788ce36|
+#00000010  09 73 74 72 61 63 65 2e  6f 75 74 2e 31 35 34 38  |.strace.out.1548|
+#00000020  39 33 09 30 09 36 35 35  33 36 09 33 30 33 38 33  |93.0.65536.30383|
+#00000030  61 33 30 33 32 33 61 33  34 33 32 32 65 33 35 33  |a30323a34322e353|
+#00000040  33 33 36 33 37 33 32 33  33 32 30 36 35 37 38 36  |3363732332065786|
+#00000050  35 36 33 37 36 36 35 32  38 32 32 32 66 36 38 36  |563766528222f686|
+
+my %fds;
+my %files_created;
+my %read_offsets;
+
+sub split_str {
+	my $str = shift;
+	return defined($str) ? split(/,/, $str) : ();
+}
+sub rpc_program_version {
+	my $str = shift;
+
+	my @a = split_str($str);
+	my %h;
+	foreach my $e (@a) {
+		$h{$e} = '1';
+	}
+	@a = keys %h;
+	return (scalar @a == 1) ? $a[0] : undef;
+}
+
+sub check_expected_names {
+	my $programversion = shift;
+	my $msgtyp = shift;
+	my $name_count = shift;
+	my @procedures = @_; # procedure_v3 or opcode
+	my $expected_name_count = 0;
+
+#	my %expected_hash = $expected_name_counts{$programversion}{$msgtyp};
+
+	for my $proc_num (@procedures) {
+		my $proc = $procedure_names{$programversion}{$proc_num};
+if (0) {
+		printf "adding names for programversion %d, proc num %d: %s\n", $programversion, $proc_num, $proc;
+#		print Dumper($expected_name_counts{$programversion});
+		printf "expected_name_counts{programversion}:\n";
+		print Dumper($expected_name_counts{$programversion});
+		printf "expected_name_counts{programversion}{0}:\n";
+		print Dumper($expected_name_counts{$programversion}{0});
+}
+#		$expected_name_count += $expected_hash{$proc};
+		$expected_name_count += $expected_name_counts{$programversion}{0}{$proc};
+	}
+	return 1 if $expected_name_count == $name_count;
+	return false;
+}
+
+while (<$fh>) {
+	chomp;
+	my $line = $_;
+
+
+if (0) {
+	if ($line_count % 1000 == 0) {
+		printf "%s\r", $spinner[$spinner_num];
+		$spinner_num = ($spinner_num + 1) % (scalar @spinner);
+	}
+}
+	$line_count++;
+
+	if (my ($frame_num, $rpc_programversions_str, $rpc_xids_str, $rpc_msgtyps_str,
+		$v3_procedures_str, $v4_opcodes_str, $fhs_str, $names_str,
+		$offsets3_str, $nfs3_len_str, $offsets4_str, $nfs4_len_str,
+		$nfs4_write_data_len_str, $nfs4_read_data_len_str,
+		$datas_str) = $line =~ $line_re) {
+
+#		printf "frame %d: %s\n", $frame_num, $line;
+		printf "frame %d:\n", $frame_num if $VERBOSITY >= 1;
+
+		my $rpc_programversion = rpc_program_version($rpc_programversions_str);
+		continue if (! defined($rpc_programversion)); # anything other than a single version
+
+if (! defined($rpc_xids_str)) {
+	printf "rpc_xids_str not defined for %s\n", $line;
+} else {
+	printf "rpc_xids_str: %s\n", $rpc_xids_str;
+}
+		my @rpc_xids = split_str($rpc_xids_str);
+		my @rpc_msgtyps = split_str($rpc_msgtyps_str);
+
+
+
+		my (@procedures, @offsets, @lengths);
+		if ($rpc_programversion == 3) {
+			@procedures = split_str($v3_procedures_str);
+			@offsets = split_str($offsets3_str);
+			@lengths = split_str($nfs3_len_str);
+		} else {
+			@procedures = split_str($v4_opcodes_str);
+			@offsets = split_str($offsets4_str);
+			@lengths = split_str($nfs4_len_str);
+
+			if (!scalar @lengths && defined($nfs4_write_data_len_str) && $nfs4_write_data_len_str ne "") {
+				@lengths = split_str($nfs4_write_data_len_str);
+			}
+			if (!scalar @lengths && defined($nfs4_read_data_len_str) && $nfs4_read_data_len_str ne "") {
+				@lengths = split_str($nfs4_read_data_len_str);
+			}
+		}
+
+if (0) {
+printf "nfs3_len_str: %s\n", defined $nfs3_len_str ? $nfs3_len_str : "undefined";
+printf "nfs4_len_str: %s\n", defined $nfs4_len_str ? $nfs4_len_str : "undefined";
+printf "nfs4_write_data_len_str: %s\n", defined $nfs4_write_data_len_str ? $nfs4_write_data_len_str : "undefined";
+printf "nfs4_read_data_len_str: %s\n", defined $nfs4_read_data_len_str ? $nfs4_read_data_len_str : "undefined";
+}
+
+		my @fhs = split_str($fhs_str);
+		my @names = split_str($names_str);
+		my @datas = split_str($datas_str);
+
+#		my @opcodes = split_str($opcodes_str);
+
+if (1) {
+	my @r;
+	foreach my $p (@procedures) {
+		push @r, $procedure_names{$rpc_programversion}{$p};
+	}
+	printf "frame %d; rpc %s; rpc_xids_str: %s; nfs.fh.hash_str: %s - procedures: %s\n", $frame_num, $rpc_msgtyp_names{$rpc_msgtyps[0]}, $rpc_xids_str, $fhs_str, join(",", @r);
+#	printf "nfs.fh.hash: %d; nfs.name: %d\n", scalar @fhs, scalar @names if (scalar @fhs ne scalar @names);
+	printf "nfs.fh.hash: %d; nfs.name: %d\n", scalar @fhs, scalar @names;
+	for (my $i = 0 ; $i < scalar @fhs ; $i++) {
+		printf "    %s - %s\n",
+			defined $fhs[$i] ? $fhs[$i] : "???",
+			defined $names[$i] ? $names[$i] : "???";
+
+	}
+}
+		my $xids_i = 0;
+		my $fhs_i = 0;
+		my $names_i = 0;
+
+		my $offsets_i = 0;
+		my $lengths_i = 0;
+
+		my $datas_i = 0;
+
+		my $names_are_valid = check_expected_names($rpc_programversion, $rpc_msgtyps[0], scalar @names, @procedures);
+		my $xid = undef;
+		for (my $i = 0 ; $i < scalar @procedures ; $i++) {
+			my $msgtyp = $rpc_msgtyps[0];
+			my $procedure_num = $procedures[$i];
+			my $proc = $procedure_names{$rpc_programversion}{$procedure_num};
+
+			printf "    (%d)%s (%d) %s\n", $procedure_num, $proc, $msgtyp, $rpc_msgtyp_names{$msgtyp} if $VERBOSITY >= 1;
+			if ($msgtyp == 0) { # Call
+				if ($proc eq 'WRITE') {
+					my $name;
+					my $length = $lengths[$lengths_i];
+					my $offset = $offsets[$offsets_i];
+
+					$name = ($names_are_valid && defined($names[$names_i])) ? $names[$names_i] : $fhs[$fhs_i];
+					printf "        %s - WRITE %d bytes at offset %d\n", $name, $length, $offset if $VERBOSITY >= 1;
+
+					if ($save) {
+						my $write_fd;
+
+						if (! defined($files_created{$name})) {
+							sysopen($write_fd, $savedir . "/" . $name, O_RDWR|O_CREAT|O_TRUNC, 0644) or die "unable to create file $savedir/$name: $!";
+							$files_created{$name} = 1;
+						} else {
+							sysopen($write_fd, $savedir . "/" . $name, O_RDWR, 0640) or die "unable to open file $savedir/$name: $!";
+						}
+
+						seek($write_fd, $offset, 0);
+						my $data = pack "H*", $datas[$datas_i];
+
+						syswrite($write_fd, $data);
+
+						close($write_fd);
+					}
+					$fhs_i++;
+					$names_i++;
+					$lengths_i++;
+					$offsets_i++;
+					$datas_i++;
+				} elsif ($proc eq 'READ') { # need to save the offset, based on the xid
+#					my $name = $names_are_valid ? $names[$names_i] : $fhs[$fhs_i];
+#					my $length = $lengths[$lengths_i];
+					my $offset = $offsets[$offsets_i];
+					$read_offsets{$xid} = $offset;
+
+				} else {
+					$names_i += $expected_name_counts{$rpc_programversion}{0}{$proc};
+#					$v3_expected_call_names{$proc};
+				}
+				if ($proc eq "PUTFH") {
+					$xid = $rpc_xids[$xids_i];
+					$xids_i++;
+				}
+
+			} else { # Reply
+				if ($proc eq 'READ') {
+					my $name = ($names_are_valid && defined($names[$names_i])) ? $names[$names_i] : $fhs[$fhs_i];
+
+					if (defined($read_offsets{$xid})) {
+						my $offset = $read_offsets{$xid};
+						my $length = $lengths[$lengths_i];
+
+						undef $read_offsets{$xid};
+
+						printf "        %s - READ %d bytes at offset %d\n", $name, $length, $offset if $VERBOSITY >= 1;
+						if ($save) {
+							my $write_fd;
+
+							if (! defined($files_created{$name})) {
+								sysopen($write_fd, $savedir . "/" . $name, O_RDWR|O_CREAT|O_TRUNC, 0644) or die "unable to create file $savedir/$name: $!";
+								$files_created{$name} = 1;
+							} else {
+								sysopen($write_fd, $savedir . "/" . $name, O_RDWR, 0640) or die "unable to open file $savedir/$name: $!";
+							}
+
+							seek($write_fd, $offset, 0);
+							my $data = pack "H*", $datas[$datas_i];
+
+							syswrite($write_fd, $data);
+
+							close($write_fd);
+						}
+						$fhs_i++;
+						$names_i++;
+						$lengths_i++;
+						$offsets_i++;
+						$datas_i++;
+					}
+				}
+
+				if ($proc eq "PUTFH") {
+					$xid = $rpc_xids[$xids_i];
+					$xids_i++;
+				}
+			}
+
+#			printf "\n" if $VERBOSITY >= 1;
+		}
+
+		next;
+
+
+#		printf "fhs: %d, names: %d, offests: %d, lengths: %d, datas: %d\n",
+#			scalar @fhs, scalar @names, scalar @offsets, scalar @lengths, scalar @datas;
+
+#printf "datas: %s\n", $datas_str;
+		my $fhash_positional = 0;
+		my $name_positional = 0;
+		my $data_positional = 0;
+		for (my $i = 0 ; $i < scalar @names ; $i++) {
+#			my $procedure = $opcodes[$i];
+
+#			if ($procedure == '7') { # write
+#				my $name = $names[$name_positional];
+
+#				my $length = $lengths[$data_positional];
+#				my $offset = $offsets[$data_positional];
+
+#				printf "    %s - %d bytes at offset %d\n", $name, $length, $offset;
+
+#if ($save) {
+#				if (defined($fds{$name})) {
+#				printf "fd for %s is %d\n", $name, $fds{$name};
+#				} else {
+#					sysopen($fds{$name}, $savedir . "/" . $name, O_RDWR|O_TRUNC|O_CREAT, 0644) or die("unable to create file $savedir/$name: $!");
+#				printf "no fd for %s\n", $name;
+#				}
+
+#				seek($fds{$name}, $offset, 0);
+#				my $data = pack "H*", $datas[$data_positional];
+
+#				syswrite($fds{$name}, $data);
+}
+#
+#				$fhash_positional++;
+#				$name_positional++;
+#				$data_positional++;
+#			} elsif ($procedure == '3') { # LOOKUP
+#				$fhash_positional++;
+#				$name_positional += 2;
+#			} elsif ($procedure == '4') { # ACCESS
+#				$fhash_positional++;
+#			} elsif ($procedure == '1') { # GETATTR
+#				$fhash_positional++;
+#			} else {
+#				printf "not sure what to do with procedure %d\n", $procedure;
+#			}
+#		}
+	} else {
+		printf "did not match regex: %s\n", $line;
+	}
+};
