@@ -310,8 +310,19 @@ sub parse_nfsv3 {
 
 	return if ($rpc_msgtyp eq "MIXED"); # would this ever happen?
 
-	return if (!all_nfs_status3_success($nfs_status3_str)); # TODO: partial success?
+	if ($rpc_msgtyp == 0) { # calls
+
+
+
+	} else { # replies
+		return if (!all_nfs_status3_success($nfs_status3_str)); # TODO: partial success?
+
+
+	}
+
 	return if (scalar @procedures > 1); # TODO: frames with more than one nfs procedure (multiple RPCs)
+
+
 
 	printf "frame %d\n", $frame;
 
