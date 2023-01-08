@@ -22,21 +22,32 @@ my $skip_field_width = 0;
 
 my @field_widths = ( 10, 12, 12, 8, 8, 6, 0 );
 
-my $show_dev = 1;
-my $show_df = 1;
-my $show_dirs = 1;
-my $show_files = 1;
-my $verbose = 0;
+my %config = (
+	'show_dev' => 0,
+	'show_df' => 0,
+	'show_dirs' => 1,
+	'show_files' => 1,
+
+	'canonical' => 0,
+
+	'verbosity' => 0,
+);
 
 GetOptions(
-	'dev' => sub { $show_dev = 1; },
-	'nodev' => sub { $show_dev = 0; },
-	'df' => sub { $show_df = 1; },
-	'nodf' => sub { $show_df = 0; },
-	'dirs' => sub { $show_dirs = 1; $show_files = 0; },
-	'files' => sub { $show_files = 1; $show_dirs = 0; },
-	'quiet' => sub { $verbose--; },
-	'verbose' => sub { $verbose++; },
+	'dev' => sub { $config{'show_dev'} = 1; },
+	'nodev' => sub { $config{'show_dev'} = 0; },
+	'df' => sub { $config{'show_df'} = 1; },
+	'nodf' => sub { $config{'show_df'} = 0; },
+	'dirs' => sub { $config{'show_dirs'} = 1; },
+	'nodirs' => sub { $config{'show_dirs'} = 0; },
+	'files' => sub { $config{'show_files'} = 1; },
+	'nofiles' => sub { $config{'show_files'} = 0; },
+
+	'quiet' => sub { $config{'verbosity'}--; },
+	'verbose' => sub { $config{'verbosity'}++; },
+
+	'canon' => sub { $config{'canonical'} = 1; },
+	'nocanon' => sub { $config{'canonical'} = 0; }
 );
 
 sub center_str {
@@ -181,7 +192,6 @@ sub file_stats {
 	my $hint_str = "";
 	my $path = $File::Find::name;
 	my $stats = lstat($path);
-	my $maj_min = $stats->dev;
 
 	if ($search_maj_min ne $stats->dev) {
 		$File::Find::prune = 1;
@@ -222,12 +232,12 @@ sub file_stats {
 	my $alloc_size_str = byte_units($alloc_size, 1024);
 
 	if (S_ISLNK($mode)) {
-		printf("${fmt_LNK}\n", $symbolic, $size_str, $alloc_size_str, $path, readlink($path)) if ($verbose);
+		printf("${fmt_LNK}\n", $symbolic, $size_str, $alloc_size_str, $path, readlink($path)) if ($config{'verbosity'});
 		return;
-	} elsif ((! $show_dirs && S_ISDIR($mode)) ||
-		(! $show_files && S_ISREG($mode))) {
+	} elsif ((! $config{'show_dirs'} && S_ISDIR($mode)) ||
+		(! $config{'show_files'} && S_ISREG($mode))) {
 
-		printf("${fmt_IGNORED}\n", $symbolic, $size_str, $alloc_size_str, $path) if ($verbose);
+		printf("${fmt_IGNORED}\n", $symbolic, $size_str, $alloc_size_str, $path) if ($config{'verbosity'});
 		return;
 	} else {
 		($extents, $holes) = get_extent_count($path);
@@ -305,7 +315,9 @@ sub print_path_header {
 
 for my $dir (@ARGV) {
 	my ($ret, $out);
-	$dir = Cwd::realpath($dir); # resolve the real path
+	if ($config{'canonical'}) {
+		$dir = Cwd::realpath($dir); # resolve the real path
+	}
 
 	printf("%s\n", print_path_header($dir));
 
@@ -313,7 +325,7 @@ for my $dir (@ARGV) {
 		my $stats = lstat($dir);
 		$search_maj_min = $stats->dev;
 
-		if ($show_dev) {
+		if ($config{'show_dev'}) {
 			find({ wanted => \&find_blkdev, no_chdir => 1}, "/dev/");
 
 			if ($found_dev ne "") {
@@ -330,7 +342,7 @@ for my $dir (@ARGV) {
 				printf("unable to locate the device file for device 0x%04x under /dev", $search_maj_min);
 			}
 		}
-		if ($show_df) {
+		if ($config{'show_df'}) {
 			printf("filesystem usage:\n");
 			($ret, $out) = exec_command("df", $found_dev);
 			if ($ret == 0) { print $out; };
