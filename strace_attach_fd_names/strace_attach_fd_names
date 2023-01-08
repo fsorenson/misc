@@ -518,28 +518,28 @@ sub retrieve_unfinished {
 	return $ret;
 }
 sub is_generic_fd_function {
-	my $op = shift;
+	my $syscall = shift;
 
 	if ($config{'debug'} >= 2) {
 		foreach my $o (@generic_fd_functions) {
-			printf("testing whether '%s' matches '%s'\n", $op, $o);
+			printf("testing whether '%s' matches '%s'\n", $syscall, $o);
 		}
 	}
-	return (grep { $_ eq $op } @generic_fd_functions);
+	return (grep { $_ eq $syscall } @generic_fd_functions);
 }
 sub is_generic_dfd_path_function {
-	my $op = shift;
+	my $syscall = shift;
 
 	if ($config{'debug'} >= 2) {
 		foreach my $o (@generic_dfd_pathname_functions) {
-			printf("testing whether '%s' matches '%s'\n", $op, $o);
+			printf("testing whether '%s' matches '%s'\n", $syscall, $o);
 		}
 	}
-	return (grep { $_ eq $op } @generic_dfd_pathname_functions);
+	return (grep { $_ eq $syscall } @generic_dfd_pathname_functions);
 }
 sub do_not_parse_function {
-	my $op = shift;
-	return (grep { $_ eq $op } @no_parsing_functions);
+	my $syscall = shift;
+	return (grep { $_ eq $syscall } @no_parsing_functions);
 }
 sub ret_is_error {
 	my $ret = shift;
@@ -654,11 +654,11 @@ sub add_syscall_stats {
 
 #	if (!defined $tracking_data{'pid_stats'}{'pid'}{$pid}) {
 
-	$tracking_data{'pid_stats'}{'pid'}{$pid}{'ops'} = {} if !defined($tracking_data{'pid_stats'}{'pid'}{$pid});
-	$tracking_data{'pid_stats'}{'pid'}{$pid}{'ops'} = {} if !defined($tracking_data{'pid_stats'}{'pid'}{$pid});
+	$tracking_data{'pid_stats'}{'pid'}{$pid}{'syscalls'} = {} if !defined($tracking_data{'pid_stats'}{'pid'}{$pid});
+	$tracking_data{'pid_stats'}{'pid'}{$pid}{'syscalls'} = {} if !defined($tracking_data{'pid_stats'}{'pid'}{$pid});
 	my $this_pid_stats = $tracking_data{'pid_stats'}{'pid'}{$pid};
 
-	my $op = $trace_entry->{'syscall'};
+	my $syscall = $trace_entry->{'syscall'};
 #	if ($trace_entry->{'syscall'} ne "") {
 #		$trace_entry->{'syscall'} ne "") {
 #	if (!defined $tracking_data{'pid_stats'}{
@@ -666,17 +666,17 @@ sub add_syscall_stats {
 		$tracking_data{'pid_stats'}{'pid'}{$pid}{'first_time'} = $trace_entry->{'timestamp'} if !defined $tracking_data{'pid_stats'}{'pid'}{$pid}{'first_time'};
 		$tracking_data{'pid_stats'}{'pid'}{$pid}{'last_time'} = $trace_entry->{'timestamp'};
 	}
-	if ($op ne "") {
+	if ($syscall ne "") {
 		my $elapsed = $trace_entry->{'elapsed'};
 
-		$tracking_data{'pid_stats'}{'pid'}{$pid}{'ops'}{$op} = {
+		$tracking_data{'pid_stats'}{'pid'}{$pid}{'syscalls'}{$syscall} = {
 			'count' => 0,
 			'min' => ($elapsed eq '') ? 0 : $elapsed,
 			'max' => ($elapsed eq '') ? 0 : $elapsed,
 			'errors' => 0,
 			'elapsed' => 0,
-		} if !defined $tracking_data{'pid_stats'}{'pid'}{$pid}{'ops'}{$op};
-		my $this_syscall_stats = $tracking_data{'pid_stats'}{'pid'}{$pid}{'ops'}{$op};
+		} if !defined $tracking_data{'pid_stats'}{'pid'}{$pid}{'syscalls'}{$syscall};
+		my $this_syscall_stats = $tracking_data{'pid_stats'}{'pid'}{$pid}{'syscalls'}{$syscall};
 
 if (0) {
 		if (! defined $this_syscall_stats) {
@@ -701,42 +701,42 @@ sub compute_overall_stats {
 	my @stats_pids = sort(keys( %{$tracking_data{'pid_stats'}{'pid'}}));
 
 	$tracking_data{'pid_stats'}{'overall'} = {
-		'ops' => {},
+		'syscalls' => {},
 	} if !defined $tracking_data{'pid_stats'}{'overall'};
 
 	my $overall_stats = $tracking_data{'pid_stats'}{'overall'};
-#	my $overall_ops_stats = $tracking_data{'pid_stats'}{'overall'}{'ops'};
-	my $overall_ops_stats = $overall_stats->{'ops'};
+#	my $overall_syscall_stats = $tracking_data{'pid_stats'}{'overall'}{'syscalls'};
+	my $overall_syscall_stats = $overall_stats->{'syscalls'};
 
 	local *_add_syscall_stat = sub {
 		my $these_stats = shift;
-		my $op = shift;
+		my $syscall = shift;
 
 #printf "these stats:\n";
 #print Dumper($these_stats);
 
 
-	$overall_ops_stats->{$op} = {
+	$overall_syscall_stats->{$syscall} = {
 		'count' => 0,
 		'errors' => 0,
 		'elapsed' => 0,
 		'min' => 0+'inf',
 		'max' => 0,
-	} if !defined $overall_ops_stats->{$op};
+	} if !defined $overall_syscall_stats->{$syscall};
 
-#		$overall_ops_stats
-#		if (!defined $overall_ops_stats->{$op}) {
+#		$overall_syscall_stats
+#		if (!defined $overall_syscall_stats->{$syscall}) {
 #			'count' => 0,
 #			'errors' = 0,
 #			'elapsed' => 0,
 #		};
 
-#		$overall_ops_stats->{$op}{'count'} += $these_stats->{'ops'}{$op}{'count'};
-		$overall_ops_stats->{$op}{'count'} += $these_stats->{'count'};
-		$overall_ops_stats->{$op}{'errors'} += $these_stats->{'errors'};
-		$overall_ops_stats->{$op}{'elapsed'} += $these_stats->{'elapsed'};
-		$overall_ops_stats->{$op}{'max'} = $these_stats->{'max'} if $these_stats->{'max'} > $overall_ops_stats->{$op}{'max'};
-		$overall_ops_stats->{$op}{'min'} = $these_stats->{'min'} if $these_stats->{'min'} < $overall_ops_stats->{$op}{'min'};
+#		$overall_syscall_stats->{$syscall}{'count'} += $these_stats->{'syscalls'}{$syscall}{'count'};
+		$overall_syscall_stats->{$syscall}{'count'} += $these_stats->{'count'};
+		$overall_syscall_stats->{$syscall}{'errors'} += $these_stats->{'errors'};
+		$overall_syscall_stats->{$syscall}{'elapsed'} += $these_stats->{'elapsed'};
+		$overall_syscall_stats->{$syscall}{'max'} = $these_stats->{'max'} if $these_stats->{'max'} > $overall_syscall_stats->{$syscall}{'max'};
+		$overall_syscall_stats->{$syscall}{'min'} = $these_stats->{'min'} if $these_stats->{'min'} < $overall_syscall_stats->{$syscall}{'min'};
 	};
 	local *_summarize_syscall_stat = sub {
 		my ($syscall_stats) = @_;
@@ -753,29 +753,29 @@ sub compute_overall_stats {
 			if (defined $this_pid_stats->{'first_time'} && defined $this_pid_stats->{'last_time'});
 
 		$this_pid_stats->{'syscall_time'} = 0;
-		my @ops = keys %{$this_pid_stats->{'ops'}};
+		my @syscalls = keys %{$this_pid_stats->{'syscalls'}};
 
-		foreach my $op (@ops) {
-#			my $this_pid_syscall_stats = $this_pid_syscall_stats->{'ops'}{$op};
-			my $this_pid_syscall_stats = $this_pid_stats->{'ops'}{$op};
+		foreach my $syscall (@syscalls) {
+#			my $this_pid_syscall_stats = $this_pid_syscall_stats->{'syscalls'}{$syscall};
+			my $this_pid_syscall_stats = $this_pid_stats->{'syscalls'}{$syscall};
 
-#			printf "adding this op (%s) stats:\n", $op;
+#			printf "adding this op (%s) stats:\n", $syscall;
 #			print Dumper($this_pid_syscall_stats);
 			$this_pid_stats->{'syscall_time'} += $this_pid_syscall_stats->{'elapsed'};
 #			$this_pid_syscall_stats->{'mean'} = ($this_pid_syscall_stats->{'count'}) ? $this_pid_syscall_stats->{'elapsed'} / $this_pid_syscall_stats->{'count'} : 0;
 			_summarize_syscall_stat($this_pid_syscall_stats);
 
 
-			_add_syscall_stat($this_pid_syscall_stats, $op);
+			_add_syscall_stat($this_pid_syscall_stats, $syscall);
 
 		}
 	};
 
-#			$tracking_data{'pid_stats'}{'overall'}{'ops'}
-#				$overall_ops_stats->{$op}{'count'} += $this_pid_stats->{'ops'}{$op}{'count'};
+#			$tracking_data{'pid_stats'}{'overall'}{'syscalls'}
+#				$overall_syscall_stats->{$syscall}{'count'} += $this_pid_stats->{'syscalls'}{$syscall}{'count'};
 #
-#				+= $this_pid_stats->{'ops'}{$op}{'
-#				tracking_data{'pid_stats'}{'overall'}{'ops'}
+#				+= $this_pid_stats->{'syscalls'}{$syscall}{'
+#				tracking_data{'pid_stats'}{'overall'}{'syscalls'}
 
 	# determine mean for each op for each pid
 	# count total syscall time for a pid
@@ -786,14 +786,14 @@ sub compute_overall_stats {
 #		tracking_data{'pid_stats'}{
 	}
 
-	my @syscalls = sort(keys(%{$tracking_data{'pid_stats'}{'overall'}{'ops'}}));
+	my @syscalls = sort(keys(%{$tracking_data{'pid_stats'}{'overall'}{'syscalls'}}));
 	foreach my $syscall (@syscalls) {
 #		printf "calculating ovarall stats for syscall %s\n", $syscall;
-		_summarize_syscall_stat($tracking_data{'pid_stats'}{'overall'}{'ops'}{$syscall});
+		_summarize_syscall_stat($tracking_data{'pid_stats'}{'overall'}{'syscalls'}{$syscall});
 
 	}
 
-	# total number of ops, errors, time for each op for all pids
+	# total number of syscalls, errors, time for each op for all pids
 	# count total syscall time for all pids
 
 #	if ($config{'proc_stats'}) {
@@ -810,7 +810,7 @@ sub compute_overall_stats {
 sub output_stats {
 	my (%stats) = @_;
 
-	my %syscall_stats = %{$stats{'ops'}};
+	my %syscall_stats = %{$stats{'syscalls'}};
 	my @syscalls = sort(keys(%syscall_stats));
 	my $longest_syscall = max_string_len(@syscalls, "syscall");
 	printf "%*s   %10s   %6s   %10s   %10s   %10s   %6s\n", $longest_syscall, "syscall", "total", "count", "mean", "min", "max", "errors";
@@ -962,7 +962,7 @@ sub extract_metadata {
 		($trace_entry->{'pid'},
 		$trace_entry->{'timestamp'},
 		$trace_entry->{'delay'},
-		my $op_info,
+		my $syscall_info,
 		$trace_entry->{'elapsed'}) = $trace_entry->{'line'} =~ $regexes{'extract_metadata'}) {
 
 		$tracking_data{'trace_stats'}{'start_time'} = $trace_entry->{'timestamp'} if (! defined $tracking_data{'trace_stats'}{'start_time'});
@@ -977,11 +977,11 @@ if (0) {
 	printf "    pid: '%s'\n", (defined $trace_entry->{'pid'} ? $trace_entry->{'pid'} : 'NONE');
 	printf "    timestamp '%s'\n", (defined $trace_entry->{'timestamp'} ? $trace_entry->{'timestamp'} : 'NONE');
 	printf "    delay '%s'\n", (defined $trace_entry->{'delah'} ? $trace_entry->{'delah'} : 'NONE');
-	printf "    op_info '%s'\n", $op_info;
+	printf "    op_info '%s'\n", $syscall_info;
 #	printf "    rest '%s'\n", (defined $matches[3] ? $matches[3] : 'NONE');
 	printf "    elapsed: '%s'\n", (defined $trace_entry->{'elapsed'} ? $trace_entry->{'elapsed'} : 'NONE');
 }
-		$trace_entry->{'line'} = $op_info;
+		$trace_entry->{'line'} = $syscall_info;
 	} else {
 		printf "didn't match regex: %s\n", $trace_entry->{'line'};
 		exit;
@@ -1164,11 +1164,11 @@ $patterns{'possible_renameat2_flags'} = "(?:, $patterns{'renameat2_flags'})?",
 	'syscall' => "$patterns{'possible_pid_string'}$patterns{'possible_timestamp_string'}$patterns{'possible_relative_time_string'}$patterns{'op_string'}\($patterns{'op_args_string'}\)$patterns{'ret_string'}$patterns{'possible_elapsed_string'}",
 );
 
-
 %regexes = (
 	'unfinished' => qr/^$patterns{'possible_pid_string'}$patterns{'possible_timestamp_string'}$patterns{'possible_relative_time_string'}$patterns{'op_string'}\($patterns{'op_args_string'} <unfinished \.\.\.>$/,
 	'resumed' => qr/^$patterns{'possible_pid_string'}$patterns{'possible_timestamp_string'}$patterns{'possible_relative_time_string'}<... $patterns{'op_string'} resumed>$patterns{'everything_else'}$/,
 	'resuming_unfinished' => qr/^$patterns{'possible_pid_string'}$patterns{'possible_timestamp_string'}$patterns{'possible_relative_time_string'}restart_syscall\(<\.\.\. resuming interrupted ($patterns{'op_string'}) \.\.\.> <unfinished \.\.\.>$/,
+	'killed' => qr/^\+\+\+ killed by ($patterns{'signal_name'}) \+\+\+$/,
 );
 
 
@@ -1250,7 +1250,8 @@ $patterns{'possible_renameat2_flags'} = "(?:, $patterns{'renameat2_flags'})?",
 
 %regexes = (%regexes,
 
-	'syscall' => qr/^$patterns{'possible_pid_string'}$patterns{'possible_timestamp_string'}$patterns{'possible_relative_time_string'}$patterns{'op_string'}\($patterns{'op_args_string'}\)$patterns{'ret_string'}$patterns{'possible_elapsed_string'}$/,
+#	'syscall' => qr/^$patterns{'possible_pid_string'}$patterns{'possible_timestamp_string'}$patterns{'possible_relative_time_string'}$patterns{'op_string'}\($patterns{'op_args_string'}\)$patterns{'ret_string'}$patterns{'possible_elapsed_string'}$/,
+	'syscall' => qr/^$patterns{'op_string'}\($patterns{'op_args_string'}\)$patterns{'ret_string'}$/,
 
 	'new_syscall' => qr/^$patterns{'op_string'}\($patterns{'op_args_string'}\)$patterns{'ret_string'}$/,
 
@@ -1335,7 +1336,7 @@ $patterns{'possible_renameat2_flags'} = "(?:, $patterns{'renameat2_flags'})?",
 
 #	'generic_function_fd' => qr/^$patterns{'fd_or_negative_one_with_possible_path'}, $patterns{'everything_else'}$/,
 	'generic_function_fd' => qr/^$patterns{'fd_or_negative_one_with_possible_path'}$patterns{'possible_other_args'}$/,
-	'generic_function_dfd_path' => qr/^$patterns{'fd_or_atfdcwd_with_possible_path'}, $patterns{'quoted_string'}, $patterns{'everything_else'}$/,
+	'generic_function_dfd_path' => qr/^$patterns{'fd_or_atfdcwd_with_possible_path'}, ($patterns{'quoted_string'}|NULL), $patterns{'everything_else'}$/,
 
 	'renameat' => qr/^$patterns{'fd_or_atfdcwd_with_possible_path'}, $patterns{'quoted_string'}, $patterns{'fd_or_atfdcwd_with_possible_path'}, $patterns{'quoted_string'}$patterns{'possible_renameat2_flags'}$/,
 
@@ -1584,7 +1585,23 @@ sub syscall_open {
 				store_fd_name($trace_entry->{'pid'}, $fd, $fd_path);
 				$trace_entry->{'ret'} = sprintf("%d<%s>", $fd, $fd_path);
 			}
-		} # otherwise, error or couldn't parse return string
+		} else { # otherwise, error or couldn't parse return string
+			printf "  open() error\n" if (ret_is_error($trace_entry->{'ret'}) && $config{'debug'} >= 1);
+			printf "  open() NOT error\n" if (!ret_is_error($trace_entry->{'ret'}) && $config{'debug'} >= 1);
+
+			if (!ret_is_error($trace_entry->{'ret'})) {
+
+if (my ($foo1, $foo2) = $trace_entry->{'ret'} =~ $regexes{'return_fd_path'}) {
+	printf "matched the return_fd_path... foo1: %s\n", $foo1;
+} else {
+	printf "did not match the return_fd_path with '%s'\n", $trace_entry->{'ret'};
+}
+
+
+			}
+
+
+		}
 	} else {
 		printf("open, but didn't match the re for args '%s'\n", $trace_entry->{'args'});
 	}
@@ -2470,12 +2487,15 @@ next if ($config{'times'});
 						$path,
 						(defined($other_args) ? ", " . $other_args : ""));
 				}
-			} else { printf("generic %s(dfd, path...), but '%s' didn't match the regex '%s'\n", $trace_entry{'syscall'}, $trace_entry{'args'}, $regexes{'generic_function_dfd_path'}); }
+			} else {
+#				printf("generic %s(dfd, path...), but '%s' didn't match the regex '%s'\n", $trace_entry{'syscall'}, $trace_entry{'args'}, $regexes{'generic_function_dfd_path'}); }
+				log_error(sprintf("generic %s(dfd, path...), but '%s' didn't match the regex '%s'\n", $trace_entry{'syscall'}, $trace_entry{'args'}, $regexes{'generic_function_dfd_path'})); }
 		} elsif (do_not_parse_function($trace_entry{'syscall'})) {
-#printf "%s is a do-not-parse\n", $trace_entry{'syscall'};
+printf "%s is a do-not-parse\n", $trace_entry{'syscall'} if ($config{'debug'} >= 1);
+#			log_error(sprintf("%s is a do-not-parse\n", $trace_entry{'syscall'}));
 		} else {
-			printf("matched the main pattern, but didn't find a matching op for '$trace_entry{'syscall'}'\n");
-			printf(" full string: %s\n", $trace_entry{'line'});
+#			log_error("matched the main pattern, but didn't find a matching syscall for '$trace_entry{'syscall'}'\n\tfull string: "$trace_entry{'line'});
+			log_error(sprintf("matched the main pattern, but didn't find a matching syscall for '%s'\n\tfull string: %s\n", $trace_entry{'syscall'}, $trace_entry{'line'}));
 		}
 
 		$trace_entry{'this_line_execname'} = get_execname($trace_entry{'pid'}) if (!defined($trace_entry{'this_line_execname'}) || $trace_entry{'this_line_execname'} eq "");
@@ -2487,14 +2507,22 @@ next if ($config{'times'});
 		}
 	} elsif (($old_pid_string, $old_timestamp_string, $old_delay_string, my $signal, my $siginfo) = $trace_entry{'line'} =~ $regexes{'process_signal'}) {
 		$trace_entry{'syscall'} = '';
-		if (defined($trace_entry{'pid'})) {
-			$trace_entry{'this_line_execname'} = get_execname($trace_entry{'pid'}) if ($trace_entry{'this_line_execname'} eq "");
-			$trace_entry{'line'} = sprintf("%d (%s) %s%s --- %s %s ---",
-				$trace_entry{'pid'}, $trace_entry{'this_line_execname'},
-				(defined($trace_entry{'timestamp'}) ? $trace_entry{'timestamp'} . " " : ""),
-				format_delay($trace_entry{'delay'}),
-				$signal, $siginfo);
-		}
+		$trace_entry{'this_line_execname'} = get_execname($trace_entry{'pid'}) if (defined($trace_entry{'pid'}) && $trace_entry{'this_line_execname'} eq "");
+#		if (defined($trace_entry{'pid'})) {
+#			$trace_entry{'this_line_execname'} = get_execname($trace_entry{'pid'}) if ($trace_entry{'this_line_execname'} eq "");
+#			$trace_entry{'line'} = sprintf("%d (%s) %s%s --- %s %s ---",
+#				$trace_entry{'pid'}, $trace_entry{'this_line_execname'},
+#				(defined($trace_entry{'timestamp'}) ? $trace_entry{'timestamp'} . " " : ""),
+#				format_delay($trace_entry{'delay'}),
+#				$signal, $siginfo);
+#		}
+		$trace_entry{'msg'} = sprintf("--- %s %s ---", $signal, $siginfo);
+	} elsif ((my $kill_sig) = $trace_entry{'line'} =~ $regexes{'killed'}) {
+		# nothing to do, really
+		$trace_entry{'syscall'} = '';
+		$trace_entry{'this_line_execname'} = get_execname($trace_entry{'pid'}) if (defined($trace_entry{'pid'}) && $trace_entry{'this_line_execname'} eq "");
+		$trace_entry{'msg'} = sprintf("+++ killed by %s +++", $kill_sig);
+
 	} elsif (($old_pid_string, $old_timestamp_string, $old_delay_string, my $partial_line) = $trace_entry{'line'} =~ $regexes{'strace_partial_line'}) {
 		printf("line is a partial strace line, perhaps the trace was truncated\n") if ($config{'debug'} >= 1);
 		if (defined($trace_entry{'pid'})) {
