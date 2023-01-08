@@ -1898,6 +1898,23 @@ sub syscall_epoll_create1 {
 		}
 	}
 }
+sub syscall_eventfd2 {
+	my ($trace_entry) = @_;
+	if (!ret_is_error($trace_entry->{'ret'})) {
+		if (my ($fd, $fd_string) = $trace_entry->{'ret'} =~ $regexes{'return_fd_path'}) {
+
+			printf("eventfd2 fd: %d, fd_string: %s\n", $fd, $fd_string) if ($config{'debug'} >= 1);
+			if (!defined($fd_string)) {
+				$fd_string = sprintf("pid_%d_eventfd2_fd_%d", $trace_entry->{'pid'}, $fd);
+				$trace_entry->{'ret'} = sprintf("%d<%s>", $fd, $fd_string);
+			}
+			store_fd_name($trace_entry->{'pid'}, $fd, $fd_string);
+			if ($trace_entry->{'syscall'} eq 'eventfd2') {
+				store_cloexec_fd($trace_entry->{'pid'}, $fd) if ($trace_entry->{'args'} eq 'EPOLL_CLOEXEC' || $trace_entry->{'args'} eq '' . oct('02000000'));
+			}
+		}
+	}
+}
 sub syscall_fcntl {
 	my ($trace_entry) = @_;
 	my $rebuild_args = false;
@@ -2143,6 +2160,7 @@ sub syscall_kill {
 	'socketpair' => \&syscall_socketpair,
 	'timerfd_create' => \&syscall_timerfd_create,
 	'epoll_create1' => \&syscall_epoll_create1,
+	'eventfd2' => \&syscall_eventfd2,
 
 	'inotify_init' => \&syscall_inotify_init,
 	'inotify_init1' => \&syscall_inotify_init,
