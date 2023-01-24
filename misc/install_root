@@ -1,0 +1,34 @@
+#!/bin/bash
+
+NFS_PKGS_PATH="/mnt/RH/rpms-rhel7"
+
+
+pwd=$(pwd)
+root_path=$pwd/root
+
+##### regexes
+NVRA_RE='^(.*)-([^-]{1,})-([^-]{1,})\.([^-.]+)$'
+CANDIDATE_SPLIT_RE='^(.+)#(.+)#(.+)#(.+)$'
+
+for rpm in $@ ; do
+
+	if [[ $rpm =~ $NVRA_RE ]] ; then
+		n=${BASH_REMATCH[1]}
+		v=${BASH_REMATCH[2]}
+		r=${BASH_REMATCH[3]}
+		a=${BASH_REMATCH[4]}
+
+		dir=$NFS_PKGS_PATH/$n/$v/$r/$a
+
+		[[ -d $dir ]] || continue
+
+		echo $rpm
+
+		ls -al $dir/*
+
+		read toinstall
+		[[ -n $toinstall ]] || continue
+		rpm --root=$(pwd)/root -Uvh --nodeps --noscripts $toinstall
+
+	fi
+done
