@@ -70,7 +70,7 @@ void dedup_slashes(char **old_path) {
 	unsigned char last_ch = '\0';
 	char *new_path = NULL;
 
-//output("\n - dedup_slashes(\n'%s'\n, length: %d)\n", *old_path, len);
+	debug_output(2, "\n - dedup_slashes(\n'%s'\n, length: %d)\n", *old_path, len);
 
 	if (len == 0)
 		goto out;
@@ -96,7 +96,7 @@ void dedup_slashes(char **old_path) {
 		*old_path = strdup(new_path);
 	}
 out:
-//	output("new path: \n'%s'\n, new length: %d\n", *old_path, new_len);
+	debug_output(2, "new path: \n'%s'\n, new length: %d\n", *old_path, new_len);
 
 	free_mem(new_path);
 }
@@ -229,6 +229,8 @@ struct path_ele *string_to_path_list(char *path_str) {
 
 	head = alloc_path_head();
 
+	debug_output(2, "path head %p for '%s'\n", head, path_str);
+
 	tmp1 = strdup(path_str);
 	dedup_slashes(&tmp1);
 	p = tmp1;
@@ -249,6 +251,16 @@ struct path_ele *string_to_path_list(char *path_str) {
 		path_append(ele, head);
 	}
 	free_mem(tmp1);
+
+	if (config.verbosity >= 2) {
+		debug_output(2, "resulting path:\n");
+		ele = head->next;
+		while (ele != head) {
+			debug_output(2, "    %p -> name (%p) '%s'\n",
+				ele, ele->name, ele->name);
+			ele = ele->next;
+		}
+	}
 	return head;
 }
 
@@ -297,7 +309,7 @@ void reset_loop_checker(void) {
 int symlink_is_loop(struct loop_checker_struct *checkee) {
 	int i;
 
-//	output("checking whether major: %d  minor: %d  ino: %ld is a loop\n", checkee->major, checkee->minor, checkee->ino);
+	debug_output(2, "checking whether major: %d  minor: %d  ino: %ld is a loop\n", checkee->major, checkee->minor, checkee->ino);
 
 	for (i = 0 ; i < loop_checker.count ; i++) {
 		if (! memcmp(&loop_checker.links_visited[i], checkee, sizeof(struct loop_checker_struct)))
