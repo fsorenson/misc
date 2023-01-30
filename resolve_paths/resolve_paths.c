@@ -321,48 +321,6 @@ int symlink_is_loop(struct loop_checker_struct *checkee) {
 	return false;
 }
 
-void t_list(void) {
-	char *start_string = NULL, *temp_name = NULL, *p;
-	PATH_HEAD(head);
-	struct path_ele *ele;
-
-	start_string = strdup("//this/is////a/test/");
-
-	output("start string: %s\n", start_string);
-
-	dedup_slashes(&start_string);
-	output("deduped: %s\n", start_string);
-
-	p = start_string;
-	if (*p == '/')
-		p++;
-	while (*p) {
-		char *slash = index(p, '/');
-
-output("p: %s\n", p);
-output("slash: %s\n", slash);
-
-		if (slash) {
-			temp_name = strndup(p, slash - p);
-			p += strlen(temp_name) + 1;
-		} else {
-			temp_name = strdup(p);
-			p += strlen(temp_name);
-		}
-		output("component: %s\n", temp_name);
-
-		ele = new_ele(temp_name);
-		free_mem(temp_name);
-		path_append(ele, &head);
-
-	}
-
-	output("length of path: %d\n", path_len(&head));
-	output("path: ");
-	print_path(&head);
-}
-
-
 static char *mode_bits[] = { "---", "--x", "-w-", "-wx", "r--", "r-x", "rw-", "rwx" };
 
 char *mode_bits_string(char *buf, int mode) {
@@ -1055,15 +1013,6 @@ void resolve_path(char *path) {
 	free_mem(start_path_str);
 }
 
-#define test_dedup(s) do { \
-	char *tmp1, *tmp2; \
-	tmp1 = strdup(s); \
-	tmp2 = strdup(tmp1); \
-	dedup_slashes(&tmp2); \
-	printf("%s dedups to %s\n", tmp1, tmp2); \
-	free(tmp1); \
-	free(tmp2); \
-} while (0)
 
 int usage(const char *exe, int ret) {
 	output("%s <path> [<path> ... ]\n", exe);
@@ -1081,18 +1030,8 @@ int main(int argc, char *argv[]) {
 			if (i < argc)
 				output("\n");
 		}
-	} else {
+	} else
 		return usage(argv[0], EXIT_FAILURE);
-//		int dfd = open("/", O_RDONLY|O_DIRECTORY);
-
-//		check_component(dfd, "/", "var", "tmp/util-linux-2.36.2-1.fc34.src.rpm");
-
-//		check_component(AT_FDCWD, "", "/", "var/tmp/util-linux-2.36.2-1.fc34.src.rpm");
-//		check_component(AT_FDCWD, "", "/", "var/tmp/util-linux-2.36.2-1.fc34.src.rpm");
-//		check_component(AT_FDCWD, "", "/", "var/tmp/util-linux-2.36.2-1.fc34.src.rpm");
-//		resolve_path("/var/tmp/util-linux-2.36.2-1.fc34.src.rpm");
-		resolve_path("foo");
-	}
 
 	return EXIT_SUCCESS;
 }
