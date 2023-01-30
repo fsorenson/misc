@@ -41,9 +41,9 @@ int verbosity = 0;
 	printf(args); \
 	fflush(stdout); \
 } while (0)
-#define debug_output(lvl, args...) do { \
-	if (verbosity >= lvl) \
-		output(args); \
+#define debug_output(lvl, fmt, ...) do { \
+	if (config.verbosity >= lvl) \
+		output("%s - " fmt, __func__, ##__VA_ARGS__); \
 } while (0)
 
 #define err_exit(ret, msg...) do { \
