@@ -32,8 +32,15 @@
 #define HAVE_STATX 0
 #endif
 
-
-int verbosity = 0;
+struct config_struct {
+	int verbosity;
+	bool have_statx_syscall;
+	bool show_steps;
+} config = {
+	.verbosity = 0,
+	.have_statx_syscall = false,
+	.show_steps = true,
+};
 
 #define MAX_PATH_COUNT 100
 
