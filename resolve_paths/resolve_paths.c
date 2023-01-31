@@ -539,102 +539,63 @@ struct stat_info_struct {
 };
 struct stat_info_struct get_stat_info(int dfd, const char *pathname) {
 	struct stat_info_struct stat_info;
-#if HAVE_STATX
-//	struct statx stx;
-#else
-//	struct stat st;
-#endif
 	memset(&stat_info, 0, sizeof(struct stat_info_struct));
 
 #if HAVE_STATX
-	struct statx stx;
-	if ((statx(dfd, pathname, AT_SYMLINK_NOFOLLOW | (pathname[0] == '\0' ? AT_EMPTY_PATH : 0), STATX_ALL, &stx)) < 0) {
-		stat_info.stat_error = true;
-		goto out;
-	}
+	if (config.have_statx_syscall) {
+		struct statx stx;
+		if ((statx(dfd, pathname, AT_SYMLINK_NOFOLLOW | (pathname[0] == '\0' ? AT_EMPTY_PATH : 0), STATX_ALL, &stx)) < 0) {
+			stat_info.stat_error = true;
+			goto out;
+		}
 
-	stat_info.uid = stx.stx_uid;
-	stat_info.gid = stx.stx_gid;
-	stat_info.mode = stx.stx_mode;
-	stat_info.ino = stx.stx_ino;
-	stat_info.size = stx.stx_size;
-	stat_info.major = stx.stx_dev_major;
-	stat_info.minor = stx.stx_dev_minor;
+		stat_info.uid = stx.stx_uid;
+		stat_info.gid = stx.stx_gid;
+		stat_info.mode = stx.stx_mode;
+		stat_info.ino = stx.stx_ino;
+		stat_info.size = stx.stx_size;
+		stat_info.major = stx.stx_dev_major;
+		stat_info.minor = stx.stx_dev_minor;
 #ifdef STATX_MNT_ID
-	if (stx.stx_mask & STATX_MNT_ID) {
-		stat_info.have_mount_id = true;
-		stat_info.mount_id = stx.stx_mnt_id;
-	}
+		if (stx.stx_mask & STATX_MNT_ID) {
+			stat_info.have_mount_id = true;
+			stat_info.mount_id = stx.stx_mnt_id;
+		}
 #endif /* STATX_MNT_ID */
+	} else {
 #else
-	struct stat st;
-	if ((fstatat(dfd, pathname, &st, AT_SYMLINK_NOFOLLOW | (pathname[0] == '\0' ? AT_EMPTY_PATH : 0))) < 0) {
-		stat_info.stat_error = true;
-		goto out;
-	}
-
-	stat_info.uid = st.st_uid;
-	stat_info.gid = st.st_gid;
-	stat_info.mode = st.st_mode;
-	stat_info.ino = st.st_ino;
-	stat_info.major = major(st.st_dev);
-	stat_info.minor = minor(st.st_dev);
+	{
 #endif
+		struct stat st;
+		if ((fstatat(dfd, pathname, &st, AT_SYMLINK_NOFOLLOW | (pathname[0] == '\0' ? AT_EMPTY_PATH : 0))) < 0) {
+			stat_info.stat_error = true;
+			goto out;
+		}
+
+		stat_info.size = st.st_size;
+		stat_info.uid = st.st_uid;
+		stat_info.gid = st.st_gid;
+		stat_info.mode = st.st_mode;
+		stat_info.ino = st.st_ino;
+		stat_info.major = major(st.st_dev);
+		stat_info.minor = minor(st.st_dev);
+	}
 
 out:
 	return stat_info;
 }
 
 struct stat_info_struct show_stat_info(int fd, struct path_ele *current_path, char *this_name, struct path_ele *remaining_path) {
-//	int mode, dev_major, dev_minor;
 //	bool have_mount_id = false;
 	char mode_string[11];
 	struct statfs stfs;
-//	uint64_t inode, mount_id;
-//	uid_t uid, gid;
 	struct stat_info_struct stat_info;
 
-
-/*
-#if HAVE_STATX
-	struct statx stx;
-#else
-	struct stat st;
-#endif
-
-	memset(&stat_info, 0, sizeof(struct stat_info_struct));
-
-#if HAVE_STATX
-	statx(fd, "", AT_EMPTY_PATH|AT_SYMLINK_NOFOLLOW, STATX_ALL, &stx);
-
-	stat_info.uid = stx.stx_uid;
-	stat_info.gid = stx.stx_gid;
-	stat_info.mode = stx.stx_mode;
-	stat_info.ino = stx.stx_ino;
-	stat_info.size = stx.stx_size;
-	stat_info.major = stx.stx_dev_major;
-	stat_info.minor = stx.stx_dev_minor;
-	if (stx.stx_mask & STATX_MNT_ID) {
-		stat_info.have_mount_id = true;
-		stat_info.mount_id = stx.stx_mnt_id;
-	}
-#else
-	fstatat(fd, "", &st, AT_EMPTY_PATH|AT_SYMLINK_NOFOLLOW);
-
-	stat_info.uid = st.st_uid;
-	stat_info.gid = st.st_gid;
-	stat_info.mode = st.st_mode;
-	stat_info.ino = st.st_ino;
-	stat_info.major = major(st.st_dev);
-	stat_info.minor = minor(st.st_dev);
-#endif
-*/
 	stat_info = get_stat_info(fd, "");
 	if (stat_info.stat_error)
 		goto out;
 
 	fstatfs(fd, &stfs);
-
 
 	output("%6s %s ", fstype(stfs.f_type), make_mode_string(mode_string, stat_info.mode));
 
@@ -1011,6 +972,19 @@ void resolve_path(char *path) {
 	free_mem(start_path_str);
 }
 
+#if HAVE_STATX
+#include <sys/syscall.h>
+void verify_statx_syscall(void) {
+	struct statx stx;
+
+	if ((syscall(SYS_statx, AT_FDCWD, "", AT_EMPTY_PATH|AT_NO_AUTOMOUNT, 0, &stx, NULL)) < 0)
+		config.have_statx_syscall = false;
+	else
+		config.have_statx_syscall = true;
+}
+#else
+#define verify_statx_syscall() do { } while (0)
+#endif
 
 int usage(const char *exe, int ret) {
 	output("%s <path> [<path> ... ]\n", exe);
@@ -1019,6 +993,9 @@ int usage(const char *exe, int ret) {
 
 int main(int argc, char *argv[]) {
 	int i;
+
+
+	verify_statx_syscall();
 
 	output("running with fsuid: %d, fsgid: %d\n", setfsuid(-1), setfsgid(-1));
 	if (argc > 1) {
