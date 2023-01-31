@@ -1,0 +1,45 @@
+#!/bin/bash
+
+# Frank Sorenson <sorenson@redhat.com>, Red Hat, 2021
+
+image=$(pwd)/test.img
+mountpoint=$(pwd)/mnt
+fs_size=16G
+hint_size=1G
+alloc_size=4096
+
+SUDO=""
+who=$(id -u)
+[[ $who -eq 0 ]] || SUDO="sudo "
+
+more_cowbell() {
+	fallocate -l $2 $1
+}
+
+# just in case it's mounted...
+$SUDO umount $mountpoint
+rm -f $image
+
+echo "creating filesystem image $image and filesystem"
+[[ -d $mountpoint ]] || { mkdir -p $mountpoint || exit ; }
+
+truncate -s $fs_size $image
+mkfs.xfs -b size=4k -n size=8k -m crc=0 $image -f || exit
+
+$SUDO mount -oloop,attr2,inode64,noquota $image $mountpoint
+[[ $who -eq 0 ]] || $SUDO chown $who $mountpoint
+
+xfs_io -c "extsize $hint_size" $mountpoint || exit
+
+echo "filling filesystem"
+file_i=1
+while [[ 42 ]] ; do
+	more_cowbell $mountpoint/file_$file_i $alloc_size || break
+	file_i=$(($file_i + 1))
+done
+
+df -h $mountpoint
+echo "allocated space"
+du -sh $mountpoint | sed 's/^/\t/g'
+echo "actual usage"
+du -sh --apparent-size $mountpoint | sed 's/^/\t/g'
