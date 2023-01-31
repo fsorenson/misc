@@ -619,10 +619,11 @@ out:
 	return stat_info;
 }
 
-void follow_path(char *path_str) {
+bool follow_path(char *path_str) {
 	struct path_ele *current_path, *remaining_path, *tmp_list, *this_ele;
 	struct stat_info_struct stat_info;
 	int path_count = 0;
+	bool ret = true;
 	int dfd, fd;
 
 	current_path = alloc_path_head();
@@ -630,8 +631,10 @@ void follow_path(char *path_str) {
 
 open_root:
 	dfd = open("/", O_RDONLY|O_PATH|O_DIRECTORY);
-	show_stat_info(dfd, current_path, "", remaining_path);
-	output("\n");
+	if (config.show_steps) {
+		show_stat_info(dfd, current_path, "", remaining_path);
+		output("\n");
+	}
 	while (!path_empty(remaining_path)) {
 		if (++path_count > MAX_PATH_COUNT) {
 			output("ELOOP - too many path levels or symbolic links\n");
@@ -648,9 +651,12 @@ open_root:
 			goto out;
 		}
 
+		if (config.show_steps) {
+			stat_info = show_stat_info(fd, current_path, this_ele->name, remaining_path);
+			output("\n");
+		} else
+			stat_info = get_stat_info(fd, "");
 
-		stat_info = show_stat_info(fd, current_path, this_ele->name, remaining_path);
-		output("\n");
 		if (stat_info.stat_error) {
 			output("error checking '");
 			print_path(current_path);
@@ -711,14 +717,22 @@ open_root:
 				}
 				link[ret] = '\0';
 
-				output("               => '%s'\n", link);
+				if (config.show_steps)
+					output("               => '%s'\n", link);
 
-				if ((is_loop = symlink_is_loop(&lcs)) < 0) {
-					output("ELOOP - Too many levels of symbolic links\n");
-					goto out;
-				}
-				if (is_loop) {
-					output("ELOOP - already visited this symlink\n");
+				if ((is_loop = symlink_is_loop(&lcs)) != 0) {
+					if (config.show_steps) {
+
+					} else {
+						print_path(current_path);
+						output("/%s - ", this_ele->name);
+					}
+					if (is_loop < 0)
+						output("ELOOP - Too many levels of symbolic links\n");
+					else
+						output("ELOOP - already visited this symlink\n");
+
+					ret = false;
 					goto out;
 				}
 
@@ -778,9 +792,7 @@ out:
 	free_path_list(remaining_path);
 	free_ele(remaining_path);
 
-	if (this_ele)
-		free_ele(this_ele);
-	return;
+	return ret;
 
 out_invalid_link:
 	output("  invalid link ");
@@ -789,6 +801,7 @@ out_invalid_link:
 	output("remaininig path: ");
 	print_path(remaining_path);
 	output("\n");
+	ret = false;
 	goto out;
 
 out_not_dir:
@@ -798,6 +811,7 @@ out_not_dir:
 	output("remaininig path: ");
 	print_path(remaining_path);
 	output("\n");
+	ret = false;
 	goto out;
 }
 
@@ -957,9 +971,9 @@ void resolve_path(char *path) {
 	output("resolving path %s\n", start_path_str);
 	dedup_slashes(&start_path_str);
 
-	follow_path(start_path_str);
 
-
+	follow_path(start_path_str); // print while iterating
+//	follow_path(start_path_str, false); // print while iterating
 #if 0
 
 		start_path = get_current_dir_name();
@@ -997,6 +1011,7 @@ int usage(const char *exe, int ret) {
 int main(int argc, char *argv[]) {
 	int i;
 
+	config.show_steps = true;
 
 	verify_statx_syscall();
 
