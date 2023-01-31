@@ -1,0 +1,33 @@
+#!/bin/bash
+
+p=${1:-.}
+count=${2:-10}
+
+
+exit_cleanup() {
+	trap - SIGINT SIGTERM EXIT
+
+	kill $cpids
+	wait $cpids
+
+	exit
+}
+
+
+child() {
+	id=$1
+
+	while [[ 42 ]] ; do
+		dd if=/dev/zero of=$p/test_file_$id bs=1M count=10 2>/dev/null
+	done
+}
+
+cpids=""
+for i in $(seq 1 $2) ; do
+	child $i &
+	cpids="$cpids $!"
+done
+
+trap exit_cleanup SIGINT SIGTERM EXIT
+
+wait $cpids
