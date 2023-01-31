@@ -942,6 +942,7 @@ void resolve_path(char *path) {
 		output("current directory: %s\n", cwd);
 
 		asprintf(&start_path_str, "%s/%s", cwd, path);
+		free_mem(cwd);
 	}
 
 	output("resolving path %s\n", start_path_str);
