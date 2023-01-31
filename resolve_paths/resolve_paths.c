@@ -141,7 +141,7 @@ void free_ele(struct path_ele *ele) {
 	debug_output(2, "free ele %p\n", ele);
 	free_mem(ele);
 }
-bool path_empty(const struct path_ele *head) {
+static bool path_empty(const struct path_ele *head) {
         return head->next == head;
 }
 
@@ -251,8 +251,8 @@ struct path_ele *string_to_path_list(char *path_str) {
 			p += strlen(tmp2);
 		}
 		ele = new_ele(tmp2);
+		path_add_tail(ele, head);
 		free_mem(tmp2);
-		path_append(ele, head);
 	}
 	free_mem(tmp1);
 
@@ -664,10 +664,13 @@ open_root:
 			continue;
 		}
 		if (!strcmp(this_ele->name, "..")) {
+			struct path_ele *tmp_ele = NULL;
 			close(dfd);
 			dfd = fd;
 			if (!path_empty(current_path))
-				path_del_last(current_path);
+				tmp_ele = path_pop_last(current_path);
+			if (tmp_ele)
+				free_ele(tmp_ele);
 			free_ele(this_ele);
 			continue;
 		}
@@ -684,7 +687,7 @@ open_root:
 				}
 				close(dfd);
 				dfd = new_dfd;
-				path_append(this_ele, current_path);
+				path_add_tail(this_ele, current_path);
 
 			} ; break;
 			case S_IFLNK: {
