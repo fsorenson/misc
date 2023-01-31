@@ -932,24 +932,10 @@ out:
 
 void resolve_path(char *path) {
 	char *start_path_str = NULL;
-//	struct path_ele *start_path, *remaining_path, *tmp_path;
-
-//	start_path = alloc_path_head();
-//	remaining_path = alloc_path_head();
-
-
-
-
-
-
-
-//	output("path[0]: '%c'\n", path[0]);
-//	dedup_slashes(&path);
 
 	if (*path == '/') { /* absolute path */
 		output("%s is an absolute path\n", path);
 		start_path_str = strdup(path);
-//		check_component(AT_FDCWD, "", "/", path);
 	} else { /* relative path */
 		char *cwd = get_current_dir_name();
 		output("%s is a relative path\n", path);
@@ -964,17 +950,6 @@ void resolve_path(char *path) {
 
 	follow_path(start_path_str); // print while iterating
 //	follow_path(start_path_str, false); // print while iterating
-#if 0
-
-		start_path = get_current_dir_name();
-
-		output("resolving path %s/%s\n", start_path, path);
-		check_component(AT_FDCWD, start_path, start_path, path);
-
-	}
-#endif
-
-//	check_component(AT_FDCWD, "", "/", "var/tmp/util-linux-2.36.2-1.fc34.src.rpm");
 
 	free_mem(start_path_str);
 }
