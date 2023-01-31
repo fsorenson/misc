@@ -160,20 +160,23 @@ int path_len(struct path_ele *head) {
 	return i;
 }
 void print_path(struct path_ele *head) {
+	char path[4096];
 	struct path_ele *p;
 	int count = 0;
 
 	if (!head)
 		err_exit(EXIT_FAILURE, "path is null\n");
 
+	memset(path, 0, sizeof(path));
+
 	p = head->next;
 	while (p != head) {
-		if (count++ > 0)
-			output("/%s", p->name);
-		else
-			output("%s", p->name);
+//		if (count++ > 0)
+			strcat(path, "/");
+		strcat(path, p->name);
 		p = p->next;
 	}
+	output("%s", path);
 }
 
 void __path_add(struct path_ele *new,
