@@ -179,53 +179,51 @@ void print_path(struct path_ele *head) {
 	output("%s", path);
 }
 
-void __path_add(struct path_ele *new,
-		struct path_ele *prev,
-		struct path_ele *next) {
+static void path_insert(struct path_ele *new,
+		 struct path_ele *prev,
+		 struct path_ele *next) {
 	next->prev = new;
 	new->next = next;
 	new->prev = prev;
 	prev->next = new;
 }
-void path_add(struct path_ele *new, struct path_ele *head) {
-	__path_add(new, head, head->next);
-}
-void path_add_tail(struct path_ele *new, struct path_ele *head) {
+static void path_add(struct path_ele *new, struct path_ele *head) {
 	path_insert(new, head, head->next);
 }
-void __path_del(struct path_ele *prev, struct path_ele *next) {
-	next->prev = prev;
-	prev->next = next;
+static void path_add_tail(struct path_ele *new, struct path_ele *head) {
+	path_insert(new, head->prev, head);
 }
-struct path_ele *path_del(struct path_ele *ele) {
-	__path_del(ele->prev, ele->next);
-	ele->next = NULL;
-	ele->prev = NULL;
+static struct path_ele *path_pop_first(struct path_ele *head) {
+	struct path_ele *ele = head->next;
+
+	if (path_empty(head))
+		return NULL;
+
+	ele->next->prev = head;
+	head->next = ele->next;
+	ele->next = ele->prev = ele;
+
 	return ele;
 }
-struct path_ele *path_get_tail(struct path_ele *head) {
-	return head->prev;
-}
-struct path_ele *path_pop_first(struct path_ele *head) {
+static struct path_ele *path_pop_last(struct path_ele *head) {
 	if (path_empty(head))
 		return NULL;
-	return path_del(head->next);
+
+	struct path_ele *ele = head->prev;
+
+	ele->prev->next = head;
+	head->prev = ele->prev;
+	ele->next = ele->prev = ele;
+
+	return ele;
 }
-struct path_ele *path_del_last(struct path_ele *head) {
-	return path_del(head->prev);
-}
-struct path_ele *path_pop_last(struct path_ele *head) {
-	if (path_empty(head))
-		return NULL;
-	return path_del(head->prev);
-}
-void free_path_list(struct path_ele *head) {
-	while (!path_empty(head))
-		path_del_last(head);
-}
-//void path_append(struct path_ele *head, struct path_ele *ele) {
-void path_append(struct path_ele *ele, struct path_ele *head) {
-	path_add_tail(ele, head);
+static void free_path_list(struct path_ele *head) {
+	struct path_ele *ele = head->next;
+
+	while (!path_empty(head)) {
+		ele = path_pop_last(head);
+		free_ele(ele);
+	}
 }
 
 struct path_ele *string_to_path_list(char *path_str) {
