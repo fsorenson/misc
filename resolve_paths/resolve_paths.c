@@ -701,7 +701,6 @@ open_root:
 				char *link = NULL;
 				int is_loop, ret;
 
-
 				lcs = (struct loop_checker_struct) {
 					.major = stat_info.major,
 					.minor = stat_info.minor,
@@ -710,11 +709,8 @@ open_root:
 
 				link = malloc(stat_info.size + 1);
 
-				if ((ret = readlinkat(dfd, this_ele->name, link, stat_info.size + 1)) < 0) {
-//					if (strlen(ret == 0))
-//					err_exit(EXIT_FAILURE, "Invalid link");
+				if ((ret = readlinkat(dfd, this_ele->name, link, stat_info.size + 1)) < 0)
 					goto out_invalid_link;
-				}
 				link[ret] = '\0';
 
 				if (config.show_steps)
@@ -763,17 +759,11 @@ open_root:
 			case S_IFCHR:
 			case S_IFIFO:
 			case S_IFSOCK: {
-				path_append(this_ele, current_path);
+				path_add_tail(this_ele, current_path);
 
-				if (!path_empty(remaining_path)) {
-					output("  cannot follow down ");
-					print_path(current_path);
-					output(" (length: %d)  --  not a directory\n", path_len(current_path));
-					output("remaininig path: ");
-					print_path(remaining_path);
-					output(" (length: %d)", path_len(remaining_path));
-					output("\n");
-				} else {
+				if (!path_empty(remaining_path))
+					goto out_not_dir;
+				else {
 //					output("complete\n");
 				}
 				goto out;
