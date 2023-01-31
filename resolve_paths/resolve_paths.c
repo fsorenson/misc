@@ -103,39 +103,42 @@ out:
 
 struct path_ele;
 struct path_ele {
-	char *name;
 	struct path_ele *next;
 	struct path_ele *prev;
+	char name[];
 } path_ele_t;
-
-#define PATH_HEAD_INIT(name) { .next = &(name), .prev = &(name) }
-#define PATH_HEAD(name) \
-        struct path_ele name = PATH_HEAD_INIT(name)
 
 static inline void INIT_PATH_HEAD(struct path_ele *head) {
         head->next = head;
         head->prev = head;
 }
-struct path_ele *alloc_path_ele(void) {
-	struct path_ele *ele = malloc(sizeof(struct path_ele));
-	memset(ele, 0, sizeof(struct path_ele));
+struct path_ele *alloc_path_ele(int namelen) {
+	struct path_ele *ele = malloc(sizeof(struct path_ele) + namelen);
+	memset(ele, 0, sizeof(struct path_ele) + namelen);
+
+	debug_output(2, "allocated %lu bytes at %p\n", sizeof(struct path_ele) + namelen, ele);
+
+	return ele;
+}
+struct path_ele *new_ele(const char *name) {
+	int len = strlen(name) + 1;
+	struct path_ele *ele = alloc_path_ele(len);
+
+	strcpy(ele->name, name);
+	ele->next = ele->prev = ele;
+
+	debug_output(2, "allocated %d bytes for new ele at %p - '%s'\n", len, ele, ele->name);
+
 	return ele;
 }
 struct path_ele *alloc_path_head(void) {
-	struct path_ele *head = alloc_path_ele();
+	struct path_ele *head = alloc_path_ele(0);
 	INIT_PATH_HEAD(head);
+	debug_output(2, "allocated path head element %p\n", head);
 	return head;
 }
-struct path_ele *new_ele(const char *name) {
-	struct path_ele *ele = alloc_path_ele();
-
-	ele->name = strdup(name);
-	ele->next = ele->prev = ele;
-	return ele;
-}
 void free_ele(struct path_ele *ele) {
-	if (ele)
-		free_mem(ele->name);
+	debug_output(2, "free ele %p\n", ele);
 	free_mem(ele);
 }
 bool path_empty(const struct path_ele *head) {
@@ -185,7 +188,7 @@ void path_add(struct path_ele *new, struct path_ele *head) {
 	__path_add(new, head, head->next);
 }
 void path_add_tail(struct path_ele *new, struct path_ele *head) {
-	__path_add(new, head->prev, head);
+	path_insert(new, head, head->next);
 }
 void __path_del(struct path_ele *prev, struct path_ele *next) {
 	next->prev = prev;
