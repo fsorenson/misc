@@ -275,32 +275,26 @@ struct loop_checker_struct {
 	uint32_t minor;
 	uint64_t ino;
 };
+#define LOOP_CHECKER_HDR \
+	uint32_t count; \
+	uint32_t max_count
 struct loop_checker_hdr {
-	uint32_t count;
-	uint32_t max_count;
+	LOOP_CHECKER_HDR;
 };
 struct loop_checker;
 struct loop_checker {
-	struct loop_checker_hdr;
-//	uint32_t count;
-//	uint32_t max_count;
+	LOOP_CHECKER_HDR;
 
-//	struct loop_checker_struct links_visited[(MAX_LOOP_CHECKER_SIZE - offsetof(struct loop_checker, links_visited)) / sizeof(struct loop_checker_struct)];
 	struct loop_checker_struct links_visited[(MAX_LOOP_CHECKER_SIZE - sizeof(struct loop_checker_hdr)) / sizeof(struct loop_checker_struct)];
 };
 #define MAX_LOOP_CHECK_COUNT ((MAX_LOOP_CHECKER_SIZE - sizeof(struct loop_checker_hdr)) / sizeof(struct loop_checker_struct))
 
-
 //static struct loop_checker *loop_checker = NULL;
 static struct loop_checker loop_checker;
 void init_loop_checker(void) {
-//	int size = sizeof(struct loop_checker) + sizeof(struct loop_checker_struct) * max_count;
-//	loop_checker = malloc(size);
 
 	memset(&loop_checker, 0, sizeof(struct loop_checker));
-//	loop_checker->max_count = max_count;
 	loop_checker.max_count = MAX_LOOP_CHECK_COUNT;
-//	return loop_checker;
 }
 void reset_loop_checker(void) {
 	init_loop_checker();
