@@ -1,0 +1,58 @@
+function task_fd_file(t, fd) %{
+	struct task_struct *t = (struct task_struct *)STAP_ARG_t;
+	int fd = (int)STAP_ARG_fd;
+
+	STAP_RETVALUE = (long)t->files->fdt->fd[fd];
+%}
+function file_get_path(t, filp) {
+	filp = &@cast(filp, "struct file", "kernel")
+	if (filp)
+		return task_dentry_path(t, filp->f_path->dentry, filp->f_path->mnt)
+	return "UNKNOWN"
+}
+function task_get_exe(t) {
+	t = &@cast(t, "struct task_struct", "kernel")
+
+	if (t && t->mm && t->mm->exe_file) {
+		path = file_get_path(t, t->mm->exe_file)
+
+		return path
+	}
+	return task_execname(t)
+}
+function get_ancestry(t) {
+	t = &@cast(t, "struct task_struct", "kernel")
+
+	anc = sprintf("%s(%d)", task_get_exe(t), task_tid(t))
+	while (42) {
+		if (task_tid(t) == 1 || !t)
+			break
+
+		t = &@cast(task_parent(t), "struct task_struct", "kernel")
+
+		anc = sprintf("%s(%d)=>%s", task_get_exe(t), task_tid(t), anc)
+	}
+	return anc
+}
+function task_get_fd_path(t, fd) {
+	t = &@cast(t, "struct task_struct", "kernel")
+	file = task_fd_file(t, fd)
+
+	return file_get_path(t, file)
+}
+probe syscall.ioctl {
+	cmd = __uint32($cmd)
+	if (cmd == 0x80086601 || cmd == 0x40086602) {
+		if (cmd == 0x80086601)
+			cmd_str = "getflags"
+		else
+			cmd_str = "setflags"
+
+		anc = get_ancestry(task_current())
+
+		fd_path = task_get_fd_path(task_current(), fd)
+
+		printf("%s (%s) %s(%s %s)\n",
+			execname(), anc, ppfunc(), cmd_str, fd_path)
+	}
+}
