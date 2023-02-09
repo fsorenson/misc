@@ -1,0 +1,15 @@
+
+
+probe module("nfsd").function("encode_fh").call {
+	fh_handle = &@cast($fhp, "struct svc_fh")->fh_handle
+	fh_size = &@cast(fh_handle, "struct knfsd_fh")->fh_size
+
+#	printf("%s (%d) %s(fh_size: %d)\n", execname(), tid(), ppfunc(), kernel_int(fh_size))
+	printf("%s (%d) %s(fh_size: %d)\n", execname(), tid(), ppfunc(), kernel_int(fh_size))
+	print_backtrace()
+#	printf("%s (%d) %s(fh_size: %d)\n", execname(), tid(), ppfunc(), @cast(fh_handle, "struct knfsd_fh")->fh_size)
+#	set_kernel_long(fh_size, 64)
+#	set_kernel_int(fh_size, 60)
+	set_kernel_int(fh_size, 64)
+
+}
