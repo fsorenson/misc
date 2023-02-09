@@ -1,0 +1,1186 @@
+#!/usr/bin/env systemtap
+
+global debug = 0
+global break_length = 1
+global trace_inline_decode = 0
+
+%{
+#include <linux/sunrpc/xdr.h>
+#include <linux/sunrpc/msg_prot.h>
+#include <linux/sunrpc/clnt.h>
+#include <linux/sunrpc/xprt.h>
+#include <linux/sunrpc/xprtsock.h>
+
+#ifdef MAXSTRINGLEN
+#undef MAXSTRINGLEN
+#endif
+#define MAXSTRINGLEN 4096
+
+#ifndef XDR_QUADLEN
+#define XDR_QUADLEN(l)		(((l) + 3) >> 2)
+#endif
+
+#ifndef RPC_LAST_STREAM_FRAGMENT
+#define RPC_LAST_STREAM_FRAGMENT (1U << 31
+#endif
+
+#ifndef RPC_FRAGMENT_SIZE_MASK
+#define RPC_FRAGMENT_SIZE_MASK (~RPC_LAST_STREAM_FRAGMENT)
+#endif
+%}
+
+global open_filenames[1000]
+global trace_tid[1000]
+
+function min(x, y) { return (x < y ? x : y) }
+function max(x, y) { return (x > y ? x : y) }
+
+
+function output(msg) {
+#	printk(2, msg)
+	printf("%s\n", msg)
+#	ftrace(msg)
+}
+
+function header_args(func, args) {
+	probefunc = ppfunc()
+	if (func == probefunc || func == "")
+		return sprintf("%s(%d) %s(%s)", execname(), tid(), ppfunc(), args)
+	return sprintf("%s(%d) %s/%s(%s)", execname(), tid(), ppfunc(), func, args)
+}
+function header(func) {
+	return header_args(func, "")
+#	probefunc = ppfunc()
+#	if (func == probefunc || func == "")
+#		return sprintf("%s(%d) %s()", execname(), tid(), ppfunc())
+#	return sprintf("%s(%d) %s/%s()", execname(), tid(), ppfunc(), func)
+}
+
+global indent_ctrs
+function mod_get_indent_depth:long(delta:long) {
+	tid = tid()
+	x = indent_ctrs[tid]
+	if (delta > 0) {
+		indent_ctrs[tid] = indent_ctrs[tid] + delta
+	} else if (delta < 0) {
+		x += delta
+		indent_ctrs[tid] = indent_ctrs[tid] + delta
+	}
+	if (indent_ctrs[tid] < 0)
+		indent_ctrs[tid] = 0
+	return x > 0 ? x : 0
+}
+
+function trace(entry_p, func, extra) {
+	if (trace_tid[tid()]) {
+#		s = sprintf("%s", thread_indent(entry_p))
+#		fmt = sprintf("%%%ds%%s%%s %%s\n", strlen(s))
+#		s2 = sprintf(fmt, "", (entry_p>0?"->":"<-"), func, extra)
+
+#		s2 = sprintf("%*s (%d bytes - '%s') %s%s %s\n", strlen(s), "", strlen(s), s, (entry_p>0?"->":"<-"), func, extra)
+#		printf("%s", s2)
+
+		if (entry_p == 0) {
+			d = mod_get_indent_depth(entry_p)
+			output(sprintf("%*s %s%s %s(%d) - %s", d, "", (entry_p>0?"->":"<-"), func, execname(), tid(), extra))
+		} else {
+			d = mod_get_indent_depth(entry_p)
+			output(sprintf("%*s %s%s %s(%d) - %s", d, "", "--", func, execname(), tid(), extra))
+		}
+
+#		printf("%s%s%s %s\n",
+#			thread_indent(entry_p),
+#			(entry_p>0?"->":"<-"),
+#			func,
+#			extra)
+	}
+}
+function rpc_task_proc_name:string(task:long) %{
+	struct rpc_task *task = (struct rpc_task *)STAP_ARG_task;
+	struct rpc_procinfo *proc = NULL;
+	char *ret;
+
+	if (task) {
+		proc = (struct rpc_procinfo *)task->tk_msg.rpc_proc;
+		if (proc) {
+			if (proc->p_name)
+				ret = (char *)proc->p_name;
+			else
+				ret = "NULL";
+		} else
+			ret = "no proc";
+	} else
+		ret = "no task";
+
+	snprintf(STAP_RETVALUE, 16, ret);
+%}
+function rpc_msg_proc_name:string(msg:long) %{
+	struct rpc_message *msg = (struct rpc_message *)STAP_ARG_msg;
+	struct rpc_procinfo *proc = NULL;
+	char *ret;
+
+	if (msg) {
+		proc = (struct rpc_procinfo *)msg->rpc_proc;
+
+		if (proc) {
+			if (proc->p_name)
+				ret = (char *)proc->p_name;
+			else
+				ret = "NULL";
+		} else
+			ret = "no proc";
+	} else
+		ret = "no rpc_message";
+
+	snprintf(STAP_RETVALUE, 16, ret);
+%}
+function rpc_proc_name:string(proc:long) %{
+	struct rpc_procinfo *proc = (struct rpc_procinfo *)STAP_ARG_proc;
+	char *ret;
+
+	if (proc) {
+		if (proc->p_name)
+			ret = (char *)proc->p_name;
+		else
+			ret = "NULL";
+	} else
+		ret = "no proc";
+
+	snprintf(STAP_RETVALUE, 16, ret);
+%}
+function rpc_task_proc_replen:long(task:long) %{
+	struct rpc_task *task = (struct rpc_task *)STAP_ARG_task;
+	struct rpc_procinfo *proc = NULL;
+	int ret = 0;
+
+	if (task) {
+		proc = (struct rpc_procinfo *)task->tk_msg.rpc_proc;
+		if (proc)
+			ret  = proc->p_replen;
+	}
+	STAP_RETVALUE = ret;
+%}
+
+function rpc_task_str:string(task) {
+	task = &@cast(task, "struct rpc_task", "sunrpc")
+
+	str = "task_str: "
+	program_name = "???"
+	program_version = -1
+
+	str .= sprintf("(struct rpc_task *)%p", task)
+
+#	if (task && 0) {
+	if (task) {
+		str .= sprintf(" - '%s' vers %d", task_progname(task), task_progvers(task))
+
+
+		p_name = rpc_task_proc_name(task)
+		p_replen = rpc_task_proc_replen(task)
+
+if (p_name == "CREATE" && p_replen == 69) {
+	printf("task->tk_msg->rpc_proc->p_replen is %d!!!  can't modify!\n", task->tk_msg->rpc_proc->p_replen)
+#	task->tk_msg->rpc_proc->p_replen = 70
+}
+
+		str .= sprintf(" proc '%s' (replen: %d)", p_name, p_replen)
+
+
+		rqst = &@cast(task, "struct rpc_task", "sunrpc")->tk_rqstp
+		str .= sprintf("\n\trpc_task->tk_rqstp: (struct rpc_rqst *)%p", rqst)
+		if (rqst) {
+#			task = rqst->rq_task
+#			task = &@cast(rqst, "struct rpc_rqst", "sunrpc")->rq_task
+
+#			xid = htonl(@cast(rqst, "struct rpc_rqst", "sunrpc")->rq_xid)
+			xid = @cast(rqst, "struct rpc_rqst", "sunrpc")->rq_xid
+			str .= sprintf(" rpc xid: 0x%08x", xid)
+
+			str .= sprintf(", rqst->rq_rcvsize: %d", @cast(rqst, "struct rpc_rqst", "sunrpc")->rq_rcvsize)
+
+#			rq_rcvsize = rqst->rq_rcvsize
+#			rq_rcvsize = @cast(rqst, "struct rpc_rqst", "sunrpc")->rq_rcvsiz
+			printf("%s - rqst is %p\n", ppfunc(), rqst)
+
+if (0) {
+
+try {
+			str .= sprintf("\n\trq_callsize: %d, rq_rcvsize: %d", rqst->rq_callsize, rqst->rq_rcvsize)
+			str .= sprintf("\n\trq_rq_xmit_bytes_sent: %d, rq_reply_bytes_recvd: %d",
+				rqst->rq_xmit_bytes_sent, rqst->rq_reply_bytes_recvd)
+			str .= sprintf("\n\trq_bytes_sent: %d", rqst->rq_bytes_sent)
+} catch {
+	str .= "error  reading from tk_rqstp\n"
+}
+}
+		}
+
+		clnt = &@cast(task, "struct rpc_task", "sunrpc")->tk_client
+		str .= sprintf("\n\trpc_task->tk_client: (struct rpc_clnt *)%p", clnt)
+		if (clnt && 0) {
+
+			if (clnt->cl_program) {
+				program = clnt->cl_program
+				if (program && 0) {
+
+try {
+	name = program->name
+	if (name) {
+					program_name = kernel_string(@cast(clnt, "struct rpc_clnt", "sunrpc")->cl_program->name)
+	}
+	else program_name = "failed to read name"
+} catch {
+	program_name = "error reading rpc_clnt->cl_program->name"
+}
+				}
+			} else
+				program_name = "???"
+			program_version = &@cast(clnt, "struct rpc_clnt", "sunrpc")->cl_vers
+		}
+
+
+		msg = &@cast(task, "struct rpc_task", "sunrpc")->tk_msg
+		str .= sprintf("\n\trpc_task->tk_msg: (struct rpc_message *)%p", msg)
+
+		if (msg) {
+			argp = msg->rpc_argp
+
+			# is either of these better than the other?
+			proc = &@cast(msg, "struct rpc_message", "sunrpc")->rpc_proc
+			if (proc) {
+				p_replen = @cast(proc, "struct rpc_procinfo", "sunrpc")->p_replen
+				str .= sprintf(", p_replen: %d", p_replen)
+
+				if (program_name == "nfs" && program_version == 3) {
+					if (p_name == "CREATE") {
+						createargs = &@cast(argp, "struct nfs3_createargs", "nfsv3")
+						filename = kernel_string_n(createargs->name, createargs->len)
+						str .= sprintf(" (create filename '%s')", filename)
+					}
+					# decode anything else while we're here?
+				}
+
+			}
+		}
+	}
+	return str
+}
+
+probe syscall.open,
+      syscall.openat {
+
+	if (filename =~ @1) {
+		open_filenames[tid()] = filename
+		trace_tid[tid()] = 1
+		output(header_args(name, filename))
+	}
+}
+
+probe syscall.open.return,
+      syscall.openat.return {
+
+	if (trace_tid[tid()]) {
+		filename = open_filenames[tid()]
+#		filename = "??"
+#		output(sprintf("%s (%d) - %s(%s).return = %d",
+#			execname(), tid(), name, filename, retval))
+		output(sprintf("%s.return = %d", header_args(name, filename), retval))
+
+#		delete open_filenames[tid()]
+		delete trace_tid[tid()]
+	}
+}
+
+function make_hexdump_char_string:string(ptr, len) %{
+	char ret[17];
+	char *ptr = (char *)STAP_ARG_ptr;
+	int len = (int)STAP_ARG_len;
+	char ch;
+	int i;
+
+	for (i = 0 ; i < len ; i++) {
+		ch = ptr[i];
+		ret[i] = (isascii(ch) && isprint(ch)) ? ch : '.';
+	}
+	ret[len] = '\0';
+	snprintf(STAP_RETVALUE, 16, ret);
+%}
+
+function sprint_hexdump:string(addr:long, len:long) {
+	if (len == 0 || addr == 0)
+		next
+
+	ret = ""
+
+#	output(sprintf("\t%d bytes from %p", len, addr))
+	str .= sprintf("\t%d bytes from %p\n", len, addr)
+
+	offset = 0
+	while (offset < len) {
+		left = ""
+		right = ""
+		str = ""
+
+		c_this_line = min(len - offset, 16)
+
+		for (i = 0 ; i < min(c_this_line, 8) ; i++) {
+			if (i < c_this_line) {
+				c = kernel_char(addr + offset + i) & 0xff
+				left .= sprintf("%02x ", c)
+			}
+		}
+		for (i = 8 ; i < min(c_this_line, 16) ; i++) {
+			if (i < c_this_line) {
+				c = kernel_char(addr + offset + i) & 0xff
+				right .= sprintf("%02x ", c)
+			}
+		}
+		str = make_hexdump_char_string(addr + offset, c_this_line)
+#		output(sprintf("\t%016x: %-24s %-24s  [%s]", addr + offset, left, right, str))
+		ret .= sprintf("\t%016x: %-24s %-24s  [%s]\n", addr + offset, left, right, str)
+		offset += c_this_line
+	}
+	return ret
+}
+
+function hexdump:string(addr:long, len:long) {
+	output(sprint_hexdump(addr, len))
+}
+
+
+global xdr_inline_decode_bytes[1000]
+
+#probe module("sunrpc").statement("xdr_inline_decode@net/sunrpc/xdr.c:964") {
+# xdr is 'struct xdr_stream'
+%{
+#if 0
+xdr_stream={
+        __be32 *p;              /* start of available buffer */
+        struct xdr_buf *buf;    /* XDR buffer to read/write */
+        __be32 *end;            /* end of available buffer space */
+        struct kvec *iov;       /* pointer to the current kvec */
+        struct kvec scratch;    /* Scratch buffer */
+        struct page **page_ptr; /* pointer to the current page */
+        unsigned int nwords;    /* Remaining decode buffer length */
+        struct rpc_rqst *rqst;  /* For debugging */
+
+	.p=0xffff8faf4eb43ad4,
+	.buf=0xffff8fae5e3e2a50,
+	.end=0xffff8faf4eb43bf4,
+	.iov=0xffff8fae5e3e2a50,
+	.scratch={
+		.iov_base=0x0,
+		.iov_len=0
+	},
+	.page_ptr=0x0,
+	.nwords=72,
+	.rqst=0xffff8fae5e3e2a00
+}
+struct xdr_buf {
+        struct kvec     head[1],        /* RPC header + non-page data */
+                        tail[1];        /* Appended after page data */
+        struct bio_vec  *bvec;
+        struct page **  pages;          /* Array of pages */
+        unsigned int    page_base,      /* Start of page data */
+                        page_len,       /* Length of page data */
+                        flags;          /* Flags for data disposition */
+#define XDRBUF_READ             0x01            /* target of file read */
+#define XDRBUF_WRITE            0x02            /* source of file write */
+#define XDRBUF_SPARSE_PAGES     0x04            /* Page array is sparse */
+        unsigned int    buflen,         /* Total length of storage buffer */
+                        len;            /* Length of XDR encoded message */
+};
+#endif
+%}
+
+
+probe module("sunrpc").function("xdr_init_decode") {
+
+	p = $xdr->p
+
+
+
+	output(sprintf("%s\n%s", header(""), sprint_hexdump(p, 3)))
+
+#        unsigned int nwords = XDR_QUADLEN(nbytes);
+#        __be32 *p = xdr->p;
+	output(sprint_backtrace())
+}
+
+global init_decode_streams[1000]
+global init_decode_bufs[1000]
+global init_decode_rqsts[1000]
+global init_decode_p[1000]
+# module("sunrpc").function("xdr_init_decode@net/sunrpc/xdr.c:856") $xdr:struct xdr_stream* $buf:struct xdr_buf* $p:__be32* $rqst:struct rpc_rqst*
+probe module("sunrpc").function("xdr_init_decode") if (0) {
+	tid = tid()
+	init_decode_streams[tid] = $xdr
+	init_decode_bufs[tid] = $buf
+	init_decode_rqsts[tid] = $rqst
+	init_decode_p[tid] = $p
+
+
+%{
+#if 0
+
+        struct kvec     head[1],        /* RPC header + non-page data */
+                        tail[1];        /* Appended after page data */
+        struct bio_vec  *bvec;
+        struct page **  pages;          /* Array of pages */
+        unsigned int    page_base,      /* Start of page data */
+                        page_len,       /* Length of page data */
+                        flags;          /* Flags for data disposition */
+#define XDRBUF_READ             0x01            /* target of file read */
+#define XDRBUF_WRITE            0x02            /* source of file write */
+#define XDRBUF_SPARSE_PAGES     0x04            /* Page array is sparse */
+        unsigned int    buflen,         /* Total length of storage buffer */
+                        len;            /* Length of XDR encoded message */
+
+#endif
+%}
+
+
+next
+        task = $rqst->rq_task
+
+	str = rpc_task_str(task)
+
+	output(sprintf("%s - %s", header(""), str))
+
+/*
+	if (create_xid_names[xid]) {
+		filename = create_xid_names[xid]
+		delete create_xid_names[xid]
+
+	}
+*/
+
+	if (debug) {
+		if (trace_tid[tid()]) {
+			if (!$buf) {
+				output(sprintf("%s() - buf is null?", ppfunc()))
+				next
+			}
+			str = sprintf(", buf->buflen: %d, buf->len: %d, buf->head[0]->iov_len: %d", $buf->buflen, $buf->len, $buf->head[0]->iov_len)
+#		if ($buf->head[0]) {
+#			str .= sprintf(", buf->head[0]->iov_len: %d", buf->head[0]->iov_len)
+
+#		}
+	/*
+			if ($xdr) {
+				str .= sprintf(", xdr->nwords: %d", $xdr->nwords)
+				if ($xdr->buf) { # 'struct xdr_buf'
+					str .= sprintf(", xdr->buf->buflen: %d, xdr->buf->len (length of xdr encoded message): %d",
+						$xdr->buf->buflen, $xdr->buf->len)
+				}
+			}
+	*/
+			trace(0, "xdr_init_decode", str)
+
+		} else {
+			output(sprintf("%s (%d) - xdr_init_decode called", execname(), tid()))
+		}
+	}
+}
+
+# only useful for things like getdents, read, etc.
+#probe module("sunrpc").function("rpc_prepare_reply_pages") {
+#	output(sprintf("%s - len: %d, hdrsize: %d, increasing hdrsize by RPC_REPHDRSIZE (%d)",
+#		header("rpc_prepare_reply_pages"), $len, $hdrsize, %{ RPC_REPHDRSIZE %}))
+#}
+
+
+function xdr_buf_str(buf) {
+	buf = &@cast(buf, "struct xdr_buf", "sunrpc")
+
+	str = ""
+
+	head_iov_base = buf->head[0]->iov_base
+	head_iov_len = buf->head[0]->iov_len
+#	output(sprintf("\tbuf_head_iov_base: %p, buf_head_iov_len: %d", buf_head_iov_base, buf_head_iov_len))
+
+
+#	hexdump(buf_head_iov_base - 4, 4)
+#	hexdump(buf_head_iov_base, buf_head_iov_len)
+
+
+	page_base = buf->page_base
+	page_len = buf->page_len
+	buflen = buf->buflen
+	len = buf->len
+
+	str .= sprintf("(struct xdr_buf *)%p - page_base: %d, page_len: %d, len: %d, buflen: %d",
+		buf, page_base, page_len, len, buflen)
+	str .= sprintf(". head->iov_base: %p, iov_len: %d",
+		head_iov_base, head_iov_len)
+
+#	hexdump(buf_head_iov_base - 4, 4)
+	str .= sprint_hexdump(head_iov_base, head_iov_len)
+
+	return str
+}
+
+probe module("sunrpc").function("xdr_init_decode").return {
+# struct xdr_stream *xdr, struct xdr_buf *buf, __be32 *p, struct rpc_rqst *rqst)
+	xdr = &@cast(@entry($xdr), "struct xdr_stream", "sunrpc")
+	buf = &@cast(@entry($buf), "struct xdr_buf", "sunrpc")
+	rqst = &@cast(@entry($rqst), "struct rpc_rqst", "sunrpc")
+	p = @entry($p)
+
+	xprt = 0
+	transport = 0
+
+	output(sprintf("%s().return\n", ppfunc()))
+	if (rqst) {
+		xid = rqst->rq_xid
+
+		output(sprintf("\trqst->rq_reply_bytes_recvd: %d", rqst->rq_reply_bytes_recvd))
+		private_buf = &rqst->rq_private_buf
+		output(sprintf("\trqst->rq_private_buf: %p", private_buf))
+
+		output(sprintf("\trqst->rq_rcv_buf.len: %d", rqst->rq_rcv_buf->len))
+
+
+		output(sprintf("%s.return rqst: %p, xid: 0x%08x", header("xdr_init_decode"), rqst, xid))
+
+
+		xprt = @cast(rqst, "struct rpc_rqst", "sunrpc")->rq_xprt # rpc_xprt
+		transport = &@cast(&@container_of(xprt, "struct sock_xprt", xprt), "struct sock_xprt", "sunrpc")
+	} else {
+output(sprintf("in %s().return - rqst is 0\n", ppfunc()))
+
+	}
+
+	if (p) {
+		xdr_end = @cast(xdr, "struct xdr_stream", "sunrpc")->end
+#		output(sprintf("%s (%d) - %s().return - p: %p, xdr->p: %p, xdr->end: %p, stream_pos: %d",
+#			execname(), tid(), ppfunc(), p, @cast(xdr, "struct xdr_stream", "sunrpc")->p, @cast(xdr, "struct xdr_stream", "sunrpc")->end, xdr_stream_pos(xdr)))
+		output(sprintf("\tp: %p, xdr->p: %p, xdr->end: %p, stream_pos: %d", 
+			p, @cast(xdr, "struct xdr_stream", "sunrpc")->p, @cast(xdr, "struct xdr_stream", "sunrpc")->end, xdr_stream_pos(xdr)))
+
+		output(sprintf("\t- (xdr->end - p) = %d", xdr_end - p))
+
+		head = @cast(buf, "struct xdr_buf", "sunrpc")->head
+#        struct kvec     head[1],        /* RPC header + non-page data */
+
+
+
+
+		buf_word_1 = kernel_int(p - 4) & 0xffffffff
+		buf_word0 = ntohl(kernel_int(@cast(buf, "struct xdr_buf", "sunrpc")->head))
+#		buf_word = ntohl(kernel_int(p) & 0xffffffff)
+		buf_word = kernel_int(p) & 0xffffffff
+		output(sprintf("\t*p: 0x%08x / 0x%08x (buf_word -1: 0x%08x)", buf_word0, buf_word, buf_word_1))
+
+
+#		head = buf->head
+		buf_head_iov_base = buf->head[0]->iov_base
+		buf_head_iov_len = buf->head[0]->iov_len
+		output(sprintf("\tbuf_head_iov_base: %p, buf_head_iov_len: %d", buf_head_iov_base, buf_head_iov_len))
+
+
+		hexdump(buf_head_iov_base - 4, 4)
+		hexdump(buf_head_iov_base, buf_head_iov_len)
+
+		output(sprintf("\t%s", xdr_buf_str(buf)))
+#pages = buf->pages
+
+
+
+
+#		hexdump(p - 4, 16)
+#		output(sprintf("    page_base: %p, page_len: %d", buf->page_base, buf->page_len))
+
+
+	} else {
+#		output(sprintf("%s (%d) - %s().return - p is NULL", execname(), tid(), ppfunc()))
+		output("\tp is NULL")
+	}
+
+	output(sprintf("%s.return - buf->len: %d, buf->buflen: %d",
+		header("xdr_init_decode"), @cast(buf, "struct xdr_buf", "sunrpc")->len, @cast(buf, "struct xdr_buf", "sunrpc")->buflen))
+
+	if (transport) {
+		recv_offset = @cast(transport, "struct sock_xprt", "sunrpc")->recv->offset
+		recv_len = @cast(transport, "struct sock_xprt", "sunrpc")->recv->len
+		recv_copied = @cast(transport, "struct sock_xprt", "sunrpc")->recv->copied
+		output(sprintf("\ttransport recv_offset: %d, transport recv_len: %d, transport recv_copied: %d", recv_offset, recv_len, recv_copied))
+
+		fraghdr = ntohl(@cast(transport, "struct sock_xprt", "sunrpc")->recv->fraghdr)
+		fraghdr_len = fraghdr & %{ RPC_FRAGMENT_SIZE_MASK %}
+#		xid2 = @cast(transport, "struct sock_xprt", "sunrpc")->recv->xid
+
+#		output(sprintf("%s.return  xprt->recv->xid: 0x%08x, rqst->rq_xid: 0x%08x (%s", 
+#		header("xdr_init_decode"), xid2, xid, xid == xid2 ? "MATCH" : "DIFFER"))
+
+		buf_len = @cast(buf, "struct xdr_buf", "sunrpc")->len
+		calldir = ntohl(@cast(transport, "struct sock_xprt", "sunrpc")->recv->calldir)
+		output(sprintf("\tfraghdr: 0x%08x (len: %d), xid: 0x%08x, calldir: 0x%08x, xdr_buf->len: %d", fraghdr, fraghdr_len, xid, calldir, buf_len))
+
+#		if (fraghdr_len != @cast(buf, "struct xdr_buf", "sunrpc")->len) {
+		if (fraghdr_len != buf_len) {
+#			output(sprintf("\tWARNING: fragment header length: %d, buffer length: %d", fraghdr_len, @cast(buf, "struct xdr_buf", "sunrpc")->len))
+			output(sprintf("\tWARNING: fragment header length: %d, buffer length: %d", fraghdr_len, buf_len))
+			output(sprint_backtrace())
+		}
+#		buf_word = kernel_long(buf
+	}
+}
+
+
+
+probe module("sunrpc").function("xdr_inline_decode") {
+		str = sprintf("nbytes: %d", $nbytes)
+//		nbytes = $nbytes
+	if (trace_tid[tid()]) {
+		if ($xdr) {
+			str .= sprintf(", xdr->nwords: %d", $xdr->nwords)
+			if ($xdr->buf) { # 'struct xdr_buf'
+				str .= sprintf(", xdr->buf->buflen: %d, xdr->buf->len (length of xdr encoded message): %d",
+					$xdr->buf->buflen, $xdr->buf->len)
+			}
+		}
+
+		xdr_inline_decode_bytes[tid()] = $nbytes
+#		trace(1, "xdr_inline_decode", str)
+		output(sprintf("%s - %s", header("xdr_inline_decode"), str))
+#		output(sprint_backtrace())
+	}
+}
+
+#probe module("sunrpc").statement("__xdr_inline_decode@net/sunrpc/xdr.c:896") {
+probe module("sunrpc").function("__xdr_inline_decode") if (0) {
+	trace(1, "__xdr_inline_decode", $$parms$$)
+}
+#probe module("sunrpc").function("__xdr_inline_decode").return {
+probe module("sunrpc").statement("__xdr_inline_decode@net/sunrpc/xdr.c:907").nearest if (0) {
+	str = sprintf("%s - return = %p", $$parms, $p)
+#	trace(-1, "__xdr_inline_decode", $$parms$$)
+	trace(-1, "__xdr_inline_decode", str)
+}
+
+#probe module("sunrpc").statement("xdr_copy_to_scratch@net/sunrpc/xdr.c:927") if (debug) {
+probe module("sunrpc").function("xdr_copy_to_scratch") if (debug) {
+      trace(1, "xdr_copy_to_scratch", $$parms$$)
+}
+
+#probe module("sunrpc").statement("xdr_set_next_buffer@net/sunrpc/xdr.c:839") {
+probe module("sunrpc").function("xdr_set_next_buffer") if (debug) {
+      trace(1, "xdr_set_next_buffer", $$parms$$)
+}
+
+%{
+
+
+%}
+probe module("sunrpc").function("xdr_inline_decode").return if (debug) {
+        if (trace_tid[tid()]) {
+		xdr = &@cast(@entry($xdr), "struct xdr_stream", "sunrpc")
+
+		str = ""
+		if (xdr) {
+			xdr = &@cast(xdr, "struct xdr_stream", "sunrpc")
+#			str .= sprintf(", xdr->nwords: %d", xdr->nwords)
+			str .= sprintf(", xdr->nwords: %d", @cast(xdr, "struct xdr_stream", "sunrpc")->nwords)
+			if (@cast(xdr, "struct xdr_stream", "sunrpc")->buf) # 'struct xdr_buf'
+				str .= sprintf(", xdr->buf->buflen: %d, xdr->buf->len (length of xdr encoded message): %d",
+					@cast(xdr, "struct xdr_stream", "sunrpc")->buf->buflen, @cast(xdr, "struct xdr_stream", "sunrpc")->buf->len)
+		}
+
+		str .= sprintf("; return: %s", $$return)
+
+		nbytes = xdr_inline_decode_bytes[tid()]
+		delete xdr_inline_decode_bytes[tid()]
+
+//		trace(-1, "xdr_inline_decode", $$return)
+		trace(-1, "xdr_inline_decode", str)
+		if ($return && nbytes > 0)
+			hexdump($return, nbytes)
+	}
+}
+
+global set_next_buffer_parms[1000]
+probe module("sunrpc").function("xdr_set_next_buffer") if (debug) {
+	if (trace_tid[tid()]) {
+		set_next_buffer_parms[tid()] = sprintf("%s", $$parms$$)
+		trace(1, "xdr_set_next_buffer", $$parms$$)
+	}
+}
+probe module("sunrpc").statement("xdr_set_next_buffer@net/sunrpc/xdr.c:846") if (debug) {
+#probe module("sunrpc").function("xdr_set_next_buffer").return {
+	if (trace_tid[tid()]) {
+		parms = set_next_buffer_parms[tid()]
+		delete set_next_buffer_parms[tid()]
+		trace(-1, "xdr_set_next_buffer", parms)
+	}
+}
+
+#[root@vm9 vm7]# stap -L 'module("sunrpc").function("svc_tcp_recvfrom")'
+#module("sunrpc").function("svc_tcp_recvfrom@net/sunrpc/svcsock.c:1029") $rqstp:struct svc_rqst*
+#[root@vm9 vm7]# stap -L 'module("sunrpc").function("svc_tcp_recvfrom").return'
+#module("sunrpc").function("svc_tcp_recvfrom@net/sunrpc/svcsock.c:1029").return $return:int $rqstp:struct svc_rqst*
+probe module("sunrpc").function("svc_tcp_recvfrom").return if (debug) {
+	output(sprintf("%s (%d) - %s() returns %d", execname(), tid(), ppfunc(), $return))
+}
+
+# stap -L 'module("sunrpc").function("svc_recv").return'
+#module("sunrpc").function("svc_recv@net/sunrpc/svc_xprt.c:822").return $return:int $rqstp:struct svc_rqst* $timeout:long int $xprt:struct svc_xprt*
+probe module("sunrpc").function("svc_recv").return if (debug) {
+	output(sprintf("%s (%d) - %s() returns %d", execname(), tid(), ppfunc(), $return))
+}
+
+# can't find these
+#probe module("sunrpc").function("xprt_sendto").return, module("sunrpc").function("xprt_recvfrom").return {
+#	output(sprintf("%s (%d) - %s() returns %d", execname(), tid(), ppfunc(), $return))
+#}
+
+# stap -L 'module("sunrpc").function("xs_sock_recvmsg").return'
+#module("sunrpc").function("xs_sock_recvmsg@net/sunrpc/xprtsock.c:347").return $return:ssize_t $sock:struct socket* $msg:struct msghdr* $seek:size_t $flags:int
+probe module("sunrpc").function("xs_sock_recvmsg").return if (debug) {
+	output(sprintf("%s (%d) - %s() returns %d", execname(), tid(), ppfunc(), $return))
+}
+
+
+# guessing this would be too verbose
+# stap -L 'kernel.function("sock_recvmsg").return'
+#kernel.function("sock_recvmsg@net/socket.c:878").return $return:int $sock:struct socket* $msg:struct msghdr* $flags:int
+
+probe module("sunrpc").function("xdr_read_pages") if (debug) {
+#	output(sprintf("%s (%d) - %s(%s)", execname(), tid(), ppfunc(), $$parms$$))
+	output(header(""))
+}
+probe module("sunrpc").function("xdr_read_pages").return if (debug) {
+#	output(sprintf("%s (%d) - %s() returns %d", execname(), tid(), ppfunc(), $return))
+	output(header(""))
+}
+
+# module("sunrpc").function("xs_data_ready@net/sunrpc/xprtsock.c:1460") $sk:struct sock*
+probe module("sunrpc").function("xs_data_ready") if (debug) {
+#	xprt = &@cast($sk
+#	output(sprintf("%s (%d) - %s()", execname(), tid(), ppfunc()))
+	output(header(""))
+
+}
+
+
+# stap -L 'module("sunrpc").function("rpc_decode_header").return'
+#module("sunrpc").function("rpc_decode_header@net/sunrpc/clnt.c:2575").return $return:int $task:struct rpc_task* $xdr:struct xdr_stream*
+
+#global decode_header_buf_len[1000]
+probe module("sunrpc").function("rpc_decode_header") {
+#	clnt = &@cast($task->tk_client, "struct rpc_clnt", "sunrpc")
+
+	task_str = rpc_task_str($task)
+
+#	output(sprintf("%s (%d) - %s/rpc_decode_header() - %s", execname(), tid(), ppfunc(), task_str))
+	output(sprintf("%s - %s", header("rpc_decode_header"), task_str))
+
+	next
+
+	if (! task_is_nfsv3($task)) {
+		output(sprintf("%s (%d) - %s() - %s - but not nfsv3?",
+			execname(), tid(), ppfunc(), task_str))
+		next
+	}
+
+	str = task_str
+
+	if ($xdr) {
+		str .= sprintf("xdr->nwords: %d", $xdr->nwords)
+	}
+
+	buf_len = $task->tk_rqstp->rq_rcv_buf->len
+
+	xid = task_xid($task)
+
+	str .= sprintf(", rq_rcv_buf.len: %d", buf_len)
+	proc_name = rpc_task_proc_name($task)
+	if (break_length && proc_name == "CREATE") {
+		filename = create_xid_names[xid]
+#		if (create_xid_names[xid]) {
+		if (filename != "") {
+#			create_xid_names[xid]) {
+#			filename = create_xid_names[xid]
+			delete create_xid_names[xid]
+
+			str .= sprintf(" (create filename '%s')", filename)
+		}
+		str .= " ** MIGHT break **"
+	}
+
+
+	output(sprintf("%s (%d) - %s() - %s",
+		execname(), tid(), ppfunc(), str))
+
+
+	if (0) {
+		if (break_length && 0) {
+			if (buf_len == 260 && $xdr && $xdr->nwords == 65) {
+				output(sprintf("length = 260/nwords=65 ... modifying to break things"))
+
+				$xdr->nwords = 64
+				output(sprint_backtrace())
+			}
+#			decode_header_buf_len[tid()] = buf_len
+		}
+	}
+
+}
+#probe module("sunrpc").function("rpc_decode_header").return {
+#	delete decode_header_buf_len[tid()]
+#}
+
+
+
+function xdr_stream_pos(xdr) %{
+	struct xdr_stream *xdr = (struct xdr_stream *)STAP_ARG_xdr;
+
+	STAP_RETVALUE = (unsigned int)(XDR_QUADLEN(xdr->buf->len) - xdr->nwords) << 2;
+%}
+
+
+global count = 0
+
+#struct rpc_rqst {
+#        /*
+#         * This is the user-visible part
+#         */
+#        struct rpc_xprt *       rq_xprt;                /* RPC client */
+#        struct xdr_buf          rq_snd_buf;             /* send buffer */
+#        struct xdr_buf          rq_rcv_buf;             /* recv buffer */
+
+#        /*
+#         * This is the private part
+#         */
+#        struct rpc_task *       rq_task;        /* RPC task data */
+#        struct rpc_cred *       rq_cred;        /* Bound cred */
+#        __be32                  rq_xid;         /* request XID */
+
+function task_progname(task) {
+	return kernel_string(@cast(task, "struct rpc_task", "sunrpc")->tk_client->cl_program->name)
+}
+function task_progvers(task) {
+	return @cast(task, "struct rpc_task", "sunrpc")->tk_client->cl_vers
+}
+function task_is_nfsv3(task) {
+#	clnt = task->tk_client
+#	if (kernel_string(clnt->cl_program->name) == "nfs" && clnt->cl_vers == 3)
+	if (task_progname(task) == "nfs" && task_progvers(task) == 3)
+		return 1
+	return 0
+}
+function task_xid(task) {
+#	task = &@cast(task, "struct rpc_task", "sunrpc")
+	return @cast(task, "struct rpc_task", "sunrpc")->tk_rqstp->rq_xid
+#	return task->tk_rqst->rq_xid
+}
+
+
+global create_xid_names[1000]
+#module("sunrpc").function("xs_tcp_send_request@net/sunrpc/xprtsock.c:1102") $req:struct rpc_rqst* $sent:int
+probe module("sunrpc").function("xs_tcp_send_request") {
+
+	if (! task_is_nfsv3($req->rq_task))
+		next
+
+	task = $req->rq_task
+	xid = $req->rq_xid
+
+#	p_name = rpc_task_proc_name(task)
+
+#	msg = &task->tk_msg
+
+	# probably only need one of these, though
+#	proc = &msg->rpc_proc
+#	proc = &task->tk_msg->rpc_proc
+
+#       if ($task->tk_msg && $task->tk_msg->rpc_proc && $task->tk_msg->rpc_proc->p_name) {
+#               p_name = $task->tk_msg->rpc_proc->p_name;
+#       }
+
+#	rqst = task->tk_rqstp
+
+/*
+	str = ""
+
+	clnt = task->tk_client
+	cl_vers = clnt->cl_vers
+	program_name = kernel_string(clnt->cl_program->name)
+	str .= sprintf("'%s' version %d", program_name, cl_vers)
+
+	p_replen = proc->p_replen
+	str .= sprintf(", p_replen: %d", p_replen)
+	str .= sprintf(" - proc '%s'", p_name)
+
+*/
+	str = rpc_task_str(task)
+
+#bash (62147) - xs_tcp_send_request() (create filename 'traceme'), 'nfs' version 3 xid: 0xaf3a93a1
+#	output(sprintf("%s (%d) - %s() - %s xid: 0x%08x",
+#		execname(), tid(), ppfunc(),
+#		str, xid))
+	output(sprintf("%s - %s xid: 0x%08x", header("xs_tcp_send_request"), str, xid))
+#	output(sprint_backtrace())
+}
+
+
+# module("sunrpc").function("xdr_inline_decode@net/sunrpc/xdr.c:963") $xdr:struct xdr_stream* $nbytes:size_t
+probe module("sunrpc").function("xdr_inline_decode") if (trace_inline_decode) {
+	caller = symname(caller_addr())
+
+	if (caller == "rpc_decode_header") {
+		output(sprintf("%s (%d) - %s(), called from %s, xdr->nwords: %d, nbytes: %d", execname(), tid(), ppfunc(), caller, $xdr->nwords, $nbytes))
+		output(sprint_backtrace())
+	}
+
+	if (debug) {
+		if (trace_tid[tid()]) {
+			str = sprintf("nbytes: %d", $nbytes)
+//			nbytes = $nbytes
+
+			if ($xdr) {
+				str .= sprintf(", xdr->nwords: %d", $xdr->nwords)
+				if ($xdr->buf) { # 'struct xdr_buf'
+					str .= sprintf(", xdr->buf->buflen: %d, xdr->buf->len (length of xdr encoded message): %d",
+						$xdr->buf->buflen, $xdr->buf->len)
+				}
+			}
+		}
+	}
+
+}
+
+probe module("sunrpc").function("xdr_inline_decode").return if (trace_inline_decode) {
+	caller = symname(caller_addr())
+
+	if (caller == "rpc_decode_header") {
+		output(sprintf("%s (%d) - %s(), called from %s, returning %p", execname(), tid(), ppfunc(), caller, $return))
+	}
+}
+
+
+/*
+probe module("sunrpc").function("rpc_decode_header").return {
+	xdr = &@cast(@entry($xdr), "struct xdr_stream", "sunrpc")
+
+	str = ""
+	if (xdr) {
+		str .= sprintf("xdr->nwords: %d", xdr->nwords)
+
+		if (xdr->nwords == 65) {
+			str .= sprintf("breaking xdr->nwords")
+			xdr->nwords = 64
+		}
+	}
+	output(sprintf("%s (%d) - %s() returns %d; %s", execname(), tid(), ppfunc(), $return, str))
+}
+*/
+
+probe module("nfsv3").function("nfs3_proc_create") if (0) {
+#	output(sprintf("%s (%d) - %s()", execname(), tid(), ppfunc()))
+	output(header("nfs3_proc_create"))
+#	output(sprint_backtrace())
+}
+
+%{
+#if 0
+struct rpc_message {
+        const struct rpc_procinfo *rpc_proc;    /* Procedure information */
+        void *                  rpc_argp;       /* Arguments */
+        void *                  rpc_resp;       /* Result */
+        const struct cred *     rpc_cred;       /* Credentials */
+#endif
+%}
+
+
+
+# stap -L 'module("sunrpc").function("rpc_execute")'
+#module("sunrpc").function("rpc_execute@net/sunrpc/sched.c:976") $task:struct rpc_task*
+probe module("sunrpc").function("__rpc_execute") {
+
+	str = rpc_task_str($task)
+#	str = "rpc_task_str() was going crazy"
+
+#	p_name = rpc_task_proc_name($task)
+#	rqst = &@cast($task->tk_rqstp, "struct rpc_rqst", "sunrpc")
+
+#	xid = rqst->rq_xid
+	output(sprintf("%s - %s", header("__rpc_execute"), str))
+#	output(sprint_backtrace())
+}
+
+/*
+probe module("nfsv3").function("nfs3_proc_create").callees(3) {
+	output(sprintf("%s (%d) - %s()", execname(), tid(), ppfunc()))
+	output(sprint_backtrace())
+}
+*/
+# stap -L 'module("sunrpc").function("rpc_call_sync")'
+#module("sunrpc").function("rpc_call_sync@net/sunrpc/clnt.c:1146") $clnt:struct rpc_clnt* $msg:struct rpc_message const* $flags:int $task_setup_data:struct rpc_task_setup
+probe module("sunrpc").function("rpc_call_sync") {
+	str = ""
+
+	p_name = rpc_msg_proc_name($msg)
+
+	if (0 && p_name == "CREATE") {
+		if ($msg && $msg->rpc_argp) {
+#			task->tk_msg->rpc_proc->p_name;
+			createargs = &@cast($msg->rpc_argp, "struct nfs3_createargs", "nfsv3")
+			filename = kernel_string_n(createargs->name, createargs->len)
+			str = sprintf(" (create filename '%s')", filename)
+		} else if ($msg) {
+			output(sprintf("    $msg is %p, but $msg->rpc_argp is NULL", $msg))
+		}
+	}
+
+#	output(sprintf("%s (%d) - %s/rpc_call_sync() - %s%s", execname(), tid(), ppfunc(), p_name, str))
+	output(sprintf("%s - %s%s", header("rpc_call_sync"), p_name, str))
+#	output(sprint_backtrace())
+}
+
+
+
+probe module("sunrpc").function("rpc_execute") {
+#	p_name = rpc_task_proc_name($task)
+#	rqst = &@cast(&@cast($return, "struct rpc_task", "sunrpc")->tk_rqstp, "struct rpc_rqst", "sunrpc")
+
+	
+if (0) {
+	rqst = $task->tk_rqstp
+
+	xid = rqst->rq_xid
+	str = ""
+	if (p_name == "CREATE") {
+		msg = &$task->tk_msg
+		if (msg && msg->rpc_argp) {
+#			task->tk_msg->rpc_proc->p_name;
+			createargs = &@cast(msg->rpc_argp, "struct nfs3_createargs", "nfsv3")
+			filename = kernel_string_n(createargs->name, createargs->len)
+			str = sprintf(" (create filename '%s')", filename)
+		} else if (msg) {
+			output(sprintf("    task->tk_msg is %p, but task->tk_msg->rpc_argp is NULL", msg))
+		} else {
+			output(sprintf("    task is %p, but task->tk_msg is NULL", $task))
+		}
+	}
+}
+
+str = rpc_task_str($task)
+
+
+#	output(sprintf("%s (%d) - %s/rpc_execute() - %s%s - xid: 0x%08x", execname(), tid(), ppfunc(), p_name, str, xid))
+#	output(sprintf("%s (%d) - %s/rpc_execute() - %s%s", execname(), tid(), ppfunc(), p_name, str))
+#	output(sprintf("%s - %s%s", header("rpc_execute"), p_name, str))
+	output(sprintf("%s - %s", header("rpc_execute"), str))
+#	output(sprint_backtrace())
+}
+probe module("sunrpc").function("rpc_call_start") if (0) {
+	p_name = rpc_task_proc_name($task)
+#	rqst = &@cast(&@cast($return, "struct rpc_task", "sunrpc")->tk_rqstp, "struct rpc_rqst", "sunrpc")
+	rqst = $task->tk_rqstp
+	xid = rqst->rq_xid
+
+	str = ""
+	if (p_name == "CREATE") {
+		msg = &$task->tk_msg
+		if (msg && msg->rpc_argp) {
+#			task->tk_msg->rpc_proc->p_name;
+			createargs = &@cast(msg->rpc_argp, "struct nfs3_createargs", "nfsv3")
+			filename = kernel_string_n(createargs->name, createargs->len)
+			str = sprintf(" (create filename '%s')", filename)
+		} else if (msg) {
+			output(sprintf("    task->tk_msg is %p, but task->tk_msg->rpc_argp is NULL", msg))
+		} else {
+			output(sprintf("    task is %p, but task->tk_msg is NULL", $task))
+		}
+	}
+
+	output(sprintf("%s (%d) - %s() - %s%s - xid: 0x%08x", execname(), tid(), ppfunc(), p_name, str, xid))
+	output(sprint_backtrace())
+
+}
+probe module("sunrpc").function("rpc_new_task").return if (0) {
+	output(sprintf("%s (%d) - %s().return = %p", execname(), tid(), ppfunc(), $return))
+
+	p_name = rpc_task_proc_name($return)
+
+#	if ($task->tk_msg && $task->tk_msg->rpc_proc && $task->tk_msg->rpc_proc->p_name) {
+#		p_name = $task->tk_msg->rpc_proc->p_name;
+#	}
+
+	rqst = &@cast(&@cast($return, "struct rpc_task", "sunrpc")->tk_rqstp, "struct rpc_rqst", "sunrpc")
+
+	xid = rqst->rq_xid
+	output(sprintf("%s (%d) - %s().return - %s xid: 0x%08x", execname(), tid(), ppfunc(), p_name, xid))
+	output(sprint_backtrace())
+	output(sprintf("%s (%d) - %s().return = %p", execname(), tid(), ppfunc(), $return))
+#	output(sprint_backtrace())
+}
+
+probe module("sunrpc").function("rpc_task_set_rpc_message") if (0) {
+
+#	output(sprintf("%s (%d) - %s()", execname(), tid(), ppfunc()))
+	output(header("rpc_task_set_rpc_message"))
+
+	p_name = rpc_msg_proc_name($msg)
+
+#	if ($task->tk_msg && $task->tk_msg->rpc_proc && $task->tk_msg->rpc_proc->p_name) {
+#		p_name = $task->tk_msg->rpc_proc->p_name;
+#	}
+
+	rqst = &@cast(&@cast($task, "struct rpc_task", "sunrpc")->tk_rqstp, "struct rpc_rqst", "sunrpc")
+
+	str = ""
+	if (p_name == "CREATE") {
+		createargs = &@cast($msg->rpc_argp, "struct nfs3_createargs", "nfsv3")
+#	struct rpc_message {
+#	const struct rpc_procinfo *rpc_proc;    /* Procedure information */
+#	void *                  rpc_argp;       /* Arguments */
+#struct nfs3_createargs {
+#	struct nfs_fh *         fh;
+#	const char *            name;
+#	unsigned int            len;
+#	struct iattr *          sattr;
+#	enum nfs3_createmode    createmode;
+#	__be32                  verifier[2];
+#};
+		filename = kernel_string_n(createargs->name, createargs->len)
+		str = sprintf(" (create filename '%s')", filename)
+
+#		if (filename =~ @1) {
+#				        if (filename =~ @1) {
+#               open_filenames[tid()] = filename
+#               trace_tid[tid()] = 1
+#               output(sprintf("%s (%d) - %s(%s)",
+#                       execname(), tid(), name, filename))
+
+	}
+
+	xid = rqst->rq_xid
+#	output(sprintf("%s (%d) - %s() - %s%s xid: 0x%08x", execname(), tid(), ppfunc(), p_name, str, xid))
+	output(sprintf("%s - %s%s xid: 0x%08x", header("rpc_task_set_rpc_message"), p_name, str, xid))
+#	output(sprint_backtrace())
+#	output(sprintf("%s (%d) - %s().return = %p", execname(), tid(), ppfunc(), $return))
+#	output(sprint_backtrace())
+}
+
+
+probe module("sunrpc").function("xprt_complete_rqst") {
+#	if ($task) {
+	rqst = &$task->tk_rqstp
+
+	output(sprintf("rpc_task: %p, copied: %d, rqst: %p, rqst->rq_rcvsize: %d\n", $task, $copied, rqst, rqst->rq_rcvsize))
+	output(sprint_backtrace())
+}
+probe module("sunrpc").function("rpc_malloc") {
+
+	rqst = $task->tk_rqstp
+
+	rq_callsize = rqst->rq_callsize
+	rq_rcvsize = rqst->rq_rcvsize
+	task_str = rpc_task_str($task)
+
+	output(sprintf("rpc_malloc: rq_callsize: %d, rq_rcvsize: %d, %s\n", rq_callsize, rq_rcvsize, task_str))
+
+}
+

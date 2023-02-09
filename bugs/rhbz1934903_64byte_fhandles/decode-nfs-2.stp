@@ -1,0 +1,154 @@
+#!/usr/bin/env systemtap
+
+%{
+#ifdef MAXSTRINGLEN
+#undef MAXSTRINGLEN
+#endif
+#define MAXSTRINGLEN 4096
+%}
+
+global open_filenames[1000]
+global trace_tid[1000]
+
+function min(x, y) { return (x < y ? x : y) }
+function max(x, y) { return (x > y ? x : y) }
+
+function trace(entry_p, func, extra) {
+	if (trace_tid[tid()]) {
+		printf("%s%s%s %s\n",
+			thread_indent(entry_p),
+			(entry_p>0?"->":"<-"),
+			func,
+			extra)
+	}
+}
+
+probe syscall.open,
+      syscall.openat {
+
+	if (filename =~ @1) {
+		open_filenames[tid()] = filename
+		trace_tid[tid()] = 1
+		printf("%s (%d) - %s(%s)\n",
+			execname(), tid(), name, filename)
+	}
+}
+
+probe syscall.open.return,
+      syscall.openat.return {
+
+	if (trace_tid[tid()]) {
+		filename = open_filenames[tid()]
+		printf("%s (%d) - %s(%s).return = %d\n",
+			execname(), tid(), name, filename, retval)
+
+		delete open_filenames[tid()]
+		delete trace_tid[tid()]
+	}
+}
+
+function make_hexdump_char_string:string(ptr, len) %{
+	char ret[17];
+	char *ptr = (char *)STAP_ARG_ptr;
+	int len = (int)STAP_ARG_len;
+	char ch;
+	int i;
+
+	for (i = 0 ; i < len ; i++) {
+		ch = ptr[i];
+		ret[i] = (isascii(ch) && isprint(ch)) ? ch : '.';
+	}
+	ret[len] = '\0';
+	snprintf(STAP_RETVALUE, 16, ret);
+%}
+
+function hexdump:string(addr:long, len:long) {
+	if (len == 0)
+		next
+
+	printf("\t%d bytes from %p\n", len, addr)
+
+	offset = 0
+	while (offset < len) {
+		left = ""
+		right = ""
+		str = ""
+
+		c_this_line = min(len - offset, 16)
+
+		for (i = 0 ; i < min(c_this_line, 8) ; i++) {
+			if (i < c_this_line) {
+				c = kernel_char(addr + offset + i) & 0xff
+				left .= sprintf("%02x ", c)
+			}
+		}
+		for (i = 8 ; i < min(c_this_line, 16) ; i++) {
+			if (i < c_this_line) {
+				c = kernel_char(addr + offset + i) & 0xff
+				right .= sprintf("%02x ", c)
+			}
+		}
+		str = make_hexdump_char_string(addr + offset, c_this_line)
+		printf("\t%016x: %-24s %-24s  [%s]\n", addr + offset, left, right, str)
+		offset += c_this_line
+	}
+}
+
+global xdr_inline_decode_bytes[1000]
+
+#probe module("sunrpc").statement("xdr_inline_decode@net/sunrpc/xdr.c:964") {
+probe module("sunrpc").function("xdr_inline_decode") {
+        if (trace_tid[tid()]) {
+		xdr_inline_decode_bytes[tid()] = $nbytes
+		trace(1, "xdr_inline_decode", $$parms$$)
+	}
+}
+
+#probe module("sunrpc").statement("__xdr_inline_decode@net/sunrpc/xdr.c:896") {
+probe module("sunrpc").function("__xdr_inline_decode") {
+      trace(1, "__xdr_inline_decode", $$parms$$)
+}
+#probe module("sunrpc").function("__xdr_inline_decode").return {
+probe module("sunrpc").statement("__xdr_inline_decode@net/sunrpc/xdr.c:907").nearest {
+	str = sprintf("%s - return = %p", $$parms, $p)
+#	trace(-1, "__xdr_inline_decode", $$parms$$)
+	trace(-1, "__xdr_inline_decode", str)
+}
+
+#probe module("sunrpc").statement("xdr_copy_to_scratch@net/sunrpc/xdr.c:927") {
+probe module("sunrpc").function("xdr_copy_to_scratch") {
+      trace(1, "xdr_copy_to_scratch", $$parms$$)
+}
+
+#probe module("sunrpc").statement("xdr_set_next_buffer@net/sunrpc/xdr.c:839") {
+probe module("sunrpc").function("xdr_set_next_buffer") {
+      trace(1, "xdr_set_next_buffer", $$parms$$)
+}
+
+probe module("sunrpc").function("xdr_inline_decode").return {
+        if (trace_tid[tid()]) {
+		nbytes = xdr_inline_decode_bytes[tid()]
+		delete xdr_inline_decode_bytes[tid()]
+
+		trace(-1, "xdr_inline_decode", $$return)
+		if ($return && nbytes > 0)
+			hexdump($return, nbytes)
+	}
+}
+
+global set_next_buffer_parms[1000]
+probe module("sunrpc").function("xdr_set_next_buffer") {
+	if (trace_tid[tid()]) {
+		set_next_buffer_parms[tid()] = sprintf("%s", $$parms$$)
+		trace(1, "xdr_set_next_buffer", $$parms$$)
+	}
+}
+probe module("sunrpc").statement("xdr_set_next_buffer@net/sunrpc/xdr.c:846") {
+#probe module("sunrpc").function("xdr_set_next_buffer").return {
+	if (trace_tid[tid()]) {
+		parms = set_next_buffer_parms[tid()]
+		delete set_next_buffer_parms[tid()]
+		trace(-1, "xdr_set_next_buffer", parms)
+	}
+}
+
