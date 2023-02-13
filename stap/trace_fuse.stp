@@ -1,0 +1,1239 @@
+%{
+#include <uapi/linux/fuse.h>
+#include <linux/mm.h>
+#include <linux/xarray.h>
+
+
+#if MAXSTRINGLEN < 2048
+#undef MAXSTRINGLEN
+#define MAXSTRINGLEN 2048
+#endif
+#ifndef FUSE_NAME_MAX
+#define FUSE_NAME_MAX 1024
+#endif
+
+#ifndef FUSE_NAME_OFFSET
+#define FUSE_NAME_OFFSET offsetof(struct fuse_dirent, name)
+#endif
+
+#ifndef FUSE_DIRENT_ALIGN
+#define FUSE_DIRENT_ALIGN(x) \
+        (((x) + sizeof(uint64_t) - 1) & ~(sizeof(uint64_t) - 1))
+#endif
+
+#ifndef FUSE_DIRENT_SIZE
+#define FUSE_DIRENT_SIZE(d) \
+	FUSE_DIRENT_ALIGN(FUSE_NAME_OFFSET + (d)->namelen)
+#endif
+%}
+
+%{
+#undef MAXMAPENTRIES
+#define MAXMAPENTRIES 5000000
+%}
+
+#global dirent_count%[100]
+global fuse_file_files%[5000000]
+global fuse_file_files_0%[500000]
+global fuse_file_files_1%[500000]
+global fuse_file_files_2%[500000]
+global fuse_file_files_3%[500000]
+global fuse_file_files_4%[500000]
+global fuse_file_files_5%[500000]
+global fuse_file_files_6%[500000]
+global fuse_file_files_7%[500000]
+global fuse_file_files_8%[500000]
+global fuse_file_files_9%[500000]
+global fuse_file_files_a%[500000]
+global fuse_file_files_b%[500000]
+global fuse_file_files_c%[500000]
+global fuse_file_files_d%[500000]
+global fuse_file_files_e%[500000]
+global fuse_file_files_f%[500000]
+// size of 'struct fuse_file': 176
+/*
+8
+8
+16
+16
+16
+8
+16
+
+sizeof(readdir)
+	mutex  - 32
+	loff_t
+	loff_t
+	u64
+struct rb_node
+wait_queue_head_t
+bool
+*/
+
+
+/*
+struct fuse_dirent {
+	uint64_t	ino;
+	uint64_t	off;
+	uint32_t	namelen;
+	uint32_t	type;
+	char name[];
+};
+*/
+/* specify the kernel module from which the type is taken */
+@define list_for_each_module_entry(entry, head, module, type, field) %(
+        for (@entry = ((@cast(@head, "struct list_head")->next) - (&@cast(0, @type, @module)->@field)) ;
+                &@cast(@entry, @type, @module)->@field != @head ; 
+                @entry = (&@cast(@entry, @type, @module)->@field->next) - (&@cast(0, @type, @module)->@field)) %)
+@define list_for_each_entry(entry, head, type, field) %( /* module is actually 'kernel' */
+        @list_for_each_module_entry(@entry, @head, "kernel", @type, @field) %)
+function timestamp:string() { t = gettimeofday_ns() ; return sprintf("%d.%09d", t / 1000000000, t % 1000000000) }
+
+function hash_ff(ff) %{
+//	STAP_RETVALUE = ((STAP_ARG_ff >> 4) % 16);
+	unsigned long ff = (unsigned long)( STAP_ARG_ff & 0xffffffffffffUL);
+//	STAP_RETVALUE = ((ff / 175) % 16);
+	STAP_RETVALUE = ((ff / 176) % 16);
+%}
+function set_fuse_file_file(ff, f) {
+
+	if (!ff)
+		return 0
+
+#	hash = (ff >> 4) & 0xf
+	hash = hash_ff(ff)
+	printf("setting fuse file %p -> file %p - hash 0x%x\n", ff, f, hash)
+	if (hash < 8) {
+		if (hash < 4) {
+			if (hash < 2) {
+				if (hash == 0) fuse_file_files_0[ff] = f
+				else fuse_file_files_1[ff] = f
+			} else if (hash == 2) fuse_file_files_2[ff] = f
+			else fuse_file_files_3[ff] = f
+		} else if (hash < 6) {
+			if (hash == 4) fuse_file_files_4[ff] = f
+			else fuse_file_files_5[ff] = f
+		} else if (hash == 6)
+			fuse_file_files_6[ff] = f
+		else fuse_file_files_7[ff] = f
+	} else  if (hash < 0xc) {
+		if (hash < 0xa) {
+			if (hash == 8) fuse_file_files_8[ff] = f
+			else fuse_file_files_9[ff] = f
+		} else if (hash==0xa) fuse_file_files_a[ff] = f
+		else fuse_file_files_b[ff] = f
+	} else if (hash < 0xe) {
+		if (hash == 0xc) fuse_file_files_c[ff] = f
+		else fuse_file_files_d[ff] = f
+	} else if (hash == 0xe) fuse_file_files_e[ff] = f
+	else fuse_file_files_f[ff] = f
+
+
+#	if (ff)
+#		fuse_file_files[ff] = f
+}
+function get_fuse_file_file(ff) {
+	if (!ff) {
+		printf("not gettting fuse_file_file - ff = 0\n")
+		return 0
+	}
+
+//	hash = (ff >> 4) & 0xf
+	hash = hash_ff(ff)
+	printf("getting fuse file %p -> file - hash 0x%x\n", ff, hash)
+
+	if (hash < 8) {
+		if (hash < 4) {
+			if (hash < 2) {
+				if (hash == 0) return fuse_file_files_0[ff]
+				else return fuse_file_files_1[ff]
+			} else if (hash == 2) return fuse_file_files_2[ff]
+			else return fuse_file_files_3[ff]
+		} else if (hash < 6) {
+			if (hash == 4) return fuse_file_files_4[ff]
+			else return fuse_file_files_5[ff]
+		} else if (hash = 6) return fuse_file_files_6[ff]
+		else return fuse_file_files_7[ff]
+	} else  if (hash < 0xc) {
+		if (hash < 0xa) {
+			if (hash == 8) return fuse_file_files_8[ff]
+			else return fuse_file_files_9[ff]
+		} else if (hash==0xa) return fuse_file_files_a[ff]
+		else return fuse_file_files_b[ff]
+	} else if (hash < 0xe) {
+		if (hash == 0xc) return fuse_file_files_c[ff]
+		else return fuse_file_files_d[ff]
+	} else if (hash == 0xe) return fuse_file_files_e[ff]
+	else return fuse_file_files_f[ff]
+	
+
+#	return fuse_file_files[ff]
+#	return 0
+}
+function file_fuse_file_helper(f) {
+	if (f) {
+		ff = &@cast(f, "struct file")->private_data
+		set_fuse_file_file(ff, f)
+		return ff
+	} else
+		return 0
+}
+
+#@define file_fuse_file(f) %( &@cast(@f ? &@cast(@f, "struct file")->private_data : 0, "struct fuse_file", "fuse") %)
+#@define file_fuse_file(f) %( (  ff = &@cast(@f ? &@cast(@f, "struct file")->private_data : 0, "struct fuse_file", "fuse") ; set_fuse_file_file(ff, @f) ; ff ) %)
+@define file_fuse_file(f) %( ( &@cast(file_fuse_file_helper(@f), "struct fuse_file", "fuse") ) %)
+
+
+#@define fuse_file_file(ff) %( &@cast(@container_of(@ff, "struct fuse_file", file), "struct file") %)
+@define fuse_file_file(ff) %( ( &@cast(get_fuse_file_file(@ff), "struct file") ) %)
+
+
+
+
+
+
+@define dentry_inode(dentry) %( &@cast( @dentry ? &@cast(@dentry, "struct dentry")->d_inode : 0, "struct inode") %)
+#@define file_dentry(file) %( &@cast(&@cast(@file, "struct file")->f_dentry, "struct dentry") %)
+#@define file_dentry(file) %( @file ? &@cast(@choose_defined(&@cast(@file, "file", "kernel")->f_path->dentry, &@cast(@file, "file", "kernel")->f_dentry) : 0, "struct dentry") %)
+@define file_dentry(f) %( &@cast(@f ? @choose_defined(&@cast(@f, "file")->f_path->dentry, &@cast(@f, "file")->f_dentry) : 0, "struct dentry") %)
+@define file_inode(f) %( &@cast(@f ? &@cast(@f, "struct file")->f_inode : 0, "struct inode") %)
+
+@define page_mapping(page) %( ( &@cast(@page ? &@cast(@page, "struct page")->mapping : 0, "struct address_space") ) %)
+@define page_index(page) %( ( @page ? kernel_int(&@cast(@page, "struct page")->index) : 0 ) %)
+@define address_space_host(as) %( ( &@cast(@as ? &@cast(@as, "struct address_space")->host : 0, "struct inode") ) %)
+@define address_space_pages(as) %( ( &@cast(@as ? &@cast(@as, "struct address_space")->i_pages : 0, "struct xarray") ) %)
+@define inode_mapping(inode) %( ( &@cast(@inode ? &@cast(inode, "struct inode")->i_mapping : 0, "struct address_space") ) %)		
+
+
+function header() {
+
+	addr = addr()
+#       Returns the (function) symbol name associated with the given address if known. If not known it will return the hex string representation of addr.
+#       symfileline
+#              Return the file name and line number of an address.
+#	file_line = symfileline(addr)
+
+sf = symfile(addr)
+sl = symline(addr)
+#if (sf != sl)
+	file_line = sprintf("%s: %s", sf, sl)
+#else
+#	file_line = symfileline(addr)
+
+	return sprintf("%s (%d) %s(%s)",
+		execname(), tid(), ppfunc(), file_line)
+}
+
+function min(a, b) {
+	return (a < b) ? a : b
+}
+
+function make_hexdump_char_string:string(ptr, len) %{
+	char ret[17];
+	char *ptr = (char *)STAP_ARG_ptr;
+	int len = (int)STAP_ARG_len;
+	char ch;
+	int i;
+
+	for (i = 0 ; i < len ; i++) {
+		ch = ptr[i];
+		ret[i] = (isascii(ch) && isprint(ch)) ? ch : '.';
+	}
+	ret[len] = '\0';
+	snprintf(STAP_RETVALUE, 16, ret);
+%}
+
+function hexdump:string(hdr:string, addr:long, len:long) {
+	ret = ""
+
+	offset = 0
+	while (offset < len) {
+		left = ""
+		right = ""
+		str = ""
+
+		c_this_line = min(len - offset, 16)
+		for (i = 0 ; i < min(c_this_line, 8) ; i++ ) {
+			if (i < c_this_line) {
+				c = kernel_char(addr + offset + i) & 0xff
+				left .= sprintf("%02x ", c)
+			}
+		}
+		for (i = 8 ; i < min(c_this_line, 16) ; i++ ) {
+			if (i < c_this_line) {
+				c = kernel_char(addr + offset + i) & 0xff
+				right .= sprintf("%02x ", c)
+			}
+		}
+
+		str = make_hexdump_char_string(addr + offset, c_this_line)
+		ret .= sprintf("%s%016x: %24s %24s  [%s]\n", hdr, addr + offset, left, right, str)
+		offset += c_this_line
+	}
+	return ret
+}
+
+@define fuse_mount_fuse_conn(fm) %( ( &@cast(@fm ? &@cast(@fm, "struct fuse_mount", "fuse")->fc : 0, "struct fuse_conn", "fuse") ) %)
+
+function get_fuse_mount_super(sb) {
+	sb = &@cast(sb, "struct super_block")
+	return &@cast(sb->s_fs_info, "struct fuse_mount", "fuse")
+}
+@define get_fuse_mount_super(sb) %( ( &@cast(@sb ? &@cast(@sb, "struct super_block")->s_fs_info : 0, "struct fuse_mount", "fuse") )  %)
+
+
+function get_fuse_coonn_super(sb) {
+	return get_fuse_mount_super(sb)->fc
+}
+#@define get_fuse_conn_super(sb) %( ( &@cast(@sb ? @get_fuse_mount_super(@sb)->fc : 0, "struct fuse_conn", "fuse") ) %)
+
+@define get_fuse_conn_super(sb) %( ( &@cast(@sb ? @fuse_mount_fuse_conn(@get_fuse_mount_super(@sb)) : 0, "struct fuse_conn", "fuse") ) %)
+
+
+@define I_SB(inode) %( ( &@cast(@inode ? &@cast(@inode, "struct inode")->i_sb : 0, "struct super_block") ) %)
+@define get_fuse_conn(inode) %( ( &@cast( @inode ? @get_fuse_conn_super(@I_SB(@inode)) : 0, "struct fuse_conn", "fuse") ) %)
+
+@define get_fuse_inode(inode) %( ( &@cast(@inode ? &@container_of(@inode, "struct fuse_inode", inode) : 0, "struct fuse_inode", "fuse") ) %)
+@define fuse_inode_inode(fi) %( ( &@cast(@fi ? &@cast(@fi, "struct fuse_inode", "fuse")->inode : 0, "struct inode") ) %)
+
+
+
+
+
+function fuse_use_readdirplus(dir, ctx) {
+
+	dir = &@cast(dir, "struct inode")
+	ctx = &@cast(ctx, "struct dir_context")
+
+	fc = @get_fuse_conn(dir)
+	fi = @get_fuse_inode(dir)
+
+
+	if (!fc->do_readdirplus)
+		return 0
+	if (!fc->readdirplus_auto)
+		return 1
+
+// FUSE_I_ADVISE_RDPLUS is 0
+	if (fi->state & (1 << 0))
+		return 1
+	if (ctx->pos == 0)
+		return 1
+	return 0
+}
+
+function append_str(str, new_str, sep) {
+	if (str == "")
+		str = new_str
+	else
+		str .= sep . new_str
+	return str
+}
+function str_append(str, a) {
+	return append_str(str, a, ", ")
+}
+
+function inode_get_paths(i) {
+	dhead = &@cast(i, "struct inode")->i_dentry->first
+	paths = ""
+
+	name = inode_name(i)
+	count = 0
+
+	@list_for_each_entry(dentry, dhead, "struct dentry", d_u->d_alias) {
+		p = reverse_path_walk(dentry)
+		new_entry = sprintf("%p - %s", dentry, p)
+		if (strpos(paths, new_entry) == -1)
+			paths = append_str(paths, new_entry, "; ")
+
+		if (count++ >= 5)
+			break
+	}
+	if (strpos(paths, name) == -1)
+		paths = append_str(paths, sprintf("inode name: %s", name), "; ")
+	return paths
+}
+function file_get_path(f) {
+	if (!f)
+		return "'unknown'"
+
+	f = &@cast(f, "struct file")
+
+	try {
+		dentry = @file_dentry(f)
+		dentry_path = reverse_path_walk(dentry)
+	} catch {
+		dentry_path = ""
+	}
+
+	if (dentry_path != "")
+		return dentry_path
+
+	try {
+		inode = @file_inode(f)
+		inode_paths = inode_get_paths(inode)
+	} catch {
+		inode_paths = ""
+	}
+
+	if (inode_paths != "")
+		return inode_paths
+
+
+	if (dentry && inode)
+		return sprintf("'unknown; d: %p, i: %p'", dentry, inode)
+	if (dentry)
+		return sprintf("'unknown; d: %p'", dentry)
+	if (inode)
+		return sprintf("'unknown; i: %p'", inode)
+
+	return "'unknown'"
+}
+
+function page_address(page) %{
+	struct page *page = (struct page *)STAP_ARG_page;
+	STAP_RETVALUE = (int64_t)page_address(page);
+%}
+function FUSE_DIRENT_SIZE(entry) %{
+	struct fuse_dirent *dirent = (struct fuse_dirent *)STAP_ARG_entry;
+	STAP_RETVALUE = (int64_t)FUSE_DIRENT_SIZE(dirent);
+%}
+function FUSE_DIRENTPLUS_SIZE(entry) %{
+	struct fuse_direntplus *dirent = (struct fuse_direntplus *)STAP_ARG_entry;
+	STAP_RETVALUE = (int64_t)FUSE_DIRENTPLUS_SIZE(dirent);
+%}
+
+
+
+
+#probe module("fuse").function("fuse_parse_cache") {
+#	printf("%s (%d) %s()\n",
+#		execname(), tid(), ppfunc());
+#	delete dirent_count[tid()]
+#}
+
+# stap -L 'module("fuse").statement("fuse_parse_cache@fs/fuse/readdir.c+12")'
+# module("fuse").statement("fuse_parse_cache@fs/fuse/readdir.c:389")
+#  $dirent:struct fuse_dirent*
+#  $nbytes:unsigned int
+#  $offset:unsigned int
+#  $res:enum fuse_parse_result
+#  $ctx:struct dir_context*
+#  $size:unsigned int
+#  $addr:void*
+#probe module("fuse").statement("fuse_parse_cache@fs/fuse/readdir.c+12") {
+global fuse_parse_cache_dirent_num%[1000]
+probe module("fuse").function("fuse_parse_cache") {
+	delete fuse_parse_cache_dirent_num[tid()]
+}
+probe module("fuse").statement("fuse_parse_cache@fs/fuse/readdir.c+17") {
+
+//	printf("%s (%d) %s() loop - offset: %d, nbytes: %d, dirent->namelen: ...\n",
+//		execname(), tid(), ppfunc(), $offset, $nbytes)
+
+#	dirent_num = ++dirent_count[tid()]
+	dirent_num = fuse_parse_cache_dirent_num[tid()]++
+#	dirent_str = sprintf("dirent: %p", $dirent)
+
+	len = $dirent->namelen
+	if (len > $nbytes)
+		len = $nbytes
+	if (len > 255) {
+		printf("%s (%p) name length: %d, nbytes: %d\n",
+			header(), $dirent, $dirent->namelen, $nbytes)
+
+		print_backtrace()
+	}
+	name = kernel_string_n($dirent->name, len)
+
+	printf("%s loop, entry #%d (dirent: %p) - offset: %d, nbytes: %d, fuse_file.fh: 0x%016x, fuse_file.nodeid: %d, dirent->ino: %p, dirent->off: %d, dirent->namelen: %d: '%s'\n",
+		header(), dirent_num, $dirent, $offset, $nbytes, $ff->fh, $ff->nodeid, $dirent->ino, $dirent->off, $dirent->namelen, name)
+}
+
+
+#function file_inode(f) {
+#	f = &@cast(f, "struct file")
+#	return f->f_inode
+#}
+
+# module("fuse").function("fuse_readdir@fs/fuse/readdir.c:565")
+#	$file:struct file*
+#	$ctx:struct dir_context*
+probe module("fuse").function("fuse_readdir") {
+	ff = @file_fuse_file($file)
+
+//	path = fullpath_struct_file(task_current(), $file)
+	dentry = @file_dentry($file)
+	path = file_get_path($file)
+#	inode = dentry->d_inode
+//	inode = $file->f_inode
+	inode = @file_inode($file)
+
+	printf("%s file: %p, dentry: %p, inode: %p, path: '%s', fuse_file: %p, fuse_file.fh: %p\n", header(), $file, dentry, inode, path, ff, ff->fh)
+}
+
+#probe module("fuse").statement("fuse_readdir@fs/fuse/readdir.c+14") {
+//probe module("fuse").statement(0xffffffffc00f6eb5) {
+//	printf("%s (%d) %s()  fuse_readdir_cached returned %d\n", execname(), tid(), ppfunc(), $err)
+//}
+
+
+/*
+# module("fuse").statement("fuse_readdir@fs/fuse/readdir.c:578") $file:struct file* $ctx:struct dir_context* $ff:struct fuse_file* $err:int
+# module("fuse").statement("fuse_readdir_cached@fs/fuse/readdir.c:578") $ctx:struct dir_context* $file:struct file*
+probe module("fuse").statement("*@fs/fuse/readdir.c:578") {
+}
+#module("fuse").statement("fuse_readdir@fs/fuse/readdir.c:580") $file:struct file* $ctx:struct dir_context* $ff:struct fuse_file*
+probe module("fuse").statement("*@fs/fuse/readdir.c:580") {
+}
+*/
+
+
+probe module("fuse").function("fuse_readdir_uncached") {
+	inode = @file_inode($file)
+	plus = fuse_use_readdirplus(inode, $ctx)
+
+	path = file_get_path($file)
+
+	ff = @file_fuse_file($file)
+	printf("%s path: '%s', file: %p, inode: %p, fuse_file: %p, fuse_file.fh: %p, use_readdirplus: %s\n",
+		header(), path, $file, inode, ff, ff->fh, plus ? "true" : "false");
+}
+
+# module("fuse").function("fuse_readdir_cached@fs/fuse/readdir.c:431")
+#	$ctx:struct dir_context*
+#	$file:struct file*
+probe module("fuse").function("fuse_readdir_cached") {
+	if (1) {
+		path = file_get_path($file)
+
+//		ff = &@cast($file->private_data, "struct fuse_file", "fuse")
+		ff = @file_fuse_file($file)
+		inode = @file_inode($file)
+		printf("%s inode: %p, path: '%s', file: %p, fuse_file: %p, fuse_file.fh: %p\n",
+			header(), inode, path, $file, ff, ff->fh);
+	}
+}
+
+
+# module("fuse").function("fuse_do_open@fs/fuse/file.c:139")
+#	$fm:struct fuse_mount*
+#	$nodeid:u64
+#	$file:struct file*
+#	$isdir:bool
+probe module("fuse").function("fuse_do_open") {
+#	fc = $fm->fc # fuse_conn
+	fc = @fuse_mount_fuse_conn($fm)
+
+//	path = fullpath_struct_file(task_current(), $file)
+	dentry = @file_dentry($file)
+#	inode = dentry->d_inode
+	inode = @dentry_inode(dentry)
+	path = reverse_path_walk(dentry)
+
+
+#	have_opendir = !fc->no_opendir
+#	have_open = !fc->no_open
+
+//	capable_flags = fc->capable
+
+if (1) {
+	if ($isdir) {
+		printf("%s inode: %p,  path '%s' - isdir - no_opendir: %d, no_open: %d) - \n",
+			header(), inode, path, fc->no_opendir, fc->no_open);
+	} else {
+		printf("%s  inode: %p, path '%s' - not directory - no_opendir: %d, no_open: %d)\n",
+			header(), inode, path, fc->no_opendir, fc->no_open);
+	}
+}
+}
+
+%{
+#ifndef FOPEN_CACHE_DIR
+#define FOPEN_CACHE_DIR (1 << 3)
+#endif
+%}
+
+
+# module("fuse").function("fuse_readdir_uncached@fs/fuse/readdir.c:317").callee("fuse_simple_request@fs/fuse/dev.c:487").return
+#	$return:ssize_t
+#	$fm:struct fuse_mount*
+#	$args:struct fuse_args*
+#probe module("fuse").function("fuse_readdir_uncached").callee("fuse_simple_request").return {
+#	printf("%s returning to fuse_readdir_uncached from fuse_simple_request - 
+#}
+
+#probe module("fuse").statement("fuse_readdir_cached@fs/fuse/readdir.c:
+
+#probe module("fuse").function("fuse_readdir_cached").callee("find_get_page_flags") {
+#	printf("%s\n", header())
+#}
+
+
+
+
+
+# module("fuse").function("fuse_readdir_uncached@fs/fuse/readdir.c:317").callee("fuse_read_args_fill@fs/fuse/file.c:588")
+#	$ia:struct fuse_io_args*
+#	$file:struct file*
+#	$pos:loff_t
+#	$count:size_t
+#	$opcode:int
+probe module("fuse").function("fuse_readdir_uncached").callee("fuse_read_args_fill") {
+	path = file_get_path($file)
+	printf("%s fuse_readdir_uncached -> fuse_read_args_fill, file: %p, path: '%s'\n", header(), $file, path)
+}
+
+# module("fuse").function("fuse_do_open@fs/fuse/file.c:139").return
+#	$return:int
+#	$fm:struct fuse_mount*
+#	$nodeid:u64
+#	$file:struct file*
+#	$isdir:bool
+probe module("fuse").function("fuse_do_open").return {
+	file = &@cast(@entry($file), "struct file")
+//	fm = &@cast(@entry($fm), "struct fuse_mount", "fuse"); // can get this from the (fuse_file*)file->private_data)->fm
+	isdir = @entry($isdir)
+
+	ff = @file_fuse_file(file)
+	fm = &@cast(ff->fm, "struct fuse_mount", "fuse")
+
+
+	if ($return == 0) {
+		ff = @file_fuse_file(file)
+		inode = @file_inode(file)
+		path = file_get_path(file)
+		dentry = @file_dentry(file)
+
+
+#		try {
+#			path = fullpath_struct_file(task_current(), file)
+#		} catch {
+#			path = file_get_path(file)
+##			path = "??"
+#		}
+#		ff_rdc = &ff->rdc
+		fi = &@container_of(inode, "struct fuse_inode", inode)
+		fi = @get_fuse_inode(inode)
+		rdc = &fi->rdc
+		fc = @fuse_mount_fuse_conn(fm)
+
+		if (isdir) {
+			printf("%s inode %p, path '%s' - isdir - no_opendir: %d, no_open: %d).return fuse_file: 0x%p, open_flags: %d, dentry: %p, rdc: %s\n",
+				header(), inode, path, fc->no_opendir, fc->no_open, ff, ff->open_flags, dentry, (rdc)$);
+//			val = ff->open_flags
+//			ff->open_flags = val | %{ FOPEN_CACHE_DIR %}
+		} else
+			printf("%s inode: %p, dentry: %p, path '%s' - not directory - no_opendir: %d, no_open: %d).return fuse_file: 0x%p, open_flags: %d\n",
+				header(), inode, dentry, path, fc->no_opendir, fc->no_open, ff, ff->open_flags);
+	} else
+		printf("%s .returns %d\n", header(), $return);
+}
+
+
+probe module("fuse").statement("fuse_readdir_cached@fs/fuse/readdir.c+25") {
+	printf("%s  - fuse_update_attr returned err: %d\n", header(), $err);
+}
+# module("fuse").statement("fuse_readdir_cached@fs/fuse/readdir.c:469") $ff:struct fuse_file* $inode:struct inode* $fi:struct fuse_inode* $ctx:struct dir_context* $file:struct file*
+probe module("fuse").statement("fuse_readdir_cached@fs/fuse/readdir.c+38") {
+
+	rdc = &$fi->rdc
+
+	printf("%s - !fi->rdc.cached - rdc: %s\n", header(), (rdc)$);
+}
+probe module("fuse").statement("fuse_readdir_cached@fs/fuse/readdir.c+114") {
+	if ($res == 0xffffffff)
+		printf("%s - if (res == FOUND_ERR) - res: %d (enum fuse_parse_result { FOUND_ERR = -1, FOUND_NONE = 0, FOUND_SOME, FOUND_ALL\n", header(), $res)
+}
+
+
+# module("fuse").function("fuse_parse_cache@fs/fuse/readdir.c:377") $ctx:struct dir_context* $size:unsigned int $addr:void*
+probe module("fuse").function("fuse_parse_cache") {
+	printf("%s dir_context: %s\n", header(), $ctx$);
+}
+
+%{
+
+#ifndef __va
+#define __va(x)                 ((void *)((unsigned long)(x)+PAGE_OFFSET))
+#endif
+
+#ifndef virt_addr_valid
+#define virt_addr_valid(kaddr)  __virt_addr_valid((unsigned long) (kaddr))
+#endif
+
+
+#ifndef virt_to_page
+#define virt_to_page(kaddr)	pfn_to_page(__pa(kaddr) >> PAGE_SHIFT)
+#endif
+
+#ifndef pfn_to_kaddr
+#define pfn_to_kaddr(pfn)	__va((pfn) << PAGE_SHIFT)
+#endif
+
+%}
+
+function virt_to_page_helper(addr) %{
+	int64_t addr = (int64_t)STAP_ARG_addr;
+	STAP_RETVALUE = (int64_t)virt_to_page(addr);
+%}
+@define virt_to_page(kvaddr) %( ( &@cast( @kvaddr ? virt_to_page_helper(@kvaddr) : 0, "struct page") ) %)
+
+function xas_state_load(page_tree, index) %{
+	struct xarray *array = (struct xarray *)STAP_ARG_page_tree;
+	pgoff_t index = (pgoff_t)STAP_ARG_index;
+	struct page *page = NULL;
+
+	XA_STATE(xas, array, index);
+	page = xas_load(&xas);
+	STAP_RETVALUE = (int64_t)page;
+%}
+@define xas_state_load(page_tree, index) %( ( &@cast(@page_tree ? xas_state_load(@page_tree, @index) : 0, "struct page") ) %)
+
+# module("fuse").function("fuse_add_dirent_to_cache@fs/fuse/readdir.c:32") $pos:loff_t $dirent:struct fuse_dirent* $file:struct file*
+probe module("fuse").function("fuse_add_dirent_to_cache") {
+
+	str = ""
+	dir_path = ""
+	inode = 0
+	reclen = FUSE_DIRENT_SIZE($dirent)
+
+
+	str = append_str(str, sprintf("(struct file*)%p", $file), ", ")
+	try {
+#		f_path = &$file->f_path
+		inode = @file_inode($file)
+		str = append_str(str, sprintf("inode: %p", inode), ", ")
+	} catch {
+#		f_path = 0
+	}
+
+# ### this was only testing whether the translation back & forth worked
+#	if (inode) {
+#		try {
+#			as = @inode_mapping(inode)
+#			inode2 = @address_space_host(as)
+#			printf("inode: %p, ->i_mapping: %p, ->host: %p\n",
+#				inode, as, inode2)
+#
+#		} catch {
+#		}
+#	}
+
+	dir_path = file_get_path($file)
+
+	try {
+		dentry = @file_dentry($file)
+		str = append_str(str, sprintf("dentry: %p", dentry), ", ")
+	} catch {
+		dentry = 0
+	}
+
+	fuse_inode = @get_fuse_inode(inode)
+
+	if (fuse_inode) {
+		try {
+			rdc_size = kernel_long(fuse_inode->rdc->size)
+			rdc_pos = kernel_long(fuse_inode->rdc->pos)
+			rdc_cached = kernel_int(fuse_inode->rdc->cached)
+
+			rdc_offset = rdc_size & %{ ~PAGE_MASK %}
+			rdc_index = rdc_size >> %{ PAGE_SHIFT %}
+			str = append_str(str, sprintf("%s cached: %d\n", header(), rdc_cached), ", ")
+		} catch {
+			rdc_cached = 0
+		}
+
+		if (rdc_cached) {
+			str .= sprintf(", cached size: %d, index: %d, offset in page: %d", rdc_size, rdc_index, rdc_offset)
+			if (rdc_offset + reclen > %{ PAGE_SIZE %}) {
+				str = append_str(str, "entry size + offset requires going into next page", ",")
+				rdc_index ++;
+				rdc_offset = 0
+			}
+
+			page = @xas_state_load(@address_space_pages(@inode_mapping(inode)), rdc_index)
+			pgaddr = page_address(page)
+			str = append_str(str, sprintf(", maps to page %p, page address %p", page, pgaddr), ", ")
+		}
+	}
+	printf("%s %s\n", header(), str)
+	str = ""
+
+	if (dir_path != "")
+		str = append_str(str, sprintf("directory path: '%s'", dir_path), ", ")
+
+	try {
+		if ($dirent->namelen <= 255) 
+			filename = kernel_string_n($dirent->name, $dirent->namelen)
+	} catch {
+		try {
+			filename = kernel_string($dirent->name)
+		} catch {
+			filename = "?????"
+		}
+	}
+
+	try {
+#		&@cast(virt_to_page($dirent), "struct page")
+		page = @virt_to_page($dirent);
+#		printf("virt_to_page(%p) returned %p\n", $dirent, page)
+	} catch {
+		page = &@cast(0, "struct page")
+#		printf("virt_to_page failed\n")
+	}
+
+	try {
+		idx = @page_index(page)
+		mapping = @page_mapping(page)
+		map_inode = @address_space_host(mapping)
+
+		printf("%s page: %p has index %d, inode: %p\n",
+			header(), page, idx, inode)
+#			printf("inode for page %p, mapping %p is %p -- known inode was %p, mapping inode is %p\n",
+#				page, mapping, map_inode, inode, map_inode)
+	} catch {
+	}
+
+	printf("%s %s dirent: %p, dirent size: %d, ->ino: %p, ->off: %d, ->namelen: %d, name: '%s'\n",
+		header(), str, $dirent, reclen, $dirent->ino, $dirent->off, $dirent->namelen, filename)
+#			       	off: %d, dirent: %p, dirent->ino: %p, namelen: %d, name: %s\n", header(), s, $dirent, $dirent->ino, $dirent->ino, $dirent->off, $dirent, $dirent->namelen, filename)
+}
+
+# module("fuse").statement("fuse_add_dirent_to_cache@fs/fuse/readdir.c:82")
+#	$fi:struct fuse_inode*
+#	$index:long unsigned int
+#	$page:struct page*
+#	$version:u64
+#	$addr:void*
+#	$dirent:struct fuse_dirent*
+#	$file:struct file*
+probe module("fuse").statement("fuse_add_dirent_to_cache@fs/fuse/readdir.c:82") {
+	# the memcpy()
+
+	path = file_get_path($file)
+	inode = @fuse_inode_inode($fi)
+
+# getting dirent & offset
+# 82         memcpy(addr + offset, dirent, reclen);
+#/usr/src/debug/kernel-4.18.0-348.7.1.el8_5/linux-4.18.0-348.7.1.el8_5.x86_64/fs/fuse/readdir.c: 82
+#0xffffffffc01c237d <fuse_emit+0x19d>:   mov    %r11d,%r14d
+#
+# addr is in %rdx
+# offset is in %r11d?
+#
+#
+#
+#/usr/src/debug/kernel-4.18.0-348.7.1.el8_5/linux-4.18.0-348.7.1.el8_5.x86_64/./include/linux/string.h: 375
+#0xffffffffc01c2380 <fuse_emit+0x1a0>:   mov    %rbx,%rsi
+#0xffffffffc01c2383 <fuse_emit+0x1a3>:   lea    (%rdx,%r14,1),%rdi
+#                                               addr in %rdx; 
+#
+#0xffffffffc01c2387 <fuse_emit+0x1a7>:   mov    0x18(%rsp),%rdx
+#0xffffffffc01c238c <fuse_emit+0x1ac>:   callq  0xffffffffb516d380 <__memcpy>
+
+#addr 
+#offset in %rdx
+
+
+offset = u_register("rdx")
+reclen = FUSE_DIRENT_SIZE($dirent)
+
+	printf("%s adding to cache - directory '%s' file %p, inode %p - copying %d bytes from %p to %p; page %p, index: %d\n",
+		header(), path, $file, inode, reclen, $dirent, $addr + offset, $page, $index)
+	print_regs()
+}
+@define entry_cast(var, type, module) %( ( &@cast(@entry(@var), @type, @module) ) %)
+
+
+# stap -L 'module("fuse").function("fuse_readdir_uncached").callee("fuse_simple_request").return'
+# module("fuse").function("fuse_readdir_uncached@fs/fuse/readdir.c:317").callee("fuse_simple_request@fs/fuse/dev.c:487").return $return:ssize_t $fm:struct fuse_mount* $args:struct fuse_args*
+probe module("fuse").function("fuse_readdir_uncached").callee("fuse_simple_request").return {
+	fm = @entry_cast($fm, "struct fuse_mount", "fuse")
+	args = @entry_cast($args, "struct fuse_args", "fuse")
+
+# args:
+
+# struct fuse_args {
+#     uint64_t nodeid;
+#     uint32_t opcode;
+#     unsigned short in_numargs;
+#     unsigned short out_numargs;
+#     bool force : 1;
+#     bool noreply : 1;
+#     bool nocreds : 1;
+#     bool in_pages : 1;
+#     bool out_pages : 1;
+#     bool out_argvar : 1;
+#     bool page_zeroing : 1;
+#     bool page_replace : 1;
+#     bool may_block : 1;
+#     struct fuse_in_arg in_args[3];
+#     struct fuse_arg out_args[2];
+#     void (*end)(struct fuse_mount *, struct fuse_args *, int);
+# }
+# SIZE: 0x70
+# both fuse_in_arg and fuse_arg are
+#     unsigned int size;
+#     void *value;  ##### also *const* for fuse_in_arg
+
+#ap is fuse_args_pages
+#ap->pages = &page
+#$one page
+#
+#page = 
+#->pages[0]
+#fuse_io_args->ap (fuse_args_pages)->pages
+#ap->pages = page
+#*** 
+#   out_args
+
+#args->out_args
+
+	printf("%s returns %d bytes for FUSE_READDIR(PLUS)\n", header(), $return)
+	printf("%s args->out_args: %s\n", header(), (&@cast(@entry($args), "struct fuse_args", "fuse")->in_args)$$)
+#	printf("%s register dump\n", header())
+#	print_regs()
+
+
+	printf("%s", hexdump("rd(plus) response: ", args->out_args[0]->value, args->out_args[0]->size))
+}
+
+@define entry_or_null(var) %( (@defined(@entry(@var)) ? @entry(@var) : 0)  %)
+
+probe module("fuse").function("fuse_readdir").return {
+	if ($return == -5) {
+		printf("%s returning EIO\n", header())
+	}
+}
+
+#probe module("fuse").function("*").return? {
+#	if (@defined($return) && $return == -5) {
+#			printf("%s returning EIO\n", header())
+#
+#		print_backtrace()
+#	}
+#}
+
+function parse_dirfile(buf, nbytes, f, ctx, plus) {
+	f = &@cast(f, "struct file")
+	inode = f->f_inode
+	ctx = &@cast(ctx, "struct dir_context")
+
+	parent_path = file_get_path(f)
+
+	printf("%s inode; %p, directory listing for %s - buf: %p, nbytes: %d\n", header(), inode, parent_path, buf, nbytes)
+	ptr = buf
+	count = 0
+
+	if (!plus)
+		min_size = %{ FUSE_NAME_OFFSET %}
+	else
+		min_size = %{ FUSE_NAME_OFFSET_DIRENTPLUS %}
+
+
+	while (nbytes >= min_size) {
+		if (plus) {
+			direntplus = &@cast(ptr, "struct fuse_direntplus", "fuse")
+			dirent = &direntplus->dirent
+			reclen = FUSE_DIRENTPLUS_SIZE(direntplus)
+			dirent_str = sprintf("direntplus: %p, dirent: %p", direntplus, dirent)
+		} else {
+			dirent = &@cast(ptr, "struct fuse_dirent", "fuse")
+			reclen = FUSE_DIRENT_SIZE(dirent)
+			dirent_str = sprintf("(dirent: %p", dirent)
+		}
+
+		if (!dirent->namelen || dirent->namelen > %{ FUSE_NAME_MAX %}) {
+			printf("%s inode: %p, '%s' entry #%d (%s)  has dirent name length %d - will return EIO\n",
+				header(), inode, parent_path, count, dirent_str,  dirent->namelen)
+			next
+		}
+		if (reclen > nbytes) {
+			printf("%s inode: %p, '%s' entry #%d (%s) size (%d) runs off the end of the buffer (%d bytes remaining); break, but not returning error\n",
+				header(), inode, parent_path, count, dirent_str, reclen, nbytes)
+			next
+		}
+		name_str = kernel_string_n(dirent->name, dirent->namelen)
+		if (strpos(name_str, "/") != -1) {
+			printf("%s %s entry #%d (%s) contains path separator: '%s' - return EIO\n", header(), parent_path, count, dirent_str, name_str)
+			next
+		}
+		printf("%s %s entry #%d (%s) parsed directory entry - '%s' (name length: %d)\n",
+			header(), parent_path, count, dirent_str, name_str, dirent->namelen)
+
+		ptr += reclen
+		nbytes -= reclen
+		count++
+	}
+}
+
+#struct fuse_dirent {
+#   [0x0] uint64_t ino;
+#   [0x8] uint64_t off;
+#  [0x10] uint32_t namelen;
+#  [0x14] uint32_t type;
+#  [0x18] char name[];
+#}
+#SIZE: 0x18
+#probe module("fuse").statement("parse_dirfile@fs/fuse/readdir.c+4").nearest {
+#probe module("fuse").statement(0xffffffffc01c295) {
+#probe module("fuse").statement(0xffffffffc01c295).absolute {
+#probe kernel.statement(0xffffffffc01c295).absolute {
+#probe kernel.statement(0xffffffffc01c2955).absolute {
+#probe module("fuse").statement(0xffffffffc01c2955) {
+probe kernel.statement(0xffffffffc01c2955).absolute {
+
+
+	buf = u_register("r10")
+	dirent = &@cast(buf, "struct fuse_dirent", "fuse")
+	reclen = FUSE_DIRENT_SIZE(dirent)
+
+
+	file = &@cast(u_register("r13"), "struct file")
+	path = file_get_path(file)
+
+	namelen = dirent->namelen
+
+	if (namelen == 0)
+		printf("%s - file: %p, path: '%s', dirent: %p, reclen: %d, namelen: %d - namelen is zero - will return EIO\n",
+			header(), file, path, dirent, reclen, namelen)
+	if (namelen >= %{ FUSE_NAME_MAX %})
+		printf("%s - file: %p, path: '%s', dirent: %p, reclen: %d, namelen: %d - namelen is too large - will return EIO\n",
+			header(), file, path, dirent, reclen, namelen)
+
+	nbytes = u_register("rbp")
+	if (reclen > nbytes)
+		printf("%s - file: %p, path: '%s', dirent: %p, reclen: %d, namelen: %d - record length %d is larger than the number of remaining bytes: %d - breaking out before processing entire directory\n",
+			header(), file, path, dirent, reclen, namelen, reclen, nbytes)
+	name_str = kernel_string_n(dirent->name, dirent->namelen)
+	if (strpos(name_str, "/") != -1)
+		printf("%s - file: %p, path: '%s', dirent: %p, reclen: %d, namelen: %d - filename contains a '/': '%s' - will return EIO\n",
+			header(), file, path, dirent, reclen, namelen, name_str)
+
+}
+probe module("fuse").statement("parse_dirplusfile@fs/fuse/readdir.c+10") {
+#struct fuse_direntplus {
+#   [0x0] struct fuse_entry_out entry_out;
+#  [0x80] struct fuse_dirent dirent;
+#}
+#SIZE: 0x98
+#struct fuse_entry_out {
+#   [0x0] uint64_t nodeid;
+#   [0x8] uint64_t generation;
+#  [0x10] uint64_t entry_valid;
+#  [0x18] uint64_t attr_valid;
+#  [0x20] uint32_t entry_valid_nsec;
+#  [0x24] uint32_t attr_valid_nsec;
+#  [0x28] struct fuse_attr attr;
+#}
+#SIZE: 0x80
+
+#struct fuse_direntplus {
+#   [0x0] struct fuse_entry_out entry_out;
+#   [0x0] uint64_t nodeid;
+#   [0x8] uint64_t generation;
+#  [0x10] uint64_t entry_valid;
+#  [0x18] uint64_t attr_valid;
+#  [0x20] uint32_t entry_valid_nsec;
+#  [0x24] uint32_t attr_valid_nsec;
+#  [0x28] struct fuse_attr attr;
+#
+#  [0x80] struct fuse_dirent dirent;
+#  [0x80] uint64_t ino;
+#  [0x88] uint64_t off;
+#  [0x90] uint32_t namelen;
+#  [0x94] uint32_t type;
+#  [0x98] char name[];
+# size: 0x98
+
+
+### nbytes is in %r14 (or is it %rbp?
+# file is in %r14
+# direntplus is in %r10
+
+
+
+#	buf = $buf
+	buf = u_register("r10")
+	direntplus = &@cast(buf, "struct fuse_direntplus", "fuse")
+	dirent = &direntplus->dirent
+
+	reclen = FUSE_DIRENTPLUS_SIZE(direntplus);
+
+	file = u_register("r13")
+	path = file_get_path($file)
+
+
+nbytes = u_register("%rbp")
+printf("%s I _think_ nbytes is in %%r14: %d\n", header(), nbytes)
+print_regs()
+
+	namelen = dirent->namelen
+
+	if (namelen == 0)
+		printf("%s - file: %p, path: '%s', dirent: %p, reclen: %d, namelen: %d - namelen is zero - will return EIO\n",
+			header(), file, path, dirent, reclen, namelen)
+	if (namelen >= %{ FUSE_NAME_MAX %})
+		printf("%s - file: %p, path: '%s', dirent: %p, reclen: %d, namelen: %d - namelen is too large - will return EIO\n",
+			header(), file, path, dirent, reclen, namelen)
+
+	if (reclen > $nbytes)
+		printf("%s - file: %p, path: '%s', dirent: %p, reclen: %d, namelen: %d - record length %d is larger than the number of remaining bytes: %d - breaking out before processing entire directory\n",
+			header(), file, path, dirent, reclen, namelen, reclen, $nbytes)
+	name_str = kernel_string_n(dirent->name, dirent->namelen)
+	if (strpos(name_str, "/") != -1)
+		printf("%s - file: %p, path: '%s', dirent: %p, reclen: %d, namelen: %d - filename contains a '/': '%s' - will return EIO\n",
+			header(), file, path, dirent, reclen, namelen, name_str)
+
+}
+function memchr(haystack, needle, len) {
+	for (i = 0 ; i < len ; i++) {
+		if (kernel_char(haystack + len) == needle)
+			return i + 1;
+	}
+	return 0
+}
+%{
+struct fuse_file_fs {
+        struct fuse_mount *fm;
+        struct fuse_release_args *release_args;
+        u64 kh;
+        u64 fh;
+        u64 nodeid;
+
+        refcount_t count;
+        u32 open_flags;
+        struct list_head write_entry;
+        struct {
+                struct mutex lock;
+                loff_t pos;
+                loff_t cache_off;
+                u64 version;
+        } readdir;
+
+        struct rb_node polled_node;
+        wait_queue_head_t poll_wait;
+        bool flock:1;
+};
+%}
+
+function sizeof_ff() %{
+	STAP_RETVALUE = sizeof(struct fuse_file_fs);
+%}
+
+
+function parse_cache(ff, addr, size, ctx) {
+	ff = &@cast(ff, "struct fuse_file", "fuse")
+//	f = &@cast(@container_of(ff, "struct fuse_file", file), "struct file")
+#	f = @fuse_file_file(ff) ##### hmm... there's no way to get this
+
+#	inode = @file_inode(f)
+#	ctx = &@cast(ctx, "struct dir_context")
+
+#	parent_path = file_get_path(f)
+
+	readdir_cache_off = ff->readdir->cache_off
+
+	offset = readdir_cache_off & %{ ~PAGE_MASK %}
+
+	printf("%s - directory listing from cache (fuse_file: %p)- nbytes: %d\n", header(), nbytes)
+	ptr = buf
+	count = 0
+
+	readdir_pos = ff->readdir->pos
+	ctc_pos = ctx->pos
+
+//	while (nbytes >= min_size) {
+	while (42) {
+		dirent = &@cast($addr + offset, "struct fuse_dirent", "fuse")
+		dirent_str = sprintf("dirent: %p", dirent)
+		nbytes = $size - offset
+
+		if (reclen < %{ FUSE_NAME_OFFSET %} || !dirent->namelen)
+			break
+
+		reclen = FUSE_DIRENT_SIZE(dirent)
+		namelen = dirent->namelen
+
+		if (namelen > %{ FUSE_NAME_MAX %}) {
+			printf("%s inode: %p, entry #%d (%s) dirent->namelen (%d) > FUSE_NAME_MAX - kernel WARNING and returning FOUND_ERR\n", header(), inode, count, dirent_str, namelen)
+			break
+		}
+		if (reclen > nbytes) {
+			printf("%s inode: %p, entry #%d (%s) reclen (%d) > nbytes (%d) - kernel WARNING and returning FOUND_ERR\n", header(), inode, count, dirent_str, reclen, namelen)
+			break
+		}
+		if (memchr(dirent->name, stringat("/", 0), namelen) != 0) {
+			printf("%s inode: %p, entry #%d (%s) name includes '/' in first %d bytes - kernel WARNING and returning FOUND_ERR\n", header(), inode, count, name_str, namelen)
+			break
+		}
+
+		if (readdir_pos == ctx_pos) {
+			printf("%s inode: %p, directory entry #%d (%s) from cache '%s'\n", header(), inode, count, dirent_str, kernel_string_n(dirent->name, namelen))
+
+			ctx_pos = dirent->off
+		} else
+			printf("%s inode: %p, (skipping?) directory entry #%d (%s) from cache '%s'\n", header(), inode, count, dirent_str, kernel_string_n(dirent->name, namelen))
+		reddir_pos = dirent->off
+		readdir_cache_off += reclen
+
+		offset += reclen
+		count++
+	}
+}
+
+#probe module("fuse").function("parse_dirplusfile") {
+#probe module("fuse").statement("parse_readdir_uncached@fs/fuse/readdir.c:357") {
+probe module("fuse").statement("*@fs/fuse/readdir.c:356") {
+#	buf = $buf
+
+	plus = fuse_use_readdirplus($inode, $ctx)
+	buf = page_address($page)
+
+	as = @page_mapping($page)
+	index = @page_index($page)
+
+	printf("%s - will parse_dir%sfile(page: %p, address_space: %p, index: %d, address: %p)\n",
+		header(), plus ? "plus" : "", $page, as, index, buf)
+
+	parse_dirfile(buf, $res, $file, $ctx, plus)
+}
+
+probe begin {
+#//	printf("size of fuse_file: %d\n", %{ sizeof(struct fuse_file) %} )
+#	printf("size of fuse_file: %d\n", sizeof_ff())
+#	printf("size of mutex: %d\n", %{ sizeof(struct mutex) %} )
+#	printf("size of loff_t: %d\n", %{ sizeof(loff_t) %} )
+#	printf("size of rb_node: %d\n", %{ sizeof(struct rb_node) %} )
+#	printf("size of wait_quque_head_t: %d\n", %{ sizeof(wait_queue_head_t) %} )
+#	printf("size of list_head: %d\n", %{ sizeof(struct list_head) %} )
+#	printf("size of refcount_t: %d\n", %{ sizeof(refcount_t) %} )
+
+/*
+size of fuse_file: 176
+size of mutex: 32
+size of loff_t: 8
+size of rb_node: 24
+size of wait_quque_head_t: 24
+size of list_head: 16
+size of refcount_t: 4
+*/
+
+#	exit()
+
+}
+probe module("fuse").function("fuse_rdc_reset") {
+	paths = inode_get_paths($inode)
+
+	printf("%s inode: %p paths: %s\n", header(), $inode, paths)
+}
+probe module("fuse").function("fuse_emit") {
+	path = file_get_path($file)
+	inode = @file_inode($file)
+	if (path == "")
+		path = inode_get_paths(inode)
+	reclen = FUSE_DIRENT_SIZE($dirent)
+	printf("%s file: %p, path: '%s', inode: %p, dirent: %p, dirent size: %d, dirent name length: %d, dirent ino: %d, dirent name: '%s'\n",
+		header(), $file, path, inode, $dirent, reclen, $dirent->namelen, $dirent->ino, kernel_string_n($dirent->name, $dirent->namelen))
+}
