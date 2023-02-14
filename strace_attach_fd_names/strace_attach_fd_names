@@ -2437,6 +2437,10 @@ sub parse_generic_dfd_path_function {
 	}
 }
 
+sub myopen {
+	open my $fh, "@_" or die "blah: $!\n";
+	return $fh;
+}
 
 if (! -t STDIN) {
 	$config{'input_pipe'} = true;
