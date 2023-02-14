@@ -39,6 +39,36 @@ my %config = (
 
 );
 
+sub usage {
+	printf "usage: %s [options] [input_file]\n", $0;
+	printf "\toptions:\n";
+	printf "\t\t--execnames|--show_execnames|--show-execnames - output names of the executable along with the pid, whenever possible (default: off)\n";
+	printf "\t\t--pidtree - output a tree of the process parentage (default: off; re-suppress with 'nopidtree')\n";
+
+	printf "\t\t--output_lines|--output-lines - output the trace lines (default: on; suppress with --nooutput_lines or --stats-only)\n";
+	printf "\t\t--stats - output combined stats for all pids (default: off)\n";
+	printf "\t\t--proc_stats - output per-process stats for each pid (default: off)\n";
+	printf "\t\t--all_stats - enable both 'stats' and 'proc_stats' (default: off)\n";
+	printf "\t\t--stats-only - only output stats, not the trace lines (default: off)\n";
+
+	printf "\t\t--elapsed|--show_elapsed|--show-elapsed - output elapsed time for syscalls, whenever possible (default: on; suppress with 'noelapsed')\n";
+	printf "\t\t--time|--timestamp - output timestamps for strace entries (default: on; suppress with 'notime' or 'notimestamp)\n";
+
+	printf "\t\t--delays|--deltas - output time between completion of a syscall and start of the next syscall when possible (default: off)\n";
+	printf "\t\t\t(requires that the input trace includes both timestamps and elapsed times)\n";
+
+	printf "\n";
+	printf "\t\t--file-positions - track and output file positions for fd operations (open, read, write, lseek, etc) - NOT IMPLEMENTED\n";
+	printf "\t\t--expand-getdents - pretty-print getdents results (irreversable) - NOT IMPLEMENTED\n";
+	printf "\t\t--output-ls - track directory contents and output directory listings at exit - NOT IMPLEMENTED\n";
+	printf "\t\t--adjust_locale - change the locale of error messages - PARTIALLY IMPLEMENTED - only changes TO English\n";
+
+	printf "\t\t--output_pcap|--output-pcap - output strace entries as syslog entries in a packet capture (implies 'double-entry') - NOT IMPLEMENTED\n";
+
+	printf "\t\t-v|--debug|--verbose - increase debugging level\n";
+
+}
+
 GetOptions(
 	'debug|verbose|v+' => \$config{'debug'},
 	'execnames|e|show_execnames|show-execnames' => sub { $config{'show_execnames'} = true },
@@ -79,32 +109,7 @@ GetOptions(
 	'double_entry|double-entry' => sub { $config{'double_entry'} = true },
 
 	'help|h' => sub {
-		printf "usage: %s [options] [input_file]\n", $0;
-		printf "\toptions:\n";
-		printf "\t\t--execnames|--show_execnames|--show-execnames - output names of the executable along with the pid, whenever possible (default: off)\n";
-		printf "\t\t--pidtree - output a tree of the process parentage (default: off; re-suppress with 'nopidtree')\n";
-
-		printf "\t\t--output_lines|--output-lines - output the trace lines (default: on; suppress with --nooutput_lines or --stats-only)\n";
-		printf "\t\t--stats - output combined stats for all pids (default: off)\n";
-		printf "\t\t--proc_stats - output per-process stats for each pid (default: off)\n";
-		printf "\t\t--all_stats - enable both 'stats' and 'proc_stats' (default: off)\n";
-		printf "\t\t--stats-only - only output stats, not the trace lines (default: off)\n";
-
-		printf "\t\t--elapsed|--show_elapsed|--show-elapsed - output elapsed time for syscalls, whenever possible (default: on; suppress with 'noelapsed')\n";
-		printf "\t\t--time|--timestamp - output timestamps for strace entries (default: on; suppress with 'notime' or 'notimestamp)\n";
-
-		printf "\t\t--delays|--deltas - output time between completion of a syscall and start of the next syscall when possible (default: off)\n";
-		printf "\t\t\t(requires that the input trace includes both timestamps and elapsed times)\n";
-
-		printf "\n";
-		printf "\t\t--file-positions - track and output file positions for fd operations (open, read, write, lseek, etc) - NOT IMPLEMENTED\n";
-		printf "\t\t--expand-getdents - pretty-print getdents results (irreversable) - NOT IMPLEMENTED\n";
-		printf "\t\t--output-ls - track directory contents and output directory listings at exit - NOT IMPLEMENTED\n";
-		printf "\t\t--adjust_locale - change the locale of error messages - PARTIALLY IMPLEMENTED - only changes TO English\n";
-
-		printf "\t\t--output_pcap|--output-pcap - output strace entries as syslog entries in a packet capture (implies 'double-entry') - NOT IMPLEMENTED\n";
-
-		printf "\t\t-v|--debug|--verbose - increase debugging level\n";
+		usage();
 		exit();
 	},
 
