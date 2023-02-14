@@ -3,13 +3,65 @@
 CLREOL='\033[0K'
 
 #####
-BASE_REPO_URL=http://download-node-02.eng.bos.redhat.com/rhel-8/rel-eng/RHEL-8
+
+
+get_rhel_version() {
+	installed_release_rpm=${sos_installed_rpms[redhat-release-server]}
+	if [[ -n ${sos_installed_rpms[redhat-release-server]} ]] && [[ ${sos_installed_rpms[redhat-release-server]} =~ el7 ]] ; then
+		RHEL_VERSION=7
+	elif [[ -n ${sos_installed_rpms[redhat-release]} ]] && [[ ${sos_installed_rpms[redhat-release]} =~ el8 ]] ; then
+		RHEL_VERSION=8
+	elif [[ -n ${sos_installed_rpms[redhat-release]} ]] && [[ ${sos_installed_rpms[redhat-release]} =~ el9 ]] ; then
+		RHEL_VERSION=9
+	else
+		echo "could not determine RHEL version"
+		exit
+	fi
+}
+
+# setup the URLs and paths
+set_repo_urls() {
+	if [[ $RHEL_VERSION -eq 7 ]] ; then
+		BASE_REPO_URL=http://download-node-02.eng.bos.redhat.com/rhel-7/rel-eng/RHEL-7
+		BASE_REPO_TYPE=install
+		BASE_REPO_BASE_SUBPATH=/compose/Server/x86_64/os
+		BASE_REPO_SOURCE_SUBPATH=/compose/Server/source/tree
+		BASE_REPO_DEBUGINFO_SUBPATH=/compose/Server/x86_64/debug/tree
+
+		UPDATES_REPO_URL=http://download-node-02.eng.bos.redhat.com/rhel-7/rel-eng/updates/RHEL-7
+		UPDATES_REPO_TYPE=install
+		UPDATES_REPO_BASE_SUBPATH=/compose/Server/x86_64/os
+		UPDATES_REPO_SOURCE_SUBPATH=/compose/Server/source/tree
+		UPDATES_REPO_DEBUGINFO_SUBPATH=/compose/Server/x86_64/debug/tree
+
+		NFS_PKGS_PATH="/mnt/RH/rpms-rhel7"
+	elif [[ $RHEL_VERSION -eq 8 ]] || [[ $RHEL_VERSION -eq 9 ]] ; then
+		BASE_REPO_URL=http://download-node-02.eng.bos.redhat.com/rhel-\$RHEL_VERSION/rel-eng/RHEL-\$RHEL_VERSION
+		BASE_REPO_TYPE=install
+		BASE_REPO_BASE_SUBPATH=/compose/BaseOS/x86_64/os
+		BASE_REPO_SOURCE_SUBPATH=/compose/BaseOS/source/tree
+		BASE_REPO_DEBUGINFO_SUBPATH=/compose/BaseOS/x86_64/debug/tree
+
+		UPDATES_REPO_URL=http://download-node-02.eng.bos.redhat.com/rhel-\$RHEL_VERSION/rel-eng/updates/RHEL-\$RHEL_VERSION
+		UPDATES_REPO_TYPE=install
+		UPDATES_REPO_BASE_SUBPATH=/compose/BaseOS/x86_64/os
+		UPDATES_REPO_SOURCE_SUBPATH=/compose/BaseOS/source/tree
+		UPDATES_REPO_DEBUGINFO_SUBPATH=/compose/BaseOS/x86_64/debug/tree
+
+		NFS_PKGS_PATH="/mnt/RH/rpms-rhel\$RHEL_VERSION"
+	fi
+
+
+
+}
+
+BASE_REPO_URL=http://download-node-02.eng.bos.redhat.com/rhel-\$RHEL_VERSION/rel-eng/RHEL-\$RHEL_VERSION
 BASE_REPO_TYPE=install
 BASE_REPO_BASE_SUBPATH=/compose/BaseOS/x86_64/os
 BASE_REPO_SOURCE_SUBPATH=/compose/BaseOS/source/tree
 BASE_REPO_DEBUGINFO_SUBPATH=/compose/BaseOS/x86_64/debug/tree
 
-UPDATES_REPO_URL=http://download-node-02.eng.bos.redhat.com/rhel-8/rel-eng/updates/RHEL-8
+UPDATES_REPO_URL=http://download-node-02.eng.bos.redhat.com/rhel-\$RHEL_VERSION/rel-eng/updates/RHEL-\$RHEL_VERSION
 UPDATES_REPO_TYPE=install
 UPDATES_REPO_BASE_SUBPATH=/compose/BaseOS/x86_64/os
 UPDATES_REPO_SOURCE_SUBPATH=/compose/BaseOS/source/tree
@@ -35,6 +87,10 @@ exe=""
 core_arch=""
 lib_path=""
 exe_rpm_path=""
+
+PRELOAD="LD_PRELOAD=$hooks_path"
+#PRELOAD=""
+
 
 sos_installed_file=""
 declare -A sos_installed_rpms
@@ -81,10 +137,9 @@ debug_script() {
 	local debug_level=$1 ; shift
 	[[ $DEBUG_SCRIPT -lt $debug_level ]] && return
 	(
-		echo -n "${FUNCNAME[1]} @ ${BASH_SOURCE[1]}:${BASH_LINENO[1]} - $@"
+		echo -en "${FUNCNAME[1]} @ ${BASH_SOURCE[1]}:${BASH_LINENO[1]} - $@"
 	) >&2
 }
-
 
 find_sos_installed() {
 	sos_installed_file=$(echo sos*/installed-rpms | awk '{print $1}')
@@ -95,10 +150,10 @@ find_sos_installed() {
 	fi
 	local rpm date pkg
 
-	debug_script 1 "found installed-rpms file: $sos_installed_file"
-	debug_script 1 "reading list of installed rpms from $sos_installed_file"
+	debug_script 1 "found installed-rpms file: $sos_installed_file\n"
+	debug_script 1 "reading list of installed rpms from $sos_installed_file\n"
 	for pkg in $(awk '{print $1}' $sos_installed_file) ; do
-		debug_script 2 "processing sos*/installed - $pkg"
+		debug_script 2 "processing sos*/installed - $pkg\n"
 		if [[ $pkg =~ $NVRA_RE ]] ; then
 			local n=${BASH_REMATCH[1]}
 			local v=${BASH_REMATCH[2]}
@@ -118,7 +173,7 @@ download_rpms() {
 	local debuginfo_str=""
 	[[ $@ =~ debug(info|source) ]] && debuginfo_str="--enablerepo='*debuginfo*'"
 
-	debug_script 1 "downloading rpms: $@"
+	debug_script 1 "downloading rpms: $@\n"
 	LD_PRELOAD=$hooks_path dnf $DNF_RELEASEVER -q -c $dnf_conf $debuginfo_str download --downloadonly --downloaddir=$rpms_path $@ >&2
 }
 download_sos_installed_rpms() { # takes one or more %{NAME} and downloads all of the ${sos_installed_rpm[%{NAME}]}
@@ -138,7 +193,7 @@ install_filesystem_rpm() {
 #	local filesystem_rpm=$(egrep -o '^filesystem-[^ ]+' $sos_installed_file)
 	local filesystem_rpm=filesystem-${sos_installed_rpms[filesystem]}
 	local fs_rpm_path
-	debug_script 1 "installing filesystem rpm: $filesystem_rpm"
+	debug_script 1 "installing filesystem rpm: $filesystem_rpm\n"
 
 	local to_download
 
@@ -197,11 +252,11 @@ install_filesystem_rpm() {
 
 build_dnf_config() {
 
-	debug_script 1 "building dnf.conf file"
+	debug_script 1 "building dnf.conf file\n"
 
 	mkdir -p dnf-cache
 	mkdir -p root/dnf/logs
-	ln -s /home/dnf_repos/rhel8 root/dnf/cache
+	ln -sf /home/dnf_repos/rhel$RHEL_VERSION root/dnf/cache
 
 (
 cat << EOFEOFEOF
@@ -235,13 +290,22 @@ EOFEOFEOF
 
 for repo_name in BASE UPDATES ; do
 	this_url=$(eval echo \$${repo_name}_REPO_URL)
-	repo_url=$this_url
+#	repo_url=$this_url
+	repo_url=$(eval echo $this_url)  # resolve the RHEL_VERSION
 	this_repo_type=$(eval echo \$${repo_name}_REPO_TYPE)
 	this_base_subpath=$(eval echo \$${repo_name}_REPO_BASE_SUBPATH)
 	this_source_subpath=$(eval echo \$${repo_name}_REPO_SOURCE_SUBPATH)
 	this_debuginfo_subpath=$(eval echo \$${repo_name}_REPO_DEBUGINFO_SUBPATH)
 
-debug_script 1 "trying to dump repo url: $repo_url"
+debug_script 1 "trying to dump repo url: $repo_url\n"
+
+
+echo "repo_url=$repo_url" >&2
+echo "repo_type=$this_repo_type" >&2
+echo "base_subpath=$this_base_subpath" >&2
+echo "source_subpath=$this_source_subpath" >&2
+echo "debuginfo_subpath=$this_debuginfo_subpath" >&2
+echo >&2
 
 	lynx --dump --listonly $repo_url | \
 		awk \
@@ -265,7 +329,7 @@ function print_repo_description(tag, description, baseurl, enabled) {
 	tag = $(NF-1)
 	FS = oFS
 
-	if (tag ~ /^RHEL-8.[0-9]+.[0-9]+-(|updates-)[0-9.]+/) {
+	if (tag ~ /^RHEL-[789].[0-9]+(|.[0-9]+)-(|updates-)[0-9.]+/) {
 		print_repo_description(tag, "RHEL Repo "repo_type""tag, url""base_subpath, 1)
 		print_repo_description(tag"-source", "RHEL Repo "repo_type""tag" source", url""source_subpath, 1)
 		print_repo_description(tag"-debuginfo", "RHEL Repo "repo_type""tag" debuginfo", url""debuginfo_subpath, 1)
@@ -275,19 +339,241 @@ function print_repo_description(tag, description, baseurl, enabled) {
 
 done
 
-) >$dnf_conf.tmp
+) >$dnf_conf.tmp || exit
 if [[ -f $dnf_conf ]] ; then
 	if diff -q $dnf_conf $dnf_conf.tmp >/dev/null 2>&1 ; then
-		echo "dnf configuration not changed"
+		echo "dnf configuration not changed >&2"
 		rm -f $dnf_conf.tmp
 	else
-		echo "dnf configuration updated--replacing with updated version"
+		echo "dnf configuration updated--replacing with updated version" >&2
 		mv $dnf_conf.tmp $dnf_conf
 	fi
+else
+	echo "created dnf.conf" >&2
+	mv $dnf_conf.tmp $dnf_conf
 fi
 
 }
 build_hooks() {
+cat << HOOKS_EOF >hooks.c
+#define _GNU_SOURCE
+
+/*
+	gcc hook.c -o hook.so -shared -fPIC -rdynamic -ldl -g -O0
+*/
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <stdbool.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <dlfcn.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <sys/cdefs.h>
+
+//#include <linux/openat2.h>  /* Definition of RESOLVE_* constants */
+//#include <sys/syscall.h>    /* Definition of SYS_* constants */
+
+#define REPLACE_CHROOT 0
+#define REPLACE_GETUIDS 1
+#define REPLACE_CHOWNS 1
+
+#define get_func(_handle, _func) ({ \
+	char *error; \
+	void *_ret = dlsym(_handle,#_func); \
+	if ((error = dlerror()) != NULL) { \
+		fprintf(stderr, "%s getting %s\n", error, #_func); \
+		exit(EXIT_FAILURE); \
+	} \
+	_ret; \
+})
+#define set_func_addr(_func) ({ \
+	char *error; \
+	void *handle = RTLD_NEXT; \
+\
+	real_funcs._func = get_func(handle, _func); \
+})
+
+#define free_mem(ptr) do { \
+	if (ptr) \
+		free(ptr); \
+	ptr = NULL; \
+} while (0)
+#define close_fd(fd) do { \
+	if (fd < 0) \
+		close(fd); \
+	fd = -1; \
+} while (0)
+
+static char *root_path = NULL;	// the current 'root' path (only meaningful after a chroot()
+static char *pwd = NULL;	// the current working directory; relative to 'root_path', and only meaningful after a chroot()
+
+typedef int (*chroot_t)(const char *path);
+
+#if REPLACE_CHOWNS
+	typedef int (*chown_t)(const char *pathname, uid_t owner, gid_t group);
+	typedef int (*fchown_t)(int fd, uid_t owner, gid_t group);
+	typedef int (*lchown_t)(const char *pathname, uid_t owner, gid_t group);
+	typedef int (*fchownat_t)(int dirfd, const char *pathname, uid_t owner, gid_t group, int flags);
+#endif
+
+typedef uid_t (*getuid_t)(void);
+
+struct funcs {
+#if REPLACE_CHROOT
+	chroot_t chroot;
+#endif
+
+#if REPLACE_CHOWNS
+	chown_t chown;
+	fchown_t fchown;
+	lchown_t lchown;
+	fchownat_t fchownat;
+#endif
+#if REPLACE_GETUIDS
+	getuid_t getuid;
+	getuid_t geteuid;
+	getuid_t getgid;
+	getuid_t getegid;
+#endif
+};
+struct funcs real_funcs;
+
+
+struct slock {
+	unsigned int dispensor;
+	unsigned int serving;
+};
+struct config {
+//	bool initializing;
+	bool initialized;
+	struct slock init_lock;
+};
+static struct config config = {
+//	.initializing = false,
+	.initialized = false,
+	.init_lock = { .dispensor = 0, .serving = 0 },
+};
+
+int spin_lock(struct slock *slock) {
+	unsigned int my_ticket = __atomic_fetch_add(&slock->dispensor, 1, __ATOMIC_SEQ_CST);
+	unsigned int currently_serving;
+
+	while ((currently_serving = __atomic_load_n(&slock->serving, __ATOMIC_SEQ_CST)) != my_ticket)
+		usleep(50000 * (my_ticket - currently_serving));
+	return 0;
+}
+int spin_unlock(struct slock *slock) {
+	__atomic_fetch_add(&slock->serving, 1, __ATOMIC_SEQ_CST);
+	return 0;
+}
+
+void __init(void) {
+	void *handle;
+	int ret;
+
+	if (config.initialized)
+		return;
+
+	spin_lock(&config.init_lock);
+
+	if (config.initialized)
+		return;
+
+//	config.initializing = true;
+	handle = RTLD_NEXT;
+
+	dlerror(); /* clear out any existing errors */
+
+#if REPLACE_CHROOT
+	real_funcs.chroot = get_func(handle, chroot);
+#endif
+#if REPLACE_GETUIDS
+	real_funcs.getuid = get_func(handle, getuid);
+	real_funcs.geteuid = get_func(handle, geteuid);
+	real_funcs.getgid = get_func(handle, getgid);
+	real_funcs.getegid = get_func(handle, getegid);
+#endif
+#if REPLACE_CHOWNS
+	set_func_addr(chown);
+	set_func_addr(fchown);
+	set_func_addr(lchown);
+	set_func_addr(fchownat);
+#endif
+	config.initialized = true;
+	spin_unlock(&config.init_lock);
+}
+void init(void) {
+	if (config.initialized)
+		return;
+
+	__init();
+}
+
+#if REPLACE_GETUIDS
+uid_t getuid(void) {
+	init();
+	return 0;
+}
+uid_t geteuid(void) {
+	init();
+	return 0;
+}
+uid_t getgid(void) {
+	init();
+	return 0;
+}
+uid_t getegid(void) {
+	init();
+	return 0;
+}
+#endif
+
+#if REPLACE_CHROOT
+int chroot(const char *path) {
+	char *tmp = NULL;
+
+	init();
+	if (root_path) { // chroot within a chroot...
+		if (path[0] == '/')
+			asprintf(&tmp, "%s/%s", root_path, path);
+		else
+			asprintf(&tmp, "%s/%s/%s", root_path, pwd, path);
+
+		free(root_path);
+		root_path = tmp;
+	} else
+		root_path = strdup(path);
+
+	free_mem(pwd);
+	pwd = strdup("/");
+
+	return 0;
+}
+#endif
+#if REPLACE_CHOWNS
+	int chown(const char *pathname, uid_t owner, gid_t group) {
+		real_funcs.chown(pathname, owner, group);
+		return 0;
+	}
+	int fchown(int fd, uid_t owner, gid_t group) {
+		real_funcs.fchown(fd, owner, group);
+		return 0;
+	}
+	int lchown(const char *pathname, uid_t owner, uid_t group) {
+		real_funcs.lchown(pathname, owner, group);
+		return 0;
+	}
+	int fchownat(int dirfd, const char *pathname, uid_t owner, uid_t group, int flags) {
+		real_funcs.fchownat(dirfd, pathname, owner, group, flags);
+		return 0;
+	}
+#endif
+HOOKS_EOF
+
 	gcc $pwd/hooks.c -o $hooks_path -shared -fPIC -rdynamic -ldl -g -O0
 }
 
@@ -336,16 +622,19 @@ whatprovides_from_sos() {
 }
 whatprovides_raw() {
 	local obj candidate candidates
+#	local total_count=$(echo $@ | wc -w)
 
 #echo "in whatprovides_raw - need what provides $@" >&2
 
 	candidates=$(LD_PRELOAD=$hooks_path dnf $DNF_RELEASEVER -q -C -c $pwd/dnf.conf shell <(
 #	candidates=$(LD_PRELOAD=$hooks_path dnf $DNF_RELEASEVER -v -c $pwd/dnf.conf shell <(
-			for obj in $@ ; do
-				echo "repoquery --whatprovides '$obj' --queryformat '%{NAME}#%{VERSION}-%{RELEASE}.%{ARCH}#%{source_name}#%{debug_name}\n'"
-			done
+#			for obj in $@ ; do
+#				echo "repoquery --whatprovides '$obj' --queryformat '%{NAME}#%{VERSION}-%{RELEASE}.%{ARCH}#%{source_name}#%{debug_name}\n'"
+#			done
+			echo "repoquery --whatprovides $@ --queryformat '%{NAME}#%{VERSION}-%{RELEASE}.%{ARCH}#%{source_name}#%{debug_name}\n'"
 		)
 	)
+	echo >&2
 #	echo "candidates: $candidates" >&2
 
 	for candidate in $candidates ; do
@@ -494,8 +783,8 @@ determine_needed_rpms() {
 	local all_needed_libs="$@"
 	local candidate
 
-	echo "need $(echo $exe $all_needed_libs | wc -w) libs" >&2
 	needed_count=$(echo $exe $all_needed_libs | wc -w)
+	echo "need $needed_count libs" >&2
 	local candidate_count=0
 	local count=0
 
@@ -550,7 +839,10 @@ fi
 download_selected_rpms() {
 #	LD_PRELOAD=$hooks_path dnf $DNF_RELEASEVER -q -c $dnf_conf --enablerepo='*debuginfo*' download --downloadonly --downloaddir=$rpms_path ${!selected_rpms[@]}
 	echo downloading rpms: $@ >&2
-	LD_PRELOAD=$hooks_path dnf $DNF_RELEASEVER -q -c $dnf_conf --enablerepo='*debuginfo*' download --downloadonly --downloaddir=$rpms_path $@
+#	LD_PRELOAD=$hooks_path dnf $DNF_RELEASEVER -q -c $dnf_conf --enablerepo='*debuginfo*' download --downloadonly --downloaddir=$rpms_path $@
+	LD_PRELOAD=$hooks_path dnf $DNF_RELEASEVER -c $dnf_conf --enablerepo='*debuginfo*' download --downloadonly --downloaddir=$rpms_path $@
+
+
 
 	local rpm
 	local downloaded_rpms=""
@@ -563,6 +855,23 @@ download_selected_rpms() {
 	done
 	echo $downloaded_rpms
 }
+download_needed_rpms() {
+	local current_rpm
+	local needed downloaded all_downloaded
+
+	for current_rpm in $@ ; do
+		echo $current_rpm >&2
+		downloaded=
+		needed=$(determine_needed_rpms $current_rpm)
+		[[ -n $needed ]] && downloaded=$(download_selected_rpms $needed)
+		[[ -n $downloaded ]] && all_downloaded="$all_downloaded $downloaded"
+	done
+
+#	local selected_rpms=$(determine_needed_rpms $core_objs)
+#	local downloaded_rpms=$(download_selected_rpms $selected_rpms)
+	echo "$all_downloaded"
+}
+
 install_rpms() {
 	local f
 
@@ -575,6 +884,7 @@ do_installs() {
 	local core_objs=$(determine_core_needed_objs) # needed objects based on what the core file says
 	echo "the core dump says we need $core_objs" >&2
 
+#	local downloaded_rpms=$(download_needed_rpms $core_objs)
 	local selected_rpms=$(determine_needed_rpms $core_objs)
 	local downloaded_rpms=$(download_selected_rpms $selected_rpms)
 
@@ -611,18 +921,18 @@ get_additional_debuginfos() {
 			local r=${BASH_REMATCH[5]}
 
 			echo "$n-debuginfo-$v-$r.$a $n-debugsource-$v-$r.$a"
-			debug_script 1 "also need debuginfo/debugsource $n-$v-$r.$a"
+			debug_script 1 "also need debuginfo/debugsource $n-$v-$r.$a\n"
 		else
 			echo "didn't match regex" >&2
 		fi
 	done | sort -u)
 
-	[[ -z $also_need_debuginfo ]] && debug_script 1 "don't need any additional debuginfo/debugsource rpms" && return
-	debug_script 1 "installed debuginfo rpms would also like these as well: $also_need_debuginfo"
+	[[ -z $also_need_debuginfo ]] && debug_script 1 "don't need any additional debuginfo/debugsource rpms\n" && return
+	debug_script 1 "installed debuginfo rpms would also like these as well: $also_need_debuginfo\n"
 
 	local downloaded_rpms=$(download_selected_rpms $also_need_debuginfo)
 	if [[ -n $downloaded_rpms ]] ; then
-		debug_script 1 "downloaded rpms: $downloaded_rpms"
+		debug_script 1 "downloaded rpms: $downloaded_rpms\n"
 		install_rpms $downloaded_rpms
 	fi
 }
@@ -676,12 +986,19 @@ EOFEOFRUNGDB
 echo "getting info about the core file"
 get_core_details
 
+echo "getting the list of installed rpms"
+find_sos_installed
+
+
+# get the RHEL version and setup the necessary urls
+get_rhel_version
+set_repo_urls
+
+
+
 echo "setting up dnf config and downloading repo data"
 build_dnf_config
 build_hooks
-
-echo "getting the list of installed rpms"
-find_sos_installed
 
 echo "doing initial 'root' filesystem setup"
 install_filesystem_rpm
