@@ -1360,6 +1360,10 @@ $patterns{'possible_renameat2_flags'} = "(?:, $patterns{'renameat2_flags'})?",
 	'epoll_create1' => qr/^$patterns{'epoll_create1_flags'}/,
 	'epoll_wait' => qr/^$patterns{'fd_with_possible_path'}, $patterns{'square_brackets_arg'}, ($patterns{'digits_string'}), ($patterns{'digits_string'})$/,
 
+
+	'proc_pid_cmdline' => qr/^(?:\/proc\/([0-9]+|self)\/cmdline)/,
+	'proc_pid_cmdline_read' => qr/^(.+?)\\0(?:.*)/,
+
 	'readlink' => qr/$patterns{'proc_pid_exe'}, $patterns{'quoted_string'}, $patterns{'digits_string'}$/,
 
 	'chroot' => qr/^"(.+)"$/,
@@ -1384,6 +1388,7 @@ $patterns{'possible_renameat2_flags'} = "(?:, $patterns{'renameat2_flags'})?",
 	'generic_function_dfd_path' => qr/^$patterns{'fd_or_atfdcwd_with_possible_path'}, ($patterns{'quoted_string'}|NULL), $patterns{'everything_else'}$/,
 
 	'renameat' => qr/^$patterns{'fd_or_atfdcwd_with_possible_path'}, $patterns{'quoted_string'}, $patterns{'fd_or_atfdcwd_with_possible_path'}, $patterns{'quoted_string'}$patterns{'possible_renameat2_flags'}$/,
+	'read' => qr/^$patterns{'fd_or_negative_one_with_possible_path'}, "(.+)", ([0-9]+)$/,
 
 	'execve' => qr/^$patterns{'execve_path_string'}, $patterns{'execve_argv_string'}, $patterns{'execve_envp_string'}$/,
 	'execve_pwd_path' => qr/^(.*?)(?:"PWD=([^"]+)")(.*?)$/,
@@ -1430,11 +1435,30 @@ $patterns{'possible_renameat2_flags'} = "(?:, $patterns{'renameat2_flags'})?",
 	"newfstatat", "readlinkat",
 	"name_to_handle_at",
 );
+#@generic_dfd_pathname_functions = (@generic_dfd_pathname_functions, "name_to_handle_at");
+
+@to_be_implemented = (
+	'mmap', 'mmap2',
+	'pipe2',
+	'select', 'pselect', 'pselect6', 'poll', 'ppoll',
+
+	'io_cancel', # TODO: parse args for the fds
+	'io_destroy', # TODO: parse args for the fd
+	'io_getevents', # TODO: parse args for fds
+	'io_setup', # TODO: parse args for the fds
+	'io_submit', # TODO: parse args for fds
+
+	'io_uring_enter',
+	'io_uring_register',
+	'io_uring_setup',
+);
+# TODO: handle-based functions
 
 # creat open close fchdir dup dup2 dup3 fcntl unlinkat symlinkat
 # fsync ioctl select
 #       int symlinkat(const char *target, int newdirfd, const char *linkpath);
 @no_parsing_functions = (
+	@to_be_implemented,
 	'access', 'alarm', 'arch_prctl',
 
 	'brk',
@@ -1448,19 +1472,6 @@ $patterns{'possible_renameat2_flags'} = "(?:, $patterns{'renameat2_flags'})?",
 
 	# TODO:
 
-	'io_cancel', # TODO: parse args for the fds
-	'io_destroy', # TODO: parse args for the fd
-	'io_getevents', # TODO: parse args for fds
-	'io_setup', # TODO: parse args for the fds
-	'io_submit', # TODO: parse args for fds
-
-	'io_uring_enter',
-	'io_uring_register',
-	'io_uring_setup',
-	'ioprio_get',
-	'ioprio_set',
-
-
 
 
 	"get_mempolicy",
@@ -1472,6 +1483,8 @@ $patterns{'possible_renameat2_flags'} = "(?:, $patterns{'renameat2_flags'})?",
 	'gettid', # TODO:
 	'getpgid',
 
+	'ioprio_get',
+	'ioprio_set',
 
 	"keyctl", 'kill',
 
@@ -1480,20 +1493,20 @@ $patterns{'possible_renameat2_flags'} = "(?:, $patterns{'renameat2_flags'})?",
 	'madvise', 'mbind', 'mkdir', 'mknod',
 	'mlock', 'mprotect', 'mremap', 'munmap',
 	'mount',
-	'mmap', 'mmap2', # TODO:
 
 	"nanosleep",
 
 
-	'pipe2', 'ppoll', 'prlimit', 'prlimit64',
-	'pselect', 'pselect6', # TODO find the fds
-	'poll', # TODO: parse args for the fds
 
+	'pipe2', 'ppoll', 'prlimit', 'prlimit64',
+
+	'prctl',
 
 	"recvfrom", "recvmsg", "rename", 'rmdir',
 	'rt_sigaction', "rt_sigpending", 'rt_sigprocmask', 'rt_sigqueueinfo',
 	'rt_sigreturn', "rt_sigtimedwait",
-	'prctl',
+
+	'rseq',
 
 	"sched_setscheduler", "sched_get_priority_min", "sched_get_priority_max",
 	"sched_setpriority_min", "sched_setpriority_max",
@@ -1503,7 +1516,6 @@ $patterns{'possible_renameat2_flags'} = "(?:, $patterns{'renameat2_flags'})?",
 	"setregid", "setresgid", 'setsid',
 	'set_thread_area',
 	'setpgid',
-	'select', # TODO: parse args for the fds
 	'stat', 'stat64',
 
 	'setuid', 'seteuid', 'setreuid', 'setresuid',
@@ -1522,11 +1534,9 @@ $patterns{'possible_renameat2_flags'} = "(?:, $patterns{'renameat2_flags'})?",
 	'uname', 'unlink', "umask",
 	'wait4', 'waitpid',
 );
-
-
-# TODO: handle-based functions
-@generic_dfd_pathname_functions = (@generic_dfd_pathname_functions, "name_to_handle_at");
 @no_parsing_functions = (@no_parsing_functions, "open_by_handle_at");
+
+
 
 
 # TODO: clone execve(cloexec) exit_group select pselect6 pipe
@@ -2551,7 +2561,7 @@ if (!defined($trace_entry{'syscall'})) {
 
 	extract_metadata(\%trace_entry); # extract necessary metadata from the line
 
-next if ($config{'times'});
+	next if ($config{'times'});
 
 #	if ( ($old_pid_string, $old_timestamp_string, $old_delay_string, $trace_entry{'syscall'}, $trace_entry{'args'}, $trace_entry{'ret'}, my $old_elapsed_string) = $trace_entry{'line'} =~ $regexes{'syscall'}) {
 	if ( ($trace_entry{'syscall'}, $trace_entry{'args'}, $trace_entry{'ret'}) = $trace_entry{'line'} =~ $regexes{'new_syscall'}) {
