@@ -32,7 +32,6 @@ my %config = (
 	'show_timestamps' => true,
 	'adjust_locale' => true, # change the locale of error messages - ### currently, only looks like it converts TO English
 
-
 	'double_entry' => false, # TODO: output trace entries at both call time and completion time
 
 	'output_pcap' => false, # TODO: output strace entries as syslog entries in a packet capture (implies 'double-entry')
@@ -116,7 +115,6 @@ GetOptions(
 	},
 );
 
-
 if ($config{'debug'} >= 1) {
 	printf("config{'debug'}: %d\n", $config{'debug'});
 	printf("config{'show_execnames'}: $config{'show_execnames'}\n");
@@ -141,7 +139,6 @@ STDOUT->autoflush(1);
 my %shared_fd_tables;
 
 my %tracking_data = ();
-
 
 my %patterns;
 my %regexes;
@@ -752,7 +749,6 @@ sub compute_overall_stats {
 #printf "these stats:\n";
 #print Dumper($these_stats);
 
-
 	$overall_syscall_stats->{$syscall} = {
 		'count' => 0,
 		'errors' => 0,
@@ -801,7 +797,6 @@ sub compute_overall_stats {
 			$this_pid_stats->{'syscall_time'} += $this_pid_syscall_stats->{'elapsed'};
 #			$this_pid_syscall_stats->{'mean'} = ($this_pid_syscall_stats->{'count'}) ? $this_pid_syscall_stats->{'elapsed'} / $this_pid_syscall_stats->{'count'} : 0;
 			_summarize_syscall_stat($this_pid_syscall_stats);
-
 
 			_add_syscall_stat($this_pid_syscall_stats, $syscall);
 
@@ -873,15 +868,12 @@ if ($this_syscall_stats{'rolling_mean'}) {
 	printf "%*s   %10.6f\n", $longest_syscall_name_len, "total", $total_elapsed;
 }
 
-
 sub output_overall_stats {
 	printf "***** overall stats *****\n";
 	output_stats(%{$tracking_data{'pid_stats'}{'overall'}});
 }
 sub output_pid_stats {
 	my ($pid) = $_[0];
-
-
 	my $this_pid_stats = $tracking_data{'pid_stats'}{'pid'}{$pid};
 	return if !defined $this_pid_stats;
 
@@ -1046,8 +1038,6 @@ if (0) {
 	'possible_path_string' => "(?:<(.+)>)?",
 	'possible_socket_string' => '(?:<(.+)>)?',
 
-
-
 	'file_mode_string' => "0[0-7]+",
 	'possible_file_mode_string' => "(?:, (0[0-7]+))?",
 
@@ -1068,7 +1058,6 @@ if (0) {
 	'alt_pid_string' => "(?:(?:\\[pid )$patterns{'digits_string'}(?:\\]))",
 	'extract_alt_pid_string' => "(?:(?:\\[pid )($patterns{'digits_string'})(?:\\]) )",
 
-
 	'hours_string' => '(?:(?:[01][0-9])|(?:2[0-3]))',
 	'minutes_string' => '(?:[0-5][0-9])',
 	'seconds_string' => '(?:(?:[0-5][0-9])|60)', # 23:59:60 is posible for leap second
@@ -1086,14 +1075,10 @@ $patterns{'pid_string'} = "(?:(?:$patterns{'standard_pid_string'})|(?:$patterns{
 #	'extract_alt_pid_string' => "($patterns{'alt_pid_string'})(.+)",
 #	'extract_alt_pid_string' => "($patterns{'alt_pid_string'}) (.+)",
 
-
-
 	'time_hms_string' => "(?:$patterns{'hours_string'}:$patterns{'minutes_string'}:$patterns{'seconds_string'})",
 	'time_possible_subseconds' => "(?:$patterns{'time_subseconds'})?",
 	'common_relative_time_string' => "(?:$patterns{'relative_time_seconds'}$patterns{'time_subseconds'})",
 	'standard_relative_time_string' => "(?:(?<![:0-9])($patterns{'relative_time_seconds'}$patterns{'time_subseconds'})(?![\\)0-9]))",
-
-
 
 	'op_string' => '([a-zA-Z_][^\( ]+)', # going to assume we have at least 2 characters
 	'op_args_string' => '(.*?)',
@@ -1107,8 +1092,6 @@ $patterns{'pid_string'} = "(?:(?:$patterns{'standard_pid_string'})|(?:$patterns{
 	'timestamp_string' => "(?:(?:$patterns{'time_hms_string'}|$patterns{'epoch_time_string'})$patterns{'time_possible_subseconds'})",
 	'alt_relative_time_string' => "(?:\\(\\+\\s*($patterns{'common_relative_time_string'})\\))",
 );
-
-
 
 $patterns{'my_delay_string'} = "(?:(?:\\+$patterns{'relative_time_seconds'}\.$patterns{'time_possible_subseconds'}))";
 $patterns{'my_delay_string2'} = "(?:(?:\\+$patterns{'relative_time_seconds'}$patterns{'time_possible_subseconds'}))";
@@ -1126,7 +1109,6 @@ exit;
 #mds3: (?:(\+[0-9]+(?:(?:\.[0-9]{3}(?:[0-9]{3}(?:[0-9]{3})?)?)?)) )?
 }
 
-
 %patterns = (%patterns,
 	'possible_timestamp_string' => "(?:($patterns{'timestamp_string'})(?: ))?",
 	'possible_relative_time_string' => "(?:(?|\\s*?(?|$patterns{'standard_relative_time_string'}|$patterns{'alt_relative_time_string'})(?: )))?",
@@ -1134,12 +1116,9 @@ exit;
 #	'possible_delay_string' => "(?:(?:\\+$patterns{'relative_time_seconds'}$patterns{'time_possible_subseconds'}))", # TODO: enable 'alt' delay string format
 	'possible_delay_string' => '(?:(\+[0-9]+(?:(?:\.[0-9]{3}(?:[0-9]{3}(?:[0-9]{3})?)?)?)) )?', # TODO: 'alt' delay string format; TODO: non-open-coded
 
-
 	'fd_with_possible_path' => "($patterns{'fd_string'})$patterns{'possible_path_string'}",
 	'fd_or_atfdcwd_string' => "($patterns{'fd_string'}|$patterns{'atfdcwd_string'})",
 	'fd_or_negative_one_with_possible_path' => "($patterns{'fd_string_or_negative_one'})$patterns{'possible_path_string'}",
-
-
 
 	'possible_pipefd_name' => "(?:<(.+)>)?",
 	'possible_sockfd_name' => "(?:<(.+)>)?",
@@ -1178,8 +1157,6 @@ exit;
 #"/home/ceh1/apps/proteus/beta/proteus_003_414_000/misc/../bin/LINUX_P4_V6/opt-shared-gcc447/fosv_uniserverd", ["/home/ceh1/apps/proteus/beta/pro"..., "-cachelimit", "1500000", "-logdir", "/home/ceh1/apps/proteus/cbb3/log"..., "-requestingPID", "fosv_ObjMultiServerSymph:fosrv:i"..., "-nscdport", "43911"], 0x7ffdbe5880d0 /* 84 vars */
 #"/path/../more/path/exe", ["/path/..., "-cachelimit", "1500000", "-logdir", "arg"..., "-requestingPID", "arg:fosrv:i"..., "-nscdport", "32953"], 0x7ffe60315260 /* 84 vars */
 
-
-
 #	'socket_domain' => '(?:AF_[A-Z0-9]+)',
 	'socket_domain' => '(?:[AP]F_[A-Z0-9]+)',
 #	'socket_type' => '(?:SOCK_[A-Z]+)',
@@ -1215,7 +1192,6 @@ $patterns{'possible_renameat2_flags'} = "(?:, $patterns{'renameat2_flags'})?",
 	'resuming_unfinished' => qr/^$patterns{'possible_pid_string'}$patterns{'possible_timestamp_string'}$patterns{'possible_relative_time_string'}restart_syscall\(<\.\.\. resuming interrupted ($patterns{'op_string'}) \.\.\.> <unfinished \.\.\.>$/,
 	'killed' => qr/^\+\+\+ killed by ($patterns{'signal_name'}) \+\+\+$/,
 );
-
 
 # various prefixes for '-f' '-t*' and '-r' arguments
 
@@ -1300,13 +1276,10 @@ $patterns{'possible_renameat2_flags'} = "(?:, $patterns{'renameat2_flags'})?",
 
 	'new_syscall' => qr/^$patterns{'op_string'}\($patterns{'op_args_string'}\)$patterns{'ret_string'}$/,
 
-
 #	'syscall' => qr/^$patterns{'syscall'}$/,
 	'process_exited' => qr/^$patterns{'possible_pid_string'}$patterns{'possible_timestamp_string'}$patterns{'possible_relative_time_string'}(\+\+\+ exited with ($patterns{'digits_string'}) \+\+\+)/,
 	'process_signal' => qr/^$patterns{'possible_pid_string'}$patterns{'possible_timestamp_string'}$patterns{'possible_relative_time_string'}--- ($patterns{'signal_name'}) ($patterns{'siginfo_t'}) ---/,
 	'strace_partial_line' => qr/^$patterns{'possible_pid_string'}$patterns{'possible_timestamp_string'}$patterns{'possible_relative_time_string'}([^ ]+)\((.+)/,
-
-
 
 	'line_with_execname' => qr/^$patterns{'possible_pid_string'}(?:$patterns{'execname_string'}\s+)$patterns{'possible_timestamp_string'}([^ \(]+.+)$/,
 
@@ -1339,7 +1312,6 @@ $patterns{'possible_renameat2_flags'} = "(?:, $patterns{'renameat2_flags'})?",
 #	'fcntl' => qr/^$patterns{'fd_with_possible_path'}, $patterns{'fcntl_cmd'}$patterns{'fcntl_args'}/,
 	'fcntl' => qr/^$patterns{'fd_with_possible_path'}, $patterns{'fcntl_cmd'}$patterns{'possible_other_args'}/,
 
-
 #	'mmap' => qr/^$patterns{'generic_arg'}, $patterns{'generic_arg'}, $patterns{'generic_arg'}, $patterns{'generic_arg'}, $patterns{'fd_with_possible_path'}, $patterns{'generic_arg'}/,
 	'mmap' => qr/^$patterns{'generic_arg'}, $patterns{'generic_arg'}, $patterns{'generic_arg'}, $patterns{'generic_arg'}, $patterns{'fd_or_negative_one_with_possible_path'}, $patterns{'generic_arg'}/,
 
@@ -1360,7 +1332,6 @@ $patterns{'possible_renameat2_flags'} = "(?:, $patterns{'renameat2_flags'})?",
 	'epoll_create1' => qr/^$patterns{'epoll_create1_flags'}/,
 	'epoll_wait' => qr/^$patterns{'fd_with_possible_path'}, $patterns{'square_brackets_arg'}, ($patterns{'digits_string'}), ($patterns{'digits_string'})$/,
 
-
 	'proc_pid_cmdline' => qr/^(?:\/proc\/([0-9]+|self)\/cmdline)/,
 	'proc_pid_cmdline_read' => qr/^(.+?)\\0(?:.*)/,
 
@@ -1368,12 +1339,10 @@ $patterns{'possible_renameat2_flags'} = "(?:, $patterns{'renameat2_flags'})?",
 
 	'chroot' => qr/^"(.+)"$/,
 
-
 #	'clone' => qr/^child_stack=$patterns{'hex_string_or_null'}, flags=($patterns{'clone_flags'}), parent_tidptr=$patterns{'hex_string'}, tls=$patterns{'hex_string'}, child_tidptr=$patterns{'hex_string'}$/,
 	'clone' => qr/^child_stack=$patterns{'hex_string_or_null'}, flags=($patterns{'clone_flags'})(, .+)?$/,
 # clone(child_stack=0x7fc9df076fb0, flags=CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD|CLONE_SYSVSEM|CLONE_SETTLS|CLONE_PARENT_SETTID|CLONE_CHILD_CLEARTID, parent_tidptr=0x7fc9df0779d0, tls=0x7fc9df077700, child_tidptr=0x7fc9df0779d0) = 9057
 # clone(child_stack=NULL, flags=CLONE_CHILD_CLEARTID|CLONE_CHILD_SETTID|SIGCHLD, child_tidptr=0x7f21efcbba10) = 1447033
-
 
 	'clone3' => qr/^\{([^\}]+)\} => \{([^\}]+)\}, ([0-9]+)$/,
 # "([^}]+} => {parent_tid=\[[0-9]+\]}, ([0-9]+)"
@@ -1392,7 +1361,6 @@ $patterns{'possible_renameat2_flags'} = "(?:, $patterns{'renameat2_flags'})?",
 
 	'execve' => qr/^$patterns{'execve_path_string'}, $patterns{'execve_argv_string'}, $patterns{'execve_envp_string'}$/,
 	'execve_pwd_path' => qr/^(.*?)(?:"PWD=([^"]+)")(.*?)$/,
-
 
 	'return_fd_path' => qr/^$patterns{'fd_with_possible_path'}$/,
 	'return_error' => qr/$patterns{'return_error_string'}$/,
@@ -1472,8 +1440,6 @@ $patterns{'possible_renameat2_flags'} = "(?:, $patterns{'renameat2_flags'})?",
 
 	# TODO:
 
-
-
 	"get_mempolicy",
 	"getgroups", "getpgrp", 'getpid', "getppid", "getpriority",
 	"getrandom", 'getrlimit', "getrusage", "getsid",
@@ -1495,8 +1461,6 @@ $patterns{'possible_renameat2_flags'} = "(?:, $patterns{'renameat2_flags'})?",
 	'mount',
 
 	"nanosleep",
-
-
 
 	'pipe2', 'ppoll', 'prlimit', 'prlimit64',
 
@@ -1522,7 +1486,6 @@ $patterns{'possible_renameat2_flags'} = "(?:, $patterns{'renameat2_flags'})?",
 	'sched_yield', 'sched_getaffinity', 'sched_setaffinity',
 	'set_robust_list', 'set_tid_address', 'statfs',
 
-
 	'setxattr',
 	"shmat", "shmctl", "shmdt", "shmget",
 	"sigaltstack", "sysinfo",
@@ -1535,9 +1498,6 @@ $patterns{'possible_renameat2_flags'} = "(?:, $patterns{'renameat2_flags'})?",
 	'wait4', 'waitpid',
 );
 @no_parsing_functions = (@no_parsing_functions, "open_by_handle_at");
-
-
-
 
 # TODO: clone execve(cloexec) exit_group select pselect6 pipe
 
@@ -1643,9 +1603,7 @@ if (my ($foo1, $foo2) = $trace_entry->{'ret'} =~ $regexes{'return_fd_path'}) {
 	printf "did not match the return_fd_path with '%s'\n", $trace_entry->{'ret'};
 }
 
-
 			}
-
 
 		}
 	} else {
@@ -1910,7 +1868,6 @@ sub syscall_pipe {
 
 		my $pid_string = (defined($trace_entry->{'pid'}) && $trace_entry->{'pid'} ne -1) ? sprintf("pid_%d_", $trace_entry->{'pid'}) : "";
 
-
 		if (!defined($fd0_name)) {
 			$fd0_name = sprintf("%spipe_%d-%d_in", $pid_string, $fd0, $fd1);
 			$rebuild_args = true;
@@ -1942,7 +1899,6 @@ sub syscall_socket {
 #printf "socket regex: %s\n", $regexes{'socket'};
 
 #	'socket' => qr/^($patterns{'socket_domain'}), ($patterns{'socket_type'}), ($patterns{'socket_proto'})$/,
-
 
 	if (!ret_is_error($trace_entry->{'ret'}) && (($fd, $fd_name) = $trace_entry->{'ret'} =~ $regexes{'socket_ret'})) {
 		if (!defined($fd_name) && ((my ($socket_domain, $socket_type, $socket_proto) = $trace_entry->{'args'} =~ $regexes{'socket'}))) {
@@ -2307,7 +2263,6 @@ sub syscall_kill {
 
 );
 
-
 # TODO: queue 
 sub output_trace_entry {
 	my ($trace_entry) = @_;
@@ -2344,7 +2299,6 @@ sub display_pidtree {
 		my $indent = $_[2];
 		my $more_children = $_[3];
 		my $temp = "";
-
 
 		return if (defined($visited{$pid}) && $visited{$pid});
 
@@ -2486,7 +2440,6 @@ while (my $line = readline($config{'in_fh'})) {
 
 	if ($trace_entry{'line'} eq "" or substr($trace_entry{'line'}, 0, 1) eq "#") { next; }
 
-
 	if ($config{'normalize_pids'}) {
 		# normalize the alternate pid string: '[pid #####]'
 		if ( (my $raw_pid_str, $trace_entry{'pid'}, my $line_remainder) = $trace_entry{'line'} =~ $regexes{'extract_alt_pid'}) {
@@ -2569,7 +2522,6 @@ if (!defined($trace_entry{'syscall'})) {
 	$trace_entry{'orig_line'} = $trace_entry{'line'};
 #	$trace_entry{'line'} = $trace_entry{'line'};
 
-
 	# separate off execname, in case we're reprocessing one of our own
 	if (($trace_entry{'pid'}, $trace_entry{'this_line_execname'}, $trace_entry{'timestamp'}, my $rest) = $trace_entry{'line'} =~ $regexes{'line_with_execname'}) {
 		if ($config{'debug'} >= 1) {
@@ -2590,8 +2542,7 @@ if (!defined($trace_entry{'syscall'})) {
 
 	next if ($config{'times'});
 
-#	if ( ($old_pid_string, $old_timestamp_string, $old_delay_string, $trace_entry{'syscall'}, $trace_entry{'args'}, $trace_entry{'ret'}, my $old_elapsed_string) = $trace_entry{'line'} =~ $regexes{'syscall'}) {
-	if ( ($trace_entry{'syscall'}, $trace_entry{'args'}, $trace_entry{'ret'}) = $trace_entry{'line'} =~ $regexes{'new_syscall'}) {
+	if (($trace_entry{'syscall'}, $trace_entry{'args'}, $trace_entry{'ret'}) = $trace_entry{'line'} =~ $regexes{'new_syscall'}) {
 
 #		$trace_entry{'pid'} = trim($trace_entry{'pid'}) if defined($trace_entry{'pid'});
 #		$trace_entry{'timestamp'} = trim($trace_entry{'timestamp'}) if defined($trace_entry{'timestamp'});
@@ -2703,7 +2654,6 @@ if (!defined($trace_entry{'syscall'})) {
 	}
 }
 flush_trace_entries();
-
 
 if ($config{'times'}) {
 	printf "start time: %s\n", $tracking_data{'trace_stats'}{'start_time'};
