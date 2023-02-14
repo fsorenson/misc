@@ -1,0 +1,78 @@
+#!/bin/bash
+
+
+
+
+fhandle=${1:-01:00:01:00:e8:03:00:00}
+
+
+if [[ $fhandle == "-r" ]] ; then
+	shift
+	fhandle="$@"
+
+	awk -vfhandle="$fhandle" '
+BEGIN {
+	new_fh = fhandle
+	gsub(/[ ]+/,"", new_fh)
+	printf "new fhandle: %s\n", new_fh
+
+	if (length(new_fh) % 8) {
+		printf "invalid length: %d\n", length(new_fh)
+	} else {
+		for (i = 1 ; i <= length_fhandle ; i += 8) {
+			a = substr($new_fh, i, 2)
+			b = substr($new_fh, 3, 2)
+			c = substr($new_fh, 5, 2)
+			d = substr($new_fh, 7, 2)
+			printf "%s%s%s%s", d, c, b, a
+		}
+	}
+	printf "\n"
+}'
+
+exit
+
+
+
+01010001 000003e8 00f800d7 4d07879c 00000000 00000000
+
+
+
+else
+awk -vfhandle=$fhandle '
+BEGIN {
+	new_fh = ""
+	for (i = 1 ; i <= length(fhandle) ; i++) {
+		ch = substr(fhandle, i, 1)
+		if (ch != ":")
+			new_fh = new_fh""ch
+	}
+
+
+
+	new_fh2 = ""
+	new_fh3 = ""
+	for (i = length(new_fh) - 1 ; i >= 0 ; i -= 2) {
+		hx = substr(new_fh, i, 2)
+		new_fh2 = new_fh2""hx
+		if (length(new_fh2) == 8) {
+			new_fh3 = new_fh2" "new_fh3
+			new_fh2 = ""
+		}
+	}
+	if (length(new_fh2) > 0) {
+		new_fh3 = new_fh2" "new_fh3
+	}
+	printf "%s\n", new_fh3
+}
+'
+
+
+fi
+
+
+
+
+
+
+#01000100e8030000 00010001 000003e8 00000000 
