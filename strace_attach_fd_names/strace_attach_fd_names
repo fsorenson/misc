@@ -21,6 +21,7 @@ my %config = (
 	'combined_stats' => false, # syscall stats (ala '-c')
 	'times' => false, # output only start & end times
 	'proc_stats' => false, # output per-process syscall stats (rather than combined '-c' stats)
+	'progress' => false, # output a progreess indication - only relevant to stats-only, and only if we can seek
 	'show_delays' => false, # output relative delay between syscall completion and next syscall start, for each pid
 	'pidtree' => false, # gather and output tree of pids
 
@@ -91,6 +92,7 @@ GetOptions(
 	'proc_stats|proc-stats' => sub { $config{'proc_stats'} = true },
 
 	'stats_only|stats-only|only_stats|only-stats' => sub { $config{'output_lines'} = false; },
+	'progress' => sub { $config{'progress'} = true; $config{'output_lines'} = false; },
 	'all_stats|all-stats' => sub { $config{'proc_stats'} = true; $config{'combined_stats'} = true; },
 
 	'delay|delays|deltas' => sub { $config{'show_delays'} = true }, # TODO
@@ -149,7 +151,10 @@ my @generic_fd_functions;
 my @generic_dfd_pathname_functions;
 my @no_parsing_functions;
 my @logged_errors;
-
+my %progress_state = (
+	'file_size' => 0,
+	'last_progress_printed' => -1,
+);
 
 sub log_error {
 	while (scalar @_) {
@@ -2257,7 +2262,26 @@ sub display_pidtree {
 	}
 }
 
-while (<>) {
+
+if (! -t STDIN) {
+	$config{'input_pipe'} = true;
+	$config{'in_fh'} = \*STDIN;
+} elsif (defined $ARGV[0]) {
+	$config{'input_file'} = $ARGV[0];
+
+	if ($config{'progress'}) {
+		my @st = stat $config{'input_file'} or die "Unable to find input file $!\n";
+		$progress_state{'file_size'} = $st[7];
+	}
+
+	open $config{'in_fh'}, '<', $config{'input_file'} or die "failed to open input file: $!\n";
+} else {
+	print "no file specified, and not reading from a pipe\n";
+	usage();
+        exit();
+}
+
+while (my $line = readline($config{'in_fh'})) {
 	my ($dfd, $dfd_path, $other_args);
 	my ($old_pid_string, $old_timestamp_string, $old_delay_string, $old_elapsed_string);
 #	my ($old_delay_string);
@@ -2277,8 +2301,8 @@ while (<>) {
 		'msg' => '',
 	);
 
-	chomp;
-	$trace_entry{'line'} = $_;
+	chomp $line;
+	$trace_entry{'line'} = $line;
 	my @matches;
 
 	if ($trace_entry{'line'} eq "" or substr($trace_entry{'line'}, 0, 1) eq "#") { next; }
@@ -2585,6 +2609,17 @@ printf "%s is a do-not-parse\n", $trace_entry{'syscall'} if ($config{'debug'} >=
 			printf("===>>> %s\n", $trace_entry{'line'});
 		} else {
 			output_trace_entry(\%trace_entry);
+		}
+	} elsif ($config{'progress'}) {
+		my $pos = tell($config{'in_fh'});
+		if ($progress_state{'file_size'}) {
+			my $this_pct = int($pos / $progress_state{'file_size'} * 100.0 * 100.0); # get in 0.01% intervals
+			if ($this_pct != $progress_state{'last_progress_printed'}) {
+				printf "completed: %d/%d - %.02f%%\r", $pos, $progress_state{'file_size'}, $this_pct / 100.0;
+				$progress_state{'last_progress_printed'} = $this_pct;
+			}
+		} else {
+			printf "completed: %d bytes\n", $pos;
 		}
 	}
 }
