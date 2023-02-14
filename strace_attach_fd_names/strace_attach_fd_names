@@ -709,6 +709,8 @@ sub add_syscall_stats {
 			'max' => ($elapsed eq '') ? 0 : $elapsed,
 			'errors' => 0,
 			'elapsed' => 0,
+			'rolling_mean' => 0,
+			'rolling_M2' => 0,
 		} if !defined $tracking_data{'pid_stats'}{'pid'}{$pid}{'syscalls'}{$syscall};
 		my $this_syscall_stats = $tracking_data{'pid_stats'}{'pid'}{$pid}{'syscalls'}{$syscall};
 
@@ -727,6 +729,28 @@ if (0) {
 			$this_syscall_stats->{'max'} = $elapsed if $elapsed > $this_syscall_stats->{'max'};
 
 			$this_syscall_stats->{'elapsed'} += $elapsed;
+
+#			my $old_mean = $this_syscall_stats->{'rolling_mean'};
+#			my $new_mean = $old_mean + (
+
+			my $e = int($elapsed * 1000000000);
+			my $rm = int($this_syscall_stats->{'rolling_mean'} * 1000000000);
+			my $d = $e - $rm;
+			$rm += $d / $this_syscall_stats->{'count'};
+			my $d2 = $e - $rm;
+			my $m2 = ($this_syscall_stats->{'rolling_M2'} * 1000000000);
+			$m2 += $d * $d2;
+
+			my $delta = $elapsed - $this_syscall_stats->{'rolling_mean'};
+			$this_syscall_stats->{'rolling_mean'} += $delta / $this_syscall_stats->{'count'};
+			my $delta2 = $elapsed - $this_syscall_stats->{'rolling_mean'};
+#			$this_syscall_stats->{'rolling_M2'} += $delta * ($elapsed - $this_syscall_stats->{'rolling_mean'});
+#			$this_syscall_stats->{'rolling_M2'} += $delta * $delta2;
+
+			$this_syscall_stats->{'rolling_M2'} = $m2 / 1000000000;
+
+#	printf "%s - rolling_mean: %.06f, rolling_M2: %.06f\n", $syscall, $this_syscall_stats->{'rolling_mean'}, $this_syscall_stats->{'rolling_M2'};
+
 		}
 		$this_syscall_stats->{'errors'}++ if ret_is_error($trace_entry->{'ret'});
 	}
