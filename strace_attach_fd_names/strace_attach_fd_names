@@ -686,21 +686,23 @@ sub add_syscall_stats {
 
 		pidtree_add_pid($pid, $cmd);
 	}
-
-#	if (!defined $tracking_data{'pid_stats'}{'pid'}{$pid}) {
-
 	$tracking_data{'pid_stats'}{'pid'}{$pid}{'syscalls'} = {} if !defined($tracking_data{'pid_stats'}{'pid'}{$pid});
-	$tracking_data{'pid_stats'}{'pid'}{$pid}{'syscalls'} = {} if !defined($tracking_data{'pid_stats'}{'pid'}{$pid});
-	my $this_pid_stats = $tracking_data{'pid_stats'}{'pid'}{$pid};
-
-	my $syscall = $trace_entry->{'syscall'};
-#	if ($trace_entry->{'syscall'} ne "") {
-#		$trace_entry->{'syscall'} ne "") {
-#	if (!defined $tracking_data{'pid_stats'}{
 	if ($trace_entry->{'timestamp'} ne '') {
 		$tracking_data{'pid_stats'}{'pid'}{$pid}{'first_time'} = $trace_entry->{'timestamp'} if !defined $tracking_data{'pid_stats'}{'pid'}{$pid}{'first_time'};
 		$tracking_data{'pid_stats'}{'pid'}{$pid}{'last_time'} = $trace_entry->{'timestamp'};
 	}
+	my $syscall = $trace_entry->{'syscall'};
+
+	return if ($syscall eq "" || (grep $_ eq $syscall, @nostats));
+
+#	if (!defined $tracking_data{'pid_stats'}{'pid'}{$pid}) {
+
+#	$tracking_data{'pid_stats'}{'pid'}{$pid}{'syscalls'} = {} if !defined($tracking_data{'pid_stats'}{'pid'}{$pid});
+	my $this_pid_stats = $tracking_data{'pid_stats'}{'pid'}{$pid};
+
+#	if ($trace_entry->{'syscall'} ne "") {
+#		$trace_entry->{'syscall'} ne "") {
+#	if (!defined $tracking_data{'pid_stats'}{
 	if ($syscall ne "") {
 		my $elapsed = $trace_entry->{'elapsed'};
 
@@ -846,21 +848,29 @@ sub output_stats {
 	my (%stats) = @_;
 
 	my %syscall_stats = %{$stats{'syscalls'}};
-	my @syscalls = sort(keys(%syscall_stats));
-	my $longest_syscall = max_string_len(@syscalls, "syscall");
-	printf "%*s   %10s   %6s   %10s   %10s   %10s   %6s\n", $longest_syscall, "syscall", "total", "count", "mean", "min", "max", "errors";
+#	my @syscalls = sort(keys(%syscall_stats));
+	my @syscalls = sort {$syscall_stats{$a}{'elapsed'} <=> $syscall_stats{$b}{'elapsed'}} keys(%syscall_stats);
+
+	my $longest_syscall_name_len = max_string_len(@syscalls, "syscall");
+	printf "%*s   %10s   %6s   %10s   %10s   %10s  %5s   %6s\n", $longest_syscall_name_len, "syscall", "total", "count", "min", "max", "mean", "sd", "errors";
 
 	my $total_elapsed = 0;
+#	foreach my $syscall (@syscalls) {
 	foreach my $syscall (@syscalls) {
 		my %this_syscall_stats = %{$syscall_stats{$syscall}};
 
-		printf "%*s   %10.6f   %6d   %10.6f   %10.6f   %10.6f   %6d\n",
-			$longest_syscall, $syscall, $this_syscall_stats{'elapsed'}, $this_syscall_stats{'count'},
-			$this_syscall_stats{'mean'}, $this_syscall_stats{'min'}, $this_syscall_stats{'max'},
+		printf "%*s   %10.6f   %6d   %10.6f   %10.6f   %10.6f  %5.03f   %6d\n",
+			$longest_syscall_name_len, $syscall, $this_syscall_stats{'elapsed'}, $this_syscall_stats{'count'},
+			$this_syscall_stats{'min'}, $this_syscall_stats{'max'},
+			$this_syscall_stats{'mean'}, $this_syscall_stats{'rolling_M2'} ? $this_syscall_stats{'rolling_M2'} : 0,
 			$this_syscall_stats{'errors'};
+if ($this_syscall_stats{'rolling_mean'}) {
+	printf "                   rolling mean: %10.6f\n", $this_syscall_stats{'rolling_mean'};
+	printf "                   rolling M2 %10.6f\n", $this_syscall_stats{'rolling_M2'};
+}
 		$total_elapsed += $this_syscall_stats{'elapsed'};
 	}
-	printf "%*s   %10.6f\n", $longest_syscall, "total", $total_elapsed;
+	printf "%*s   %10.6f\n", $longest_syscall_name_len, "total", $total_elapsed;
 }
 
 
