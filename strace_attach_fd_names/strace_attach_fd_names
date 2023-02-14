@@ -1771,6 +1771,43 @@ sub syscall_dup3 { # int dup3(int oldfd, int newfd, int flags);
 		}
 	}
 }
+sub syscall_read {
+#	we only care if:
+#	1) we're reading from /proc/pid/cmdline
+#	2) $config{'show_execnames'}
+#	3) get_execname($trace_entry{'pid'}) is unknown
+#	4) !ret_is_error($trace_entry{'ret'})
+#	for example: read(4</proc/3644602/cmdline>, "man\0readlinkat\0", 2047) = 15
+	my ($trace_entry) = @_;
+
+	if ($config{'show_execnames'} && !ret_is_error($trace_entry->{'ret'}) && (my ($fd, $fd_path, $buf, $count) = $trace_entry->{'args'} =~ $regexes{'read'})) {
+		my $rebuild_args = false;
+
+		if (!defined($fd_path)) {
+			$fd_path = get_fd_path($trace_entry->{'pid'}, $fd);
+			$rebuild_args = true if ($fd_path ne "");
+		}
+		if ($rebuild_args) {
+			$trace_entry->{'args'} = sprintf("%d%s, \"%s\", %d", $fd, (($fd_path ne "") ? "<" . $fd_path . ">" : ""),
+				$buf, $count);
+		}
+
+		if (!ret_is_error($trace_entry->{'ret'}) && (my ($proc_pid) = $fd_path =~ $regexes{'proc_pid_cmdline'})) {
+			$proc_pid = $trace_entry->{'pid'} if ($proc_pid eq 'self');
+			my $current_pid_execname = get_execname($proc_pid);
+
+			if ($current_pid_execname eq "") {
+				if (($current_pid_execname) = $buf =~ $regexes{'proc_pid_cmdline_read'}) {
+					set_execname($proc_pid, basename($current_pid_execname));
+					printf("setting execname for pid %d to '%s' from reading /proc/%d/cmdline\n", $proc_pid, $current_pid_execname, $proc_pid) if ($config{'debug'} >= 2);
+				}
+			}
+		}
+	} else { # just call the regular fd function
+		parse_generic_fd_function($trace_entry);
+#		log_error sprintf("read syscall, but '%s' did not match the regex\n", $trace_entry->{'args'});
+	}
+}
 sub syscall_close {
 	my ($trace_entry) = @_;
 
@@ -2223,6 +2260,7 @@ sub syscall_kill {
 	'getdents' => \&syscall_getdents,
 	'getdents64' => \&syscall_getdents,
 
+	'read' => \&syscall_read,
 	'readlink' => \&syscall_readlink,
 	'pipe' => \&syscall_pipe,
 	'socket' => \&syscall_socket,
