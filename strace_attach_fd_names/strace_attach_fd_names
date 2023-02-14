@@ -2106,6 +2106,12 @@ sub syscall_vfork {
 		pidtree_add_child($trace_entry->{'pid'}, $trace_entry->{'ret'}, get_execname($trace_entry->{'pid'}));
 	} else { }
 }
+sub syscall_exit { # TODO: what about exit_group?
+	my ($trace_entry) = @_;
+
+	# TODO: find other pids sharing this fd_table, and duplicate the fd table for them (or would we re-parent the shared table?)
+	clear_fd_table($trace_entry->{'pid'});
+}
 sub syscall_kill {
 	my ($trace_entry) = @_;
 
@@ -2181,6 +2187,7 @@ sub syscall_kill {
 	'vfork' => \&syscall_vfork,
 	'clone' => \&syscall_clone,
 	'clone3' => \&syscall_clone3,
+	'exit'	=> \&syscall_exit,
 	'kill' => \&syscall_kill,
 
 );
