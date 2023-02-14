@@ -1671,6 +1671,41 @@ sub syscall_openat {
 		printf("openat, but didn't match the re\n");
 	}
 }
+sub syscall_openat2 {
+	my ($trace_entry) = @_;
+	if (my ($dfd, $dfd_path, $pathname, $open_flags, $open_mode) = $trace_entry->{'args'} =~ $regexes{'openat2'}) {
+		my $rebuild_args = false;
+
+		printf "matched 'openat2' regex\n", if $config{'debug'} >= 1;
+		if (!defined($dfd_path)) {
+			$dfd_path = get_fd_path($trace_entry->{'pid'}, $dfd);
+			$rebuild_args = true if ($dfd_path ne "");
+		}
+		if (!ret_is_error($trace_entry->{'ret'}) and my ($fd, $fd_path) = $trace_entry->{'ret'} =~ $regexes{'return_fd_path'}) {
+			if ($config{'debug'} >= 2) {
+				printf("  return fd: %d\n", get_match_val($fd));
+				printf("  return fd path: %s\n", get_match_val($fd_path));
+			}
+#					$fd_path = get_atpath($pid, $dfd, $pathname) if (!defined($fd_path));
+			if (!defined($fd_path)) {
+				$fd_path = get_atpath($trace_entry->{'pid'}, $dfd, $pathname);
+				$trace_entry->{'ret'} = sprintf("%d<%s>", $fd, $fd_path);
+			}
+			store_fd_name($trace_entry->{'pid'}, $fd, $fd_path);
+			if ($dfd eq "AT_FDCWD" and $pathname eq "." and $fd_path ne "") {
+				printf("derived CWD from openat(AT_FDCWD, \".\"...): '%s'\n", $fd_path) if ($config{'debug'} >= 1);
+				set_cwd($trace_entry->{'pid'}, $fd_path);
+			}
+		}
+		$trace_entry->{'args'} = sprintf("%s%s, \"%s\", %s%s",
+			$dfd,
+			(($dfd_path ne "") ? "<" . $dfd_path . ">" : ""),
+			$pathname, $open_flags,
+			(defined($open_mode) ? ", " . $open_mode : "")) if ($rebuild_args);
+	} else {
+		printf "openat2, but didn't match the re\n";
+	}
+}
 sub syscall_dup {
 	my ($trace_entry) = @_;
 	if (my ($fd, $fd_path) = $trace_entry->{'args'} =~ $regexes{'dup'}) {
@@ -2158,6 +2193,7 @@ sub syscall_kill {
 	'creat' => \&syscall_creat,
 	'open' => \&syscall_open,
 	'openat' => \&syscall_openat,
+	'openat2' => \&syscall_openat2,
 	'close' => \&syscall_close,
 	'fcntl' => \&syscall_fcntl,
 	'dup' => \&syscall_dup,
