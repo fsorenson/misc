@@ -2414,6 +2414,29 @@ sub parse_generic_fd_function {
 		}
 	} else { printf("generic %s(fd...), but '%s' didn't match the regex: %s\n", $trace_entry->{'syscall'}, $trace_entry->{'args'}, $regexes{'generic_function_fd'}); }
 }
+sub parse_generic_dfd_path_function {
+	my ($trace_entry) = @_;
+	printf("generic dfd+path function: %s\n", $trace_entry{'args'}) if ($config{'debug'} >= 1);
+
+	if (my ($dfd, $dfd_path, $this_path_or_null, $path, $other_args) = $trace_entry{'args'} =~ $regexes{'generic_function_dfd_path'}) {
+		my $rebuild_args = false;
+
+		if (!defined($dfd_path)) {
+			$dfd_path = get_fd_path($trace_entry{'pid'}, $dfd);
+			$rebuild_args = true if ($dfd_path ne "");
+		}
+		if ($rebuild_args) {
+			$trace_entry{'args'} = sprintf("%s%s, %s%s",
+				$dfd,
+				(($dfd_path ne "") ? "<" . $dfd_path . ">" : ""),
+				$this_path_or_null,
+				(defined($other_args) ? ", " . $other_args : ""));
+		}
+	} else {
+		log_error(sprintf("generic %s(dfd, path...), but '%s' didn't match the regex '%s'\n", $trace_entry{'syscall'}, $trace_entry{'args'}, $regexes{'generic_function_dfd_path'}));
+	}
+}
+
 
 if (! -t STDIN) {
 	$config{'input_pipe'} = true;
@@ -2605,25 +2628,7 @@ if (!defined($trace_entry{'syscall'})) {
 		} elsif (is_generic_fd_function($trace_entry{'syscall'})) {
 			parse_generic_fd_function(\%trace_entry);
 		} elsif (is_generic_dfd_path_function($trace_entry{'syscall'})) {
-			printf("generic dfd+path function: %s\n", $trace_entry{'args'}) if ($config{'debug'} >= 1);
-
-			if (my ($dfd, $dfd_path, $path, $other_args) = $trace_entry{'args'} =~ $regexes{'generic_function_dfd_path'}) {
-				my $rebuild_args = false;
-
-				if (!defined($dfd_path)) {
-					$dfd_path = get_fd_path($trace_entry{'pid'}, $dfd);
-					$rebuild_args = true if ($dfd_path ne "");
-				}
-				if ($rebuild_args) {
-					$trace_entry{'args'} = sprintf("%s%s, \"%s\"%s",
-						$dfd,
-						(($dfd_path ne "") ? "<" . $dfd_path . ">" : ""),
-						$path,
-						(defined($other_args) ? ", " . $other_args : ""));
-				}
-			} else {
-				log_error(sprintf("generic %s(dfd, path...), but '%s' didn't match the regex '%s'\n", $trace_entry{'syscall'}, $trace_entry{'args'}, $regexes{'generic_function_dfd_path'}));
-			}
+			parse_generic_dfd_path_function(\%trace_entry);
 		} elsif (do_not_parse_function($trace_entry{'syscall'})) {
 			printf "%s is a do-not-parse\n", $trace_entry{'syscall'} if ($config{'debug'} >= 1);
 		} else {
