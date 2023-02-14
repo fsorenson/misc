@@ -114,7 +114,6 @@ GetOptions(
 		usage();
 		exit();
 	},
-
 );
 
 
@@ -2414,7 +2413,6 @@ while (my $line = readline($config{'in_fh'})) {
 		}
 	}
 
-
 	if (($trace_entry{'pid'}, $trace_entry{'timestamp'}, $trace_entry{'delay'}, $trace_entry{'syscall'}) = $trace_entry{'line'} =~ $regexes{'resuming_unfinished'}) {
 		my $save_line = retrieve_unfinished($trace_entry{'pid'});
 
@@ -2486,7 +2484,6 @@ if (!defined($trace_entry{'syscall'})) {
 
 	} # end of 'resumed'
 
-printf("parsing %s\n", $trace_entry{'line'}) if ($config{'debug'} >= 1);
 	$trace_entry{'orig_line'} = $trace_entry{'line'};
 #	$trace_entry{'line'} = $trace_entry{'line'};
 
@@ -2523,16 +2520,14 @@ next if ($config{'times'});
 #		$trace_entry{'args'} = trim($trace_entry{'args'});
 #		printf "args trimmed from '%s' to '%s'\n", $foo_args, $trace_entry{'args'} if ($foo_args ne $trace_entry{'args'});
 
-#		$trace_entry{'elapsed'} = defined($trace_entry{'elapsed'}) ? trim($trace_entry{'elapsed'}) : '';
-
 		if ((!defined($trace_entry{'delay'}) || $trace_entry{'delay'} eq '') && defined($trace_entry{'timestamp'})) {
 			my $last_sysret = get_last_sysret($trace_entry{'pid'});
 			if ($last_sysret eq "") {
 				$trace_entry{'delay'} = 0;
 			} else {
 				$trace_entry{'delay'} = ts_to_sec($trace_entry{'timestamp'}) - $last_sysret;
-#printf "computed delay '%.6f' from timestamp '%s' (%.6f seconds) and last_sysret '%.6f'\n",
-#	$trace_entry{'delay'}, $trace_entry{'timestamp'}, ts_to_sec($trace_entry{'timestamp'}), $last_sysret;
+				printf("computed delay '%.6f' from timestamp '%s' (%.6f seconds) and last_sysret '%.6f'\n",
+					$trace_entry{'delay'}, $trace_entry{'timestamp'}, ts_to_sec($trace_entry{'timestamp'}), $last_sysret) if ($config{'debug'} >= 2);
 			}
 		}
 		if (defined($trace_entry{'timestamp'}) && defined($trace_entry{'elapsed'})) {
@@ -2645,13 +2640,11 @@ next if ($config{'times'});
 						(defined($other_args) ? ", " . $other_args : ""));
 				}
 			} else {
-#				printf("generic %s(dfd, path...), but '%s' didn't match the regex '%s'\n", $trace_entry{'syscall'}, $trace_entry{'args'}, $regexes{'generic_function_dfd_path'}); }
-				log_error(sprintf("generic %s(dfd, path...), but '%s' didn't match the regex '%s'\n", $trace_entry{'syscall'}, $trace_entry{'args'}, $regexes{'generic_function_dfd_path'})); }
+				log_error(sprintf("generic %s(dfd, path...), but '%s' didn't match the regex '%s'\n", $trace_entry{'syscall'}, $trace_entry{'args'}, $regexes{'generic_function_dfd_path'}));
+			}
 		} elsif (do_not_parse_function($trace_entry{'syscall'})) {
-printf "%s is a do-not-parse\n", $trace_entry{'syscall'} if ($config{'debug'} >= 1);
-#			log_error(sprintf("%s is a do-not-parse\n", $trace_entry{'syscall'}));
+			printf "%s is a do-not-parse\n", $trace_entry{'syscall'} if ($config{'debug'} >= 1);
 		} else {
-#			log_error("matched the main pattern, but didn't find a matching syscall for '$trace_entry{'syscall'}'\n\tfull string: "$trace_entry{'line'});
 			log_error(sprintf("matched the main pattern, but didn't find a matching syscall for '%s'\n\tfull string: %s\n", $trace_entry{'syscall'}, $trace_entry{'line'}));
 		}
 
@@ -2681,8 +2674,7 @@ printf "%s is a do-not-parse\n", $trace_entry{'syscall'} if ($config{'debug'} >=
 		$trace_entry{'msg'} = sprintf("+++ killed by %s +++", $kill_sig);
 
 	} elsif (($old_pid_string, $old_timestamp_string, $old_delay_string, my $partial_line) = $trace_entry{'line'} =~ $regexes{'strace_partial_line'}) {
-#		printf("line is a partial strace line, perhaps the trace was truncated\n") if ($config{'debug'} >= 1);
-		log_error(sprintf("line is a partial strace line, perhaps the trace was truncated\n"));
+		log_error(sprintf("line is a partial strace line, perhaps the trace was truncated: %s\n", $trace_entry{'line'}));
 		if (defined($trace_entry{'pid'})) {
 			$trace_entry{'this_line_execname'} = get_execname($trace_entry{'pid'}) if ($trace_entry{'this_line_execname'} eq "");
 			$trace_entry{'line'} = sprintf("%d (%s) %s%s%s",
@@ -2692,8 +2684,6 @@ printf "%s is a do-not-parse\n", $trace_entry{'syscall'} if ($config{'debug'} >=
 				$partial_line);
 		}
 	} else {
-#printf "didn't match: %s\n", $trace_entry{'line'};
-#		printf("didn't match any patterns: %s\n", $trace_entry{'line'}) if ($config{'debug'} >= 1);
 		log_error(sprintf("didn't match any patterns: %s\n", $trace_entry{'line'}));
 	}
 
