@@ -148,6 +148,7 @@ my %regexes;
 my %syscall_functions;
 my @generic_fd_functions;
 my @generic_dfd_pathname_functions;
+my @to_be_implemented;
 my @no_parsing_functions;
 my @logged_errors;
 my %progress_state = (
@@ -657,6 +658,10 @@ sub pidtree_add_child {
 	$tracking_data{'pid_tree'}{'cpids'}{$ppid} = true;
 
 }
+# syscalls not to add to stats
+our @nostats = (
+	'epoll_ctl', 'epoll_wait', 'poll', 'ppoll',
+);
 
 sub add_syscall_stats {
 	my ($trace_entry) = @_;
@@ -2359,6 +2364,36 @@ sub display_pidtree {
 	}
 }
 
+# success returns nonzero
+sub parse_syscall {
+	my ($trace_entry) = @_;
+
+	if (defined($syscall_functions{$trace_entry->{'syscall'}})) {
+		$syscall_functions{$trace_entry->{'syscall'}}->($trace_entry);
+
+		return true;
+	}
+	return false;
+}
+sub parse_generic_fd_function {
+	my ($trace_entry) = @_;
+	printf("generic fd function: %s\n", $trace_entry->{'syscall'}) if ($config{'debug'} >= 1);
+
+	if (my ($fd, $fd_path, $other_args) = $trace_entry->{'args'} =~ $regexes{'generic_function_fd'}) {
+		my $rebuild_args = false;
+
+		if (!defined($fd_path)) {
+			$fd_path = get_fd_path($trace_entry->{'pid'}, $fd);
+			$rebuild_args = true if ($fd_path ne "");
+		}
+		if ($rebuild_args) {
+			$trace_entry->{'args'} = sprintf("%d%s%s",
+				$fd,
+				(($fd_path ne "") ? "<" . $fd_path . ">" : ""),
+				(defined($other_args) ? ", " . $other_args : ""));
+		}
+	} else { printf("generic %s(fd...), but '%s' didn't match the regex: %s\n", $trace_entry->{'syscall'}, $trace_entry->{'args'}, $regexes{'generic_function_fd'}); }
+}
 
 if (! -t STDIN) {
 	$config{'input_pipe'} = true;
@@ -2545,83 +2580,10 @@ next if ($config{'times'});
 			printf("%12s - %s\n", "elapsed", get_match_val($trace_entry{'elapsed'}));
 		}
 
-		if (defined($syscall_functions{$trace_entry{'syscall'}})) {
-			$syscall_functions{$trace_entry{'syscall'}}->(\%trace_entry);
-		} elsif ($trace_entry{'syscall'} eq "openat2") {
-#			int openat2(int dirfd, const char *pathname, struct open_how *how, size_t size);
-			if (my ($dfd, $dfd_path, $pathname, $open_flags, $open_mode) = $trace_entry{'args'} =~ $regexes{'openat2'}) {
+		if (parse_syscall(\%trace_entry)) {
 
-	# TODO - parse the return code
-
-			} else {
-				printf "openat2, but didn't match the re\n";
-			}
-			printf "TODO: openat2()\n";
-#		} elsif ($trace_entry{'syscall'} eq 'epoll_wait') { # TODO: anything to parse?
-#			int epoll_wait(int epfd, struct epoll_event *events, int maxevents, int timeout);
-#			int epoll_pwait(int epfd, struct epoll_event *events, int maxevents, int timeout, const sigset_t *sigmask);
-#			epoll_wait(25<anon_inode:[eventpoll]>, [{EPOLLIN, {u32=28, u64=28}}], 256, 1113) = 1
-#			epoll_wait(25<anon_inode:[eventpoll]>, [], 256, 0) = 0
-#			epoll_wait(25<anon_inode:[eventpoll]>, [{EPOLLIN, {u32=318, u64=318}}], 256, 1112) = 1
-#			epoll_wait(25<anon_inode:[eventpoll]>, [{EPOLLIN, {u32=449, u64=449}}, {EPOLLIN, {u32=28, u64=28}}], 256, 0) = 2
-#			epoll_wait(25<anon_inode:[eventpoll]>, [{EPOLLIN, {u32=28, u64=28}}], 256, 0) = 1
-#			epoll_wait(25<anon_inode:[eventpoll]>, [{EPOLLIN, {u32=28, u64=28}}], 256, 0) = 1
-#			epoll_wait(25<anon_inode:[eventpoll]>, [{EPOLLIN, {u32=288, u64=288}}], 256, 0) = 1
-#	'epoll_wait' => qr/^$patterns{'fd_with_possible_path'}, $patterns{'square_brackets_arg'}, ($patterns{'digits_string'}), ($patterns{'digits_string'})$/,
-		} elsif ($trace_entry{'syscall'} eq "mmap") {
-			if (my ($addr, $length, $prot, $flags, $fd, $fd_path, $offset) = $trace_entry{'args'} =~ $regexes{'mmap'}) {
-
-#92997 18:12:17.090315 mmap(NULL, 4096, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) = 0x7f3fd8f4f000 <0.000019>
-#92997 18:12:17.091793 mmap(NULL, 46782, PROT_READ, MAP_PRIVATE, 3, 0) = 0x7f3fd8f43000 <0.000019>
-
-				if (!defined($fd_path) and $fd >= 0) {
-					$fd_path = get_fd_path($trace_entry{'pid'}, $fd);
-
-					if ($fd_path ne "") {
-						$trace_entry{'args'} = sprintf("%s, %s, %s, %s, %s%s, %s",
-							$addr, $length, $prot, $flags, $fd,
-							"<" . $fd_path . ">", $offset);
-					}
-				}
-#	92997 18:12:17.092289 mmap(NULL, 3985920, PROT_READ|PROT_EXEC, MAP_PRIVATE|MAP_DENYWRITE, 3, 0) = 0x7f3fd8961000 <0.000018>
-#       void *mmap(void *addr, size_t length, int prot, int flags,
-#                  int fd, off_t offset);
-#       int munmap(void *addr, size_t length);
-#			(), (), (), (), #####, ()
-
-#			qr/^([^,]+), ([^,]+), ([^,]+), ([^,]+), 
-#			([^,]+), ([^,]+),
-
-			} else { printf("mmap, but didn't match the re: '%s'\n", $regexes{'mmap'}); }
-#		} elsif ($trace_entry{'syscall'} eq 'read') { # TODO
-			# we only care if:
-			# 1) we're reading from /proc/pid/cmdline
-			# 2) $config{'show_execnames'}
-			# 3) get_execname($trace_entry{'pid'}) is unknown
-			# 4) !ret_is_error($trace_entry{'ret'})
-#			for example: read(4</proc/3644602/cmdline>, "man\0readlinkat\0", 2047) = 15
-#
-		} elsif ($trace_entry{'syscall'} eq "clone") {
-		} elsif ($trace_entry{'syscall'} eq "exit") { # TODO - what about exit_group?
-			# TODO: find other pids sharing this fd_table, and duplicate the fd table for them (or would we re-parent the shared table?)
-			clear_fd_table($trace_entry{'pid'});
 		} elsif (is_generic_fd_function($trace_entry{'syscall'})) {
-			printf("generic fd function: %s\n", $trace_entry{'syscall'}) if ($config{'debug'} >= 1);
-
-			if (my ($fd, $fd_path, $other_args) = $trace_entry{'args'} =~ $regexes{'generic_function_fd'}) {
-				my $rebuild_args = false;
-
-				if (!defined($fd_path)) {
-					$fd_path = get_fd_path($trace_entry{'pid'}, $fd);
-					$rebuild_args = true if ($fd_path ne "");
-				}
-				if ($rebuild_args) {
-					$trace_entry{'args'} = sprintf("%d%s%s",
-						$fd,
-						(($fd_path ne "") ? "<" . $fd_path . ">" : ""),
-						(defined($other_args) ? ", " . $other_args : ""));
-				}
-			} else { printf("generic %s(fd...), but '%s' didn't match the regex: %s\n", $trace_entry{'syscall'}, $trace_entry{'args'}, $regexes{'generic_function_fd'}); }
+			parse_generic_fd_function(\%trace_entry);
 		} elsif (is_generic_dfd_path_function($trace_entry{'syscall'})) {
 			printf("generic dfd+path function: %s\n", $trace_entry{'args'}) if ($config{'debug'} >= 1);
 
