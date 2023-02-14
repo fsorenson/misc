@@ -1786,6 +1786,22 @@ sub syscall_close {
 		}
 	} else { printf("close but didn't match the re\n"); }
 }
+sub syscall_mmap {
+	my ($trace_entry) = @_;
+
+	if (my ($addr, $length, $prot, $flags, $fd, $fd_path, $offset) = $trace_entry->{'args'} =~ $regexes{'mmap'}) {
+
+		if (!defined($fd_path) and $fd >= 0) {
+			$fd_path = get_fd_path($trace_entry->{'pid'}, $fd);
+
+			if ($fd_path ne "") {
+				$trace_entry->{'args'} = sprintf("%s, %s, %s, %s, %s%s, %s",
+					$addr, $length, $prot, $flags, $fd,
+					"<" . $fd_path . ">", $offset);
+			}
+		}
+	} else { log_error(sprintf("mmap, but didn't match the re: '%s'\n", $regexes{'mmap'})); }
+}
 sub syscall_getdents {
 	my ($trace_entry) = @_;
 	if (my ($dfd, $dfd_path, $other_args) = $trace_entry->{'args'} =~ $regexes{'generic_function_fd'}) {
@@ -2195,6 +2211,7 @@ sub syscall_kill {
 	'openat' => \&syscall_openat,
 	'openat2' => \&syscall_openat2,
 	'close' => \&syscall_close,
+	'mmap' => \&syscall_mmap,
 	'fcntl' => \&syscall_fcntl,
 	'dup' => \&syscall_dup,
 	'dup2' => \&syscall_dup2,
