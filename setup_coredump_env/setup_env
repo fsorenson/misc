@@ -302,8 +302,8 @@ exe=$(cat executable)
 (cat <<EOM
 #!/bin/bash
 
-base_dir=$(dirname $(readlink $0))
-cd $base_dir
+base_dir=\$(dirname \$(readlink -f \$0))
+cd \$base_dir
 
 debug_root=\$base_dir/root
 corefile=coredump
