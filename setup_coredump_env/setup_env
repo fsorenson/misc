@@ -327,6 +327,9 @@ EOM
 ) >run_gdb
 chmod +x run_gdb
 
+echo "resetting directory permissions" >&2
+find root -type d -exec chmod u+w {} +
+
 echo "complete; execute $pwd/run_gdb to start debugger" >&2
 
 
