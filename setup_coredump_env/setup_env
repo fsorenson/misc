@@ -282,9 +282,11 @@ rpm_paths=$(for rpm_name in $needed_rpms ; do
 		echo "could not locate path for $rpm_name" >&2
 	fi
 done)
+rpm_paths=$(uniquify "$rpm_paths")
 
 echo "looking for debuginfo rpms" >&2
 debuginfo_rpm_paths=$(find_debuginfo_rpms "$rpm_paths")
+debuginfo_rpm_paths=$(uniquify "$debuginfo_rpm_paths")
 
 rpm_count=$(echo $rpm_paths | wc -w)
 debuginfo_rpm_count=$(echo $debuginfo_rpm_paths | wc -w)
