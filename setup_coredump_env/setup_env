@@ -17,6 +17,23 @@ exit_cleanup() {
 }
 trap exit_cleanup SIGINT SIGTERM EXIT
 
+echo "$pwd" | egrep -q : && echo "current path includes ':' characters, which will prevent gdb from locating files correctly; please rename the directory to eliminate the ':'s - often the following (repeated twice) will work:  rename : . <PATH>" >&2
+[[ -f dso_list ]] || {
+	echo "dso_list file not found" >&2
+	exit
+}
+[[ -d $rpms_base_dir ]] || {
+	echo "nfs-mounted RPMs directory not found.  Please set up autofs with the following:" >&2
+	echo "/etc/auto.master.d/RH.autofs" >&2
+	echo "    /mnt/RH		/etc/auto.RH	-t 60 browse" >&2
+	echo >&2
+	echo "/etc/auto.RH" >&2
+	echo "    rpms-rhel7     -fstype=nfs,user,ro,soft,tcp,nolock,nosuid,nodev,noatime,intr,acregmin=30,acregmax=180,acdirmin=300,acdirmax=3600 ntap-rdu2-c01-eng01-nfs01b.storage.rdu2.redhat.com:/bos_eng01_engineering_sm/devarchive/redhat/rhel-7/brew/packages" >&2
+	echo "    rpms-rhel8     -fstype=nfs,user,ro,soft,tcp,nolock,nosuid,nodev,noatime,intr,acregmin=30,acregmax=180,acdirmin=300,acdirmax=3600 ntap-rdu2-c01-eng01-nfs01b.storage.rdu2.redhat.com:/bos_eng01_engineering_sm/devarchive/redhat/rhel-8/brew/packages" >&2
+	echo "    rpms-rhel9     -fstype=nfs,user,ro,soft,tcp,nolock,nosuid,nodev,noatime,intr,acregmin=30,acregmax=180,acdirmin=300,acdirmax=3600 ntap-rdu2-c01-eng01-nfs01b.storage.rdu2.redhat.com:/bos_eng01_engineering_sm/devarchive/redhat/rhel-9/brew/packages" >&2
+	exit
+}
+
 uniquify() {
 	local strings=$1
 
@@ -247,10 +264,6 @@ LD_PRELOAD="$LD_PRELOAD_TMP" rpm -Uvh $rpm_args --nodeps --root=$pwd/root $files
 
 
 echo "determining needed rpms"
-[[ -f dso_list ]] || {
-	echo "dso_list file not found"
-	exit
-}
 needed_rpms=$(while read path rpm_name other ; do
 	echo $rpm_name
 done <dso_list | sort -u)
