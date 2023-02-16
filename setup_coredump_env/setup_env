@@ -153,7 +153,7 @@ get_rhel_major() {
 		echo ${out:15:1}
 		return
 	}
-	echo "could not determine rhel major version"
+	echo "could not determine rhel major version" >&2
 	exit
 }
 find_rpm_path() {
@@ -175,8 +175,6 @@ find_rpm_path() {
 
 
 	[[ -f $rpm_path ]] && echo $rpm_path && return
-#	echo "not found: $rpm_path"
-	echo "not found: $rpm_path" >&2
 }
 
 ########################################33
@@ -269,12 +267,12 @@ LD_PRELOAD="$LD_PRELOAD_TMP" rpm -Uvh $rpm_args --nodeps --root=$pwd/root $files
 #rpm -Uvh --root=$(pwd)/root /mnt/RH/rpms-rhel7/filesystem/3.2/25.el7/x86_64/filesystem-3.2-25.el7.x86_64.rpm --nodeps
 
 
-echo "determining needed rpms"
+echo "determining needed rpms" >&2
 needed_rpms=$(while read path rpm_name other ; do
 	echo $rpm_name
 done <dso_list | sort -u)
 
-echo "looking for rpms"
+echo "looking for rpms" >&2
 rpm_paths=$(for rpm_name in $needed_rpms ; do
 	rpm_path=$(find_rpm_path $rpm_name)
 	if [[ -n $rpm_path ]] ; then
@@ -285,19 +283,19 @@ rpm_paths=$(for rpm_name in $needed_rpms ; do
 	fi
 done)
 
-echo "looking for debuginfo rpms"
+echo "looking for debuginfo rpms" >&2
 debuginfo_rpm_paths=$(find_debuginfo_rpms "$rpm_paths")
 
 rpm_count=$(echo $rpm_paths | wc -w)
 debuginfo_rpm_count=$(echo $debuginfo_rpm_paths | wc -w)
 
-echo "installing $rpm_count rpms and $debuginfo_rpm_count debuginfo rpms"
+echo "installing $rpm_count rpms and $debuginfo_rpm_count debuginfo rpms" >&2
 for rpm in $rpm_paths $debuginfo_rpm_paths ; do
 	LD_PRELOAD="$LD_PRELOAD_TMP" rpm -ivh --noscripts --nodeps --root=$pwd/root $rpm
 done
 #LD_PRELOAD="$LD_PRELOAD_TMP" rpm -ivh --noscripts --nodeps --root=$pwd/root $rpm_paths $debuginfo_rpm_paths
 
-echo "creating gdb startup script"
+echo "creating gdb startup script" >&2
 # setup run_gdb script
 exe=$(cat executable)
 
@@ -329,7 +327,7 @@ EOM
 ) >run_gdb
 chmod +x run_gdb
 
-echo "complete; execute $pwd/run_gdb to start debugger"
+echo "complete; execute $pwd/run_gdb to start debugger" >&2
 
 
 
