@@ -49,6 +49,7 @@ remap_pkg() {
 	case $rpm_name in
 		libattr) echo attr ;;
 		libgcc) echo gcc ;;
+		glibc-common) echo glibc ;;
 		elfutils-lib*) echo elfutils ;;
 		systemd-*) echo systemd ;;
 		krb5-*) echo krb5 ;;
@@ -57,6 +58,8 @@ remap_pkg() {
 		libcom_err) echo e2fsprogs ;;
 		xz-*) echo xz ;;
 		keyutils-*) echo keyutils ;;
+		libuuid*|libblkid*|libmount*) echo util-linux ;;
+		ncurses*) echo ncurses ;;
 		*) echo $rpm_name
 	esac
 }
@@ -64,6 +67,7 @@ remap_debuginfo() {
 	local rpm_name=$1
 
 	case $rpm_name in
+		glibc-common*) echo glibc ;;
 		libattr*) echo attr libattr ;;
 		libgcc*) echo gcc gcc-base ;;
 		elfutils*) echo elfutils ;;
@@ -74,6 +78,8 @@ remap_debuginfo() {
 		libcom_err) echo e2fsprogs ;;
 		xz*) echo xz ;;
 		keyutils*) echo keyutils ;;
+		libuuid*|libblkid*|libmount*) echo util-linux ;;
+		ncurses*) echo ncurses ;;
 		*) echo $rpm_name
 	esac
 }
