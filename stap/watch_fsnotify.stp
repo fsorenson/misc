@@ -1,0 +1,143 @@
+function get_current_root:long() {
+	current = task_current();
+	root = &@cast(current,"task_struct")->fs->root;
+
+	return root;
+}
+
+function IS_ROOT:long(dentry:long) {
+	return (@cast(dentry, "dentry")->d_parent == dentry)
+}
+function prepend:string(dentry:long, name:string) {
+	dname = d_name(dentry)
+
+	/*
+	* In case we are following down a mount point trigger, we can get
+	* multiple instances of a root mount.
+	*/
+	c = substr(name, strlen(name)-1, strlen(name)-1)
+	if (dname == "/" && c == "/")
+		return name;
+
+	return sprintf("%s/%s", dname, name);
+}
+
+function root_dentry_mnt__get_path:string(root:long, dentry:long, vfsmnt:long) {
+	name = "";
+
+	while (1) {
+		if (dentry == @cast(root, "path")->dentry &&
+		vfsmnt == @cast(root, "path")->mnt)
+			break;
+
+		if (dentry == @cast(vfsmnt, "vfsmount")->mnt_root ||
+			IS_ROOT(dentry)) {
+			/* Global root? */
+			if (@cast(vfsmnt, "vfsmount")->mnt_parent == vfsmnt)
+				return sprintf("/%s", name);
+
+			dentry = @cast(vfsmnt, "vfsmount")->mnt_mountpoint;
+			vfsmnt = @cast(vfsmnt, "vfsmount")->mnt_parent;
+			continue;
+		}
+		name = prepend(dentry, name);
+		dentry = @cast(dentry, "dentry")->d_parent;
+	}
+
+	return sprintf("/%s", name);
+}
+
+
+function dentry_mnt__get_path:string(dentry:long, vfsmnt:long) {
+	root = get_current_root();
+
+	return root_dentry_mnt__get_path(root, dentry, vfsmnt);
+}
+function path_get_string:string(path:long) {
+	return dentry_mnt__get_path(path->dentry, path->mnt)
+}
+
+global pid_fsnotify_paths
+global fsnotify_paths%[50000]
+
+# stap -L 'kernel.function("__fsnotify_parent")'
+# kernel.function("__fsnotify_parent@fs/notify/fsnotify.c:153")
+#	$path:struct path const*
+#	$dentry:struct dentry*
+#	$mask:__u32
+probe kernel.function("__fsnotify_parent") {
+	execname = execname()
+
+	if (execname == "stapio")
+		next
+
+	dentry = $dentry
+	if (!dentry)
+		dentry = $path->dentry
+
+	if (!dentry)
+		next
+
+	#define DCACHE_FSNOTIFY_PARENT_WATCHED 0x4000
+	if (!(dentry->d_flags & 0x4000))
+		next
+
+	try {
+		path = task_dentry_path(task_current(),
+			dentry,
+			@cast($path,"path","kernel:nfs:kernel<linux/path.h>")->mnt)
+	} catch {
+		path = "UNKNOWN"
+	}
+#	printf("path: %s\n", path)
+
+	dentry = dentry->d_parent
+	try {
+		parent_path = task_dentry_path(task_current(),
+			dentry,
+			@cast($path,"path","kernel:nfs:kernel<linux/path.h>")->mnt)
+	} catch {
+		parent_path = "UNKNOWN"
+	}
+
+#	printf("%s -> %s\n", parent_path, path)
+
+	if (substr(path, 0, 1) == "/")
+#		fsnotify_paths[path]++
+		fsnotify_paths[parent_path]++
+
+#	printf("%s (%d) %s(path: %s)\n", execname(), tid(), ppfunc(), path_get_string($path))
+#	printf("%s (%d) %s(path: %s)\n", execname, tid, ppfunc(), path)
+
+#	pid_fsnotify_paths[execname, tid] <<< path
+#	pid_fsnotify_paths[execname, tid, path]++
+}
+
+probe timer.s(1), end {
+	ansi_clear_screen()
+
+	if (0) {
+		printf("%15s  %7s   %40s  %10s\n",
+			"command", "pid", "path", "count")
+		foreach ([execname, tid, path] in pid_fsnotify_paths - limit 20) {
+			printf("  %15s (%7d) - path: '%s' - %d\n",
+#			execname, tid, pid_fsnotify_paths[execname, tid], @count(pid_fsnotify_paths[execname, tid]))
+#			execname, tid, path, pid_fsnotify_paths[execname, tid], pid_fsnotify_paths[execname, tid])
+				execname, tid, path, pid_fsnotify_paths[execname, tid, path])
+		}
+		delete pid_fsnotify_paths
+	}
+	if (42) {
+		printf("%10s  %s\n",
+			"count", "path")
+		foreach ([path] in fsnotify_paths - limit 20) {
+			printf("  %8d  %s\n", fsnotify_paths[path], path)
+		}
+		delete fsnotify_paths
+	}
+}
+
+
+
+
+
