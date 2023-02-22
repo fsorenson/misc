@@ -1,0 +1,54 @@
+global fsnotify_paths%[50000]
+
+# stap -L 'kernel.function("__fsnotify_parent")'
+# kernel.function("__fsnotify_parent@fs/notify/fsnotify.c:153")
+#	$path:struct path const*
+#	$dentry:struct dentry*
+#	$mask:__u32
+probe kernel.function("__fsnotify_parent") {
+	execname = execname()
+
+	if (execname == "stapio") # don't trace ourselves
+		next
+	dentry = $dentry
+	if (!dentry)
+		dentry = $path->dentry
+
+	if (!dentry || !(dentry->d_flags & 0x4000)) #define DCACHE_FSNOTIFY_PARENT_WATCHED 0x4000
+		next
+
+	dentry = dentry->d_parent
+	if (!dentry)
+		next
+	try {
+		parent_path = task_dentry_path(task_current(),
+			dentry,
+			@cast($path,"path","kernel<linux/path.h>")->mnt)
+	} catch { next }
+
+	if (substr(parent_path, 0, 1) == "/")
+		fsnotify_paths[parent_path]++
+}
+function tstamp:string(epochsecs:long) %{ /* pure */
+	const time_t epochsecs = STAP_ARG_epochsecs;
+	struct tm gmt;
+
+	time_to_tm(epochsecs, -tz_gmtoff, &gmt);
+	snprintf(STAP_RETVALUE, MAXSTRINGLEN, "%04ld-%02d-%02d %02d:%02d:%02d",
+		gmt.tm_year + 1900, gmt.tm_mon + 1, gmt.tm_mday,
+		gmt.tm_hour, gmt.tm_min, gmt.tm_sec);
+%}
+function tstamp_now:string() {
+	return tstamp(gettimeofday_s())
+}
+
+probe timer.s(10), end {
+	printf("%s\n", tstamp_now())
+	printf("%10s  %s\n",
+		"count", "path")
+	foreach ([path] in fsnotify_paths - limit 20) {
+		printf("  %8d  %s\n", fsnotify_paths[path], path)
+	}
+	printf("\n")
+	delete fsnotify_paths
+}
