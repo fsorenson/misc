@@ -1,0 +1,87 @@
+function tstamp:string(epochns:long) %{ /* pure */
+	u64 nsec = STAP_ARG_epochns;
+	time_t epochsec = nsec / 1000000000;
+	struct tm gmt;
+
+	nsec = nsec % 1000000000;
+
+	time_to_tm(epochsec, -tz_gmtoff, &gmt);
+	snprintf(STAP_RETVALUE, MAXSTRINGLEN, "%04ld-%02d-%02d %02d:%02d:%02d.%09llu",
+		gmt.tm_year + 1900, gmt.tm_mon + 1, gmt.tm_mday,
+		gmt.tm_hour, gmt.tm_min, gmt.tm_sec, nsec);
+%}
+function file_get_path(t, filp) {
+	filp = &@cast(filp, "struct file", "kernel")
+	if (filp)
+		return task_dentry_path(t, filp->f_path->dentry, filp->f_path->mnt)
+	return "UNKNOWN"
+}
+function task_get_exe(t) {
+	t = &@cast(t, "struct task_struct", "kernel")
+
+	if (t && t->mm && t->mm->exe_file)
+		return file_get_path(t, t->mm->exe_file)
+	return task_execname(t)
+}
+
+function get_ancestry(t) {
+	t = &@cast(t, "struct task_struct", "kernel")
+
+	anc = sprintf("%s(%d)", task_get_exe(t), task_tid(t))
+	while (42) {
+		if (task_tid(t) == 1 || !t)
+			break
+
+		t = &@cast(task_parent(t), "struct task_struct", "kernel")
+		anc = sprintf("%s(%d)=>%s", task_get_exe(t), task_tid(t), anc)
+	}
+	return anc
+}
+
+probe kernel.function("setxattr"),
+      kernel.function("generic_setxattr"),
+      kernel.function("vfs_setxattr"),
+      kernel.function("__vfs_setxattr_noperm"),
+      kernel.function("ima_inode_setxattr"),
+      kernel.function("evm_inode_setxattr"),
+      kernel.function("security_inode_setxattr")
+	{
+
+	if (@defined($dentry))
+		d = $dentry
+	else if (@defined($d))
+		d = $d
+	else
+		d = 0
+
+	if (d == 0)
+		fname = "UNKNOWN"
+	else
+		fname = task_dentry_path(task_current(), d, 0)
+	if (fname == "<unknown>") {
+		fname = ""
+		while (42) {
+			this_path_component = kernel_string(d->d_name->name)
+			if (fname == "")
+				fname = this_path_component
+			else if (this_path_component == "/")
+				fname = this_path_component . fname
+			else
+				fname = this_path_component . "/" . fname
+
+			if (d == d->d_parent)
+				break
+			d = d->d_parent
+		}
+	}
+
+	if (@defined($xattr_name)) {
+		xattr_name = kernel_string($xattr_name)
+	} else if (@defined($name)) {
+		xattr_name = kernel_string($name)
+	} else
+		xattr_name = "UNKNOWN"
+
+	printf("%s - %s - %s(file: '%s', attribute: '%s'\n",
+		tstamp(gettimeofday_ns()), get_ancestry(task_current()), ppfunc(), fname, xattr_name)
+}
