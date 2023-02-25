@@ -1011,37 +1011,6 @@ sub timestamp_to_seconds {
 	}
 	return $str;
 }
-sub extract_metadata {
-	my ($trace_entry) = @_;
-	if (
-		($trace_entry->{'pid'},
-		$trace_entry->{'timestamp'},
-		$trace_entry->{'delay'},
-		my $syscall_info,
-		$trace_entry->{'elapsed'}) = $trace_entry->{'line'} =~ $regexes{'extract_metadata'}) {
-
-		$tracking_data{'trace_stats'}{'start_time'} = $trace_entry->{'timestamp'} if (! defined $tracking_data{'trace_stats'}{'start_time'});
-		$tracking_data{'trace_stats'}{'end_time'} = $trace_entry->{'timestamp'};
-
-#	printf "    delay '%s'\n", (defined $trace_entry->{'delay'} ? $trace_entry->{'delay'} : 'NONE');
-#if (my @matches = $trace_entry->{'line'} =~ $regexes{'extract_metadata'}) {
-
-if (0) {
-	printf "match 2d\n";
-	printf "    full line: %s\n", $trace_entry->{'line'};
-	printf "    pid: '%s'\n", (defined $trace_entry->{'pid'} ? $trace_entry->{'pid'} : 'NONE');
-	printf "    timestamp '%s'\n", (defined $trace_entry->{'timestamp'} ? $trace_entry->{'timestamp'} : 'NONE');
-	printf "    delay '%s'\n", (defined $trace_entry->{'delah'} ? $trace_entry->{'delah'} : 'NONE');
-	printf "    op_info '%s'\n", $syscall_info;
-#	printf "    rest '%s'\n", (defined $matches[3] ? $matches[3] : 'NONE');
-	printf "    elapsed: '%s'\n", (defined $trace_entry->{'elapsed'} ? $trace_entry->{'elapsed'} : 'NONE');
-}
-		$trace_entry->{'line'} = $syscall_info;
-	} else {
-		printf "didn't match regex: %s\n", $trace_entry->{'line'};
-		exit;
-	}
-}
 
 %patterns = (
 	'nothing' => '(?:)?',
@@ -1387,6 +1356,49 @@ $patterns{'possible_renameat2_flags'} = "(?:, $patterns{'renameat2_flags'})?",
 #1119840 16:59:55.153682 openat(AT_FDCWD, "/usr/share/locale/locale.alias", O_RDONLY|O_CLOEXEC) = 3</usr/share/locale/locale.alias> <0.000037>
 #1120026 17:00:32.779494 openat(5</home/sos/2948400>, "sosreport-testbic1wn2l-2021-05-26-crzdojg", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY) = 6</home/sos/2948400/sosreport-testbic1wn2l-2021-05-26-crzdojg> <0.000058>
 # int openat(int dirfd, const char *pathname, int flags, mode_t mode);
+
+my $extract_pid_str = qr/^$patterns{'pid_string'}$/;
+my $extract_timestamp_str = qr/^$patterns{'timestamp_string'}$/;
+my $extract_delay_str = qr/^(\+[0-9]+(?:(?:\.[0-9]{3}(?:[0-9]{3}(?:[0-9]{3})?)?)?))$/;
+#my $extract_elapsed = qr/(.+) <([0-9.]+)>$/;S
+my $extract_elapsed_str = qr/^<([0-9]+\\.[0-9]+)>$/;
+sub extract_metadata {
+	my ($trace_entry) = @_;
+	my $elapsed;
+	my $remain = $trace_entry->{'line'};
+	my $rest;
+
+	my @vals = (split / /, $remain);
+
+	if ($vals[0] =~ $extract_pid_str) {
+		$trace_entry->{'pid'} = $1;
+		shift @vals;
+	} else {
+		$trace_entry->{'pid'} = 0;
+	}
+	if ($vals[0] =~ $extract_timestamp_str) {
+		$trace_entry->{'timestamp'} = $1;
+		$tracking_data{'trace_stats'}{'start_time'} = $trace_entry->{'timestamp'} if (! defined $tracking_data{'trace_stats'}{'start_time'});
+		$tracking_data{'trace_stats'}{'end_time'} = $trace_entry->{'timestamp'};
+		shift @vals;
+	} else {
+		$trace_entry->{'timestamp'} = '';
+	}
+	if ($vals[0] =~ $extract_delay_str) {
+		$trace_entry->{'delay'} = $1;
+		shift @vals;
+	} else {
+		$trace_entry->{'delay'} = '';
+	}
+	if ($vals[-1] =~ $extract_elapsed_str) {
+		$trace_entry->{'elapsed'} = $1;
+		pop @vals;
+	} else {
+		$trace_entry->{'elapsed'} = '';
+	}
+
+	$trace_entry->{'line'} = join(" ", @vals);
+}
 
 # functions with the first argument being an fd
 @generic_fd_functions = (
