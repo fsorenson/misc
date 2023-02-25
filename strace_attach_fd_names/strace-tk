@@ -2388,24 +2388,24 @@ sub parse_generic_fd_function {
 }
 sub parse_generic_dfd_path_function {
 	my ($trace_entry) = @_;
-	printf("generic dfd+path function: %s\n", $trace_entry{'args'}) if ($config{'debug'} >= 1);
+	printf("generic dfd+path function: %s\n", $trace_entry->{'args'}) if ($config{'debug'} >= 1);
 
-	if (my ($dfd, $dfd_path, $this_path_or_null, $path, $other_args) = $trace_entry{'args'} =~ $regexes{'generic_function_dfd_path'}) {
+	if (my ($dfd, $dfd_path, $this_path_or_null, $path, $other_args) = $trace_entry->{'args'} =~ $regexes{'generic_function_dfd_path'}) {
 		my $rebuild_args = false;
 
 		if (!defined($dfd_path)) {
-			$dfd_path = get_fd_path($trace_entry{'pid'}, $dfd);
+			$dfd_path = get_fd_path($trace_entry->{'pid'}, $dfd);
 			$rebuild_args = true if ($dfd_path ne "");
 		}
 		if ($rebuild_args) {
-			$trace_entry{'args'} = sprintf("%s%s, %s%s",
+			$trace_entry->{'args'} = sprintf("%s%s, %s%s",
 				$dfd,
 				(($dfd_path ne "") ? "<" . $dfd_path . ">" : ""),
 				$this_path_or_null,
 				(defined($other_args) ? ", " . $other_args : ""));
 		}
 	} else {
-		log_error(sprintf("generic %s(dfd, path...), but '%s' didn't match the regex '%s'\n", $trace_entry{'syscall'}, $trace_entry{'args'}, $regexes{'generic_function_dfd_path'}));
+		log_error(sprintf("generic %s(dfd, path...), but '%s' didn't match the regex '%s'\n", $trace_entry->{'syscall'}, $trace_entry->{'args'}, $regexes{'generic_function_dfd_path'}));
 	}
 }
 
