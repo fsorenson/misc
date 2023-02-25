@@ -935,12 +935,6 @@ sub defined_or_default {
 	return $val;
 }
 
-sub undefined_to_empty {
-	my ($trace_entry, $var) = @_;
-
-	$trace_entry->{$var} = "" if !defined $trace_entry->{$var};
-}
-
 sub err_name_to_num {
 	my $err_name = shift;
 	return eval("$err_name");
@@ -970,15 +964,15 @@ sub change_err_locale {
 sub reconstruct_line {
 	my ($trace_entry) = @_;
 
-	undefined_to_empty($trace_entry, 'pid');
-	undefined_to_empty($trace_entry, 'this_line_execname');
-	undefined_to_empty($trace_entry, 'timestamp');
-	undefined_to_empty($trace_entry, 'delay');
-	undefined_to_empty($trace_entry, 'syscall');
-	undefined_to_empty($trace_entry, 'args');
-	undefined_to_empty($trace_entry, 'msg');
-	undefined_to_empty($trace_entry, 'ret');
-	undefined_to_empty($trace_entry, 'elapsed');
+	$trace_entry->{'pid'} = "" if !defined $trace_entry->{'pid'};
+	$trace_entry->{'this_line_execname'} = "" if !defined $trace_entry->{'pid'};
+	$trace_entry->{'timestamp'} = "" if ! defined $trace_entry->{'timestamp'};
+	$trace_entry->{'delay'} = "" if ! defined $trace_entry->{'delay'};
+	$trace_entry->{'syscall'} = "" if ! defined $trace_entry->{'syscall'};
+	$trace_entry->{'args'} = "" if ! defined $trace_entry->{'args'};
+	$trace_entry->{'msg'} = "" if ! defined $trace_entry->{'msg'};
+	$trace_entry->{'ret'} = "" if ! defined $trace_entry->{'ret'};
+	$trace_entry->{'elapsed'} = "" if ! defined $trace_entry->{'elapsed'};
 
 	my $ret = sprintf("%s%s%s%s",
 		$trace_entry->{'pid'} ne '' ? $trace_entry->{'pid'} . " " : "",
