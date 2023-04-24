@@ -1,0 +1,81 @@
+What does the nfs4_unique_id do, as seen in a packet capture:
+
+
+# mount localhost:/ /mnt/tmp -o vers=4.2
+
+   58 0.184200998    127.0.0.1 → 127.0.0.1    NFS 342 V4 Call (Reply In 59) EXCHANGE_ID
+Frame 58: 342 bytes on wire (2736 bits), 342 bytes captured (2736 bits) on interface lo, id 0
+Ethernet II, Src: 00:00:00:00:00:00, Dst: 00:00:00:00:00:00
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 883, Dst Port: 2049, Seq: 45, Ack: 29, Len: 276
+Remote Procedure Call, Type:Call XID:0xfb87ad2a
+Network File System, Ops(1): EXCHANGE_ID
+    minorversion: 2
+    Operations (count: 1): EXCHANGE_ID
+        Opcode: EXCHANGE_ID (42)
+            eia_clientowner
+                verifier: 0x6446c762301a22fd
+                Data: <DATA>
+                    length: 37
+                    contents: <DATA>  <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+                flags: 0x00000101, EXCHGID4_FLAG_BIND_PRINC_STATEID, EXCHGID4_FLAG_SUPP_MOVED_REFER
+            eia_state_protect: SP4_NONE (0)
+            eia_client_impl_id
+                Implementor DNS domain name(nii_domain): kernel.org
+                    contents: kernel.org
+                Implementation product name(nii_name): Linux 3.10.0-1160.55.1.el7.x86_64 #1 SMP Tue Jan 18 16:14:16 UTC 2022 x86_64
+                    contents: Linux 3.10.0-1160.55.1.el7.x86_64 #1 SMP Tue Jan 18 16:14:16 UTC 2022 x86_64
+
+00b0  22 fd 00 00 00 25 4c 69 6e 75 78 20 4e 46 53 76   "....%Linux NFSv
+00c0  34 2e 32 20 76 6d 37 2e 73 6f 72 65 6e 73 6f 6e   4.2 vm7.sorenson
+00d0  2e 72 65 64 68 61 74 2e 63 6f 6d 00 00 00 00 00   .redhat.com.....
+
+$ echo -n 'Linux NFSv4.2 vm7.sorenson.redhat.com' | wc -c
+37
+
+^^^^ the 'unique' id is made with just the hostname
+
+
+# umount /mnt/tmp
+
+
+set the unique id and remount:
+
+# echo -n "test id" > /sys/module/nfs/parameters/nfs4_unique_id
+# mount localhost:/ /mnt/tmp -o vers=4.2
+
+  163 77.691437532    127.0.0.1 → 127.0.0.1    NFS 350 V4 Call (Reply In 164) EXCHANGE_ID
+Frame 163: 350 bytes on wire (2800 bits), 350 bytes captured (2800 bits) on interface lo, id 0
+Ethernet II, Src: 00:00:00:00:00:00, Dst: 00:00:00:00:00:00
+Internet Protocol Version 4, Src: 127.0.0.1, Dst: 127.0.0.1
+Transmission Control Protocol, Src Port: 930, Dst Port: 2049, Seq: 45, Ack: 29, Len: 284
+Remote Procedure Call, Type:Call XID:0x659110c1
+Network File System, Ops(1): EXCHANGE_ID
+    minorversion: 2
+    Operations (count: 1): EXCHANGE_ID
+        Opcode: EXCHANGE_ID (42)
+            eia_clientowner
+                verifier: 0x6446c762301a22fd
+                Data: <DATA>
+                    length: 45
+                    contents: <DATA>  <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+                flags: 0x00000101, EXCHGID4_FLAG_BIND_PRINC_STATEID, EXCHGID4_FLAG_SUPP_MOVED_REFER
+            eia_state_protect: SP4_NONE (0)
+            eia_client_impl_id
+                Implementor DNS domain name(nii_domain): kernel.org
+                    contents: kernel.org
+                Implementation product name(nii_name): Linux 3.10.0-1160.55.1.el7.x86_64 #1 SMP Tue Jan 18 16:14:16 UTC 2022 x86_64
+                    contents: Linux 3.10.0-1160.55.1.el7.x86_64 #1 SMP Tue Jan 18 16:14:16 UTC 2022 x86_64
+
+00b0  22 fd 00 00 00 2d 4c 69 6e 75 78 20 4e 46 53 76   "....-Linux NFSv
+00c0  34 2e 32 20 74 65 73 74 20 69 64 2f 76 6d 37 2e   4.2 test id/vm7.
+00d0  73 6f 72 65 6e 73 6f 6e 2e 72 65 64 68 61 74 2e   sorenson.redhat.
+00e0  63 6f 6d 00 00 00 00 00 01 01 00 00 00 00 00 00   com.............
+
+$ echo -n 'Linux NFSv4.2 test id/vm7.sorenson.redhat.com' | wc -c
+45
+
+^^^^ the unique ID is added as well
+
+
+# umount /mnt/tmp
