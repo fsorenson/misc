@@ -247,9 +247,13 @@ sub set_tracked_var {
 }
 
 sub get_cwd {
+	my $pid = shift;
+	$pid = -1 if !defined($pid);
+	return $tracking_data{$pid}{'cwd'} if defined $tracking_data{$pid}{'cwd'};
+	return "";
 	return get_tracked_var('cwd', @_);
 
-	my $pid = shift;
+#	my $pid = shift;
 
 	$pid = -1 if (!defined($pid));
 
@@ -311,24 +315,10 @@ sub set_execname {
 	return $result;
 }
 sub get_execname {
-#	return "" if (!$config{'show_execnames'});
-	return get_tracked_var('execname', @_);
-
 	my $pid = shift;
-
-#	return "" if (!$config{'show_execnames'});
-	$pid = -1 if (!defined($pid));
-
-	local *_get_execname = sub {
-		my $pid = shift;
-
-		return "" if (!defined($tracking_data{$pid}{'execname'}));
-		return $tracking_data{$pid}{'execname'};
-	};
-	my $result = _get_execname($pid);
-	printf("get_execname(%s) -> '%s'\n",
-		get_match_val($pid), $result) if ($config{'debug'} >= 1);
-	return $result;
+	$pid = -1 if !defined($pid);
+	return $tracking_data{$pid}{'execname'} if defined $tracking_data{$pid}{'execname'};
+	return "";
 }
 
 sub get_shared_fd_table_mapping {
@@ -971,7 +961,7 @@ sub change_err_locale {
 sub reconstruct_line {
 	my ($trace_entry) = @_;
 
-	$trace_entry->{'pid'} = "" if !defined $trace_entry->{'pid'};
+	$trace_entry->{'pid'} = -1 if !defined $trace_entry->{'pid'};
 	$trace_entry->{'this_line_execname'} = "" if !defined $trace_entry->{'pid'};
 	$trace_entry->{'timestamp'} = "" if ! defined $trace_entry->{'timestamp'};
 	$trace_entry->{'delay'} = "" if ! defined $trace_entry->{'delay'};
@@ -1381,7 +1371,7 @@ sub extract_metadata {
 		$trace_entry->{'pid'} = $1;
 		shift @vals;
 	} else {
-		$trace_entry->{'pid'} = 0;
+		$trace_entry->{'pid'} = -1;
 	}
 	if ($vals[0] =~ $extract_timestamp_str) {
 		$trace_entry->{'timestamp'} = $1;
