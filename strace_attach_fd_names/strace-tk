@@ -1364,11 +1364,11 @@ $patterns{'possible_renameat2_flags'} = "(?:, $patterns{'renameat2_flags'})?",
 #1120026 17:00:32.779494 openat(5</home/sos/2948400>, "sosreport-testbic1wn2l-2021-05-26-crzdojg", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC|O_DIRECTORY) = 6</home/sos/2948400/sosreport-testbic1wn2l-2021-05-26-crzdojg> <0.000058>
 # int openat(int dirfd, const char *pathname, int flags, mode_t mode);
 
-my $extract_pid_str = qr/^$patterns{'pid_string'}$/;
-my $extract_timestamp_str = qr/^$patterns{'timestamp_string'}$/;
+my $extract_pid_str = qr/^($patterns{'pid_string'})$/;
+my $extract_timestamp_str = qr/^($patterns{'timestamp_string'})$/;
 my $extract_delay_str = qr/^(\+[0-9]+(?:(?:\.[0-9]{3}(?:[0-9]{3}(?:[0-9]{3})?)?)?))$/;
 #my $extract_elapsed = qr/(.+) <([0-9.]+)>$/;S
-my $extract_elapsed_str = qr/^<([0-9]+\\.[0-9]+)>$/;
+my $extract_elapsed_str = qr/^<([0-9]+\.[0-9]+)>$/;
 sub extract_metadata {
 	my ($trace_entry) = @_;
 	my $elapsed;
