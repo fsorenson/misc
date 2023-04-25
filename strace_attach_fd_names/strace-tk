@@ -152,6 +152,7 @@ my %progress_state = (
 	'file_size' => 0,
 	'last_progress_printed' => -1,
 );
+my %unknown_syscalls;
 
 sub log_error {
 	while (scalar @_) {
@@ -161,6 +162,12 @@ sub log_error {
 	}
 }
 sub output_errors {
+
+	if (scalar(keys(%unknown_syscalls))) {
+		printf "unrecognized syscalls: %s\n", join(" ", keys(%unknown_syscalls));
+	}
+
+
 	printf "%d errors:\n", scalar(@logged_errors) if scalar @logged_errors;
 	my $i = 1;
 #	for my $i (0..scalar(@logged_errors)-1) {
@@ -2617,7 +2624,8 @@ if (!defined($trace_entry{'syscall'})) {
 		} elsif (do_not_parse_function($trace_entry{'syscall'})) {
 			printf "%s is a do-not-parse\n", $trace_entry{'syscall'} if ($config{'debug'} >= 1);
 		} else {
-			log_error(sprintf("matched the main pattern, but didn't find a matching syscall for '%s'\n\tfull string: %s\n", $trace_entry{'syscall'}, $trace_entry{'line'}));
+#			log_error(sprintf("matched the main pattern, but didn't find a matching syscall for '%s'\n\tfull string: %s\n", $trace_entry{'syscall'}, $trace_entry{'line'}));
+			$unknown_syscalls{$trace_entry{'syscall'}} = 1;
 		}
 
 		$trace_entry{'this_line_execname'} = get_execname($trace_entry{'pid'}) if (!defined($trace_entry{'this_line_execname'}) || $trace_entry{'this_line_execname'} eq "");
