@@ -844,11 +844,13 @@ void check_component(int dfd, char *parent_path, char *this_path_ele, char *rema
 		while (*slash == '/')
 			slash++;
 		next_path_remaining = strdup(slash);
-		output("found slash at index %ld of '%s' (next path '%s', next path remaining '%s')\n", slash - remaining_path, remaining_path, next_path_ele, next_path_remaining);
+		output("found slash at index %ld of '%s' (next path '%s', next path remaining '%s')\n",
+			slash - remaining_path, remaining_path, next_path_ele, next_path_remaining);
 	} else {
 		next_path_ele = strdup(remaining_path);
 		next_path_remaining = strdup("");
-		output("no slash found in '%s' (next path '%s', next path remaining '%s')\n", remaining_path, next_path_ele, next_path_remaining);
+		output("no slash found in '%s' (next path '%s', next path remaining '%s')\n",
+			remaining_path, next_path_ele, next_path_remaining);
 	}
 
 
