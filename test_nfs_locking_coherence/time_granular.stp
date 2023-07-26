@@ -1,0 +1,9 @@
+# this systemtap will only run under RHEL 6
+
+probe module("nfs").function("is_time_granular") {
+        printf("%s (%d) - %s - ts.tv_sec: %d, ts.tv_nsec: %d  -  setting to 1000 nanoseconds\n",
+		execname(), tid(), ppfunc(), $ts->tv_sec, $ts->tv_nsec)
+
+        set_kernel_long(&$ts->tv_sec, 0)
+        set_kernel_long(&$ts->tv_nsec, 1000)
+}
