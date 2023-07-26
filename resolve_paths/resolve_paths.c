@@ -657,7 +657,7 @@ struct stat_info_struct show_stat_info(int fd, struct path_ele *current_path, ch
 		free_mem(tmp_path_str);
 	}
 
-	output("%6s %s ", fstype(stfs.f_type), make_mode_string(mode_string, stat_info.mode));
+	output("%s ", make_mode_string(mode_string, stat_info.mode));
 
 	output("uid: %d (%s) ", stat_info.uid, idtoname_uid(stat_info.uid));
 	output("gid: %d (%s) ", stat_info.gid, idtoname_gid(stat_info.gid));
@@ -699,11 +699,11 @@ bool follow_path(char *path_str) {
 
 open_root:
 	dfd = open("/", O_RDONLY|O_PATH|O_DIRECTORY);
-	if (config.show_steps) {
+	if (config.show_steps)
 		show_stat_info(dfd, current_path, "", remaining_path);
-		output("\n");
-	}
 	while (!path_empty(remaining_path)) {
+		output("\n");
+
 		if (++path_count > MAX_PATH_COUNT) {
 			output("ELOOP - too many path levels or symbolic links\n");
 			goto out;
@@ -712,17 +712,16 @@ open_root:
 
 		if ((fd = openat(dfd, this_ele->name, O_RDONLY|O_PATH|O_NOFOLLOW)) < 0) {
 
-			output("%6s %s ", "", "??????????");
+			output("%s ", "??????????");
 			print_path(current_path);
 			output("/%s ", this_ele->name);
 			output("- error opening: %m\n");
 			goto out;
 		}
 
-		if (config.show_steps) {
+		if (config.show_steps)
 			stat_info = show_stat_info(fd, current_path, this_ele->name, remaining_path);
-			output("\n");
-		} else
+		else
 			stat_info = get_stat_info(fd, "");
 
 		if (stat_info.stat_error) {
@@ -877,7 +876,6 @@ void check_component(int dfd, char *parent_path, char *this_path_ele, char *rema
 		parent_path, this_path_ele, remaining_path);
 
 
-
 	if (strlen(parent_path) && parent_path[strlen(parent_path) - 1] == '/')
 		asprintf(&current_path, "%s%s", parent_path, this_path_ele);
 	else if (strlen(parent_path))
@@ -955,14 +953,10 @@ void check_component(int dfd, char *parent_path, char *this_path_ele, char *rema
 			link = malloc(link_len);
 			memset(link, 0, link_len);
 
-			if ((ret = readlinkat(dfd, this_path_ele, link, link_len)) < 0) {
-//				if (strlen(ret == 0))
+			if ((ret = readlinkat(dfd, this_path_ele, link, link_len)) < 0)
 				output("Invalid link");
-			}
 
 			link[st.st_size] = '\0';
-
-output("read link for '%s', link len: %d\n", this_path_ele, link_len);
 
 			output(" => '%s'\n", link);
 
@@ -972,20 +966,6 @@ output("read link for '%s', link len: %d\n", this_path_ele, link_len);
 			output("bah\n");
 			break;
 	}
-
-
-
-//         switch (sb.st_mode & S_IFMT) {
-//         case S_IFBLK:  output("block device\n");            break;
-//         case S_IFCHR:  output("character device\n");        break;
-//         case S_IFDIR:  output("directory\n");               break;
-//         case S_IFIFO:  output("FIFO/pipe\n");               break;
-//         case S_IFLNK:  output("symlink\n");                 break;
-//         case S_IFREG:  output("regular file\n");            break;
-//         case S_IFSOCK: output("socket\n");                  break;
-//          default:       output("unknown?\n");                break;
-
-
 out:
 	if (current_path)
 		free_mem(current_path);
@@ -1041,7 +1021,6 @@ bool search_paths(const char *path) {
 
 	return false;
 }
-
 
 #define show_id(ugid) do { \
 	PASTE(ugid,_t) ugid = PASTE(get, ugid)(); \
