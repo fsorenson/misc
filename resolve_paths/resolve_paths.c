@@ -27,6 +27,8 @@
 #include <sys/fsuid.h>
 #include <sys/sysmacros.h>
 
+#include <libmount/libmount.h>
+
 #define _PASTE(a,b) a##b
 #define PASTE(a,b) _PASTE(a,b)
 
@@ -554,6 +556,8 @@ char *fstype(unsigned long fsid) {
 }
 
 struct stat_info_struct {
+	char *mountpoint;
+	char *link_target;
 	uint64_t size;
 	uint64_t ino;
 	uint64_t mount_id;
@@ -618,6 +622,7 @@ struct stat_info_struct show_stat_info(int fd, struct path_ele *current_path, ch
 	char mode_string[11];
 	struct statfs stfs;
 	struct stat_info_struct stat_info = { 0 };
+	char *current_path_str = NULL, *mountpoint = NULL;
 
 	stat_info = get_stat_info(fd, "");
 	if (stat_info.stat_error)
@@ -638,12 +643,16 @@ struct stat_info_struct show_stat_info(int fd, struct path_ele *current_path, ch
 	if (this_name)
 		output("/%s ", this_name);
 
+	mountpoint = mnt_get_mountpoint(current_path_str);
+	output("  %6s filesystem mounted at %s", fstype(stfs.f_type), mountpoint);
+
 	if (remaining_path && !path_empty(remaining_path)) {
 		output(" (remaining path to resolve: ");
 		print_path(remaining_path);
 		output(") ");
 	}
 out:
+	free_mem(stat_info.mountpoint);
 	return stat_info;
 }
 
