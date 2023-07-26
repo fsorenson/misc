@@ -600,7 +600,7 @@ struct stat_info_struct show_stat_info(int fd, struct path_ele *current_path, ch
 //	bool have_mount_id = false;
 	char mode_string[11];
 	struct statfs stfs;
-	struct stat_info_struct stat_info;
+	struct stat_info_struct stat_info = { 0 };
 
 	stat_info = get_stat_info(fd, "");
 	if (stat_info.stat_error)
