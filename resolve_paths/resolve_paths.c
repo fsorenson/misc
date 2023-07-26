@@ -159,10 +159,9 @@ int path_len(struct path_ele *head) {
 	}
 	return i;
 }
-void print_path(struct path_ele *head) {
+char *path_to_string(struct path_ele *head) {
 	char path[4096];
 	struct path_ele *p;
-	int count = 0;
 
 	if (!head)
 		err_exit(EXIT_FAILURE, "path is null\n");
@@ -176,7 +175,19 @@ void print_path(struct path_ele *head) {
 		strcat(path, p->name);
 		p = p->next;
 	}
+//	if (this_path)
+//		strcat(path, this_path);
+	return strdup(path);
+}
+void print_path(struct path_ele *head) {
+	char *path = NULL;
+
+	if (!head)
+		err_exit(EXIT_FAILURE, "path is null\n");
+
+	path = path_to_string(head);
 	output("%s", path);
+	free_mem(path);
 }
 
 static void path_insert(struct path_ele *new,
