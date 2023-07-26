@@ -108,6 +108,7 @@ GetOptions(
 	'notime|notimestamp|notimestamps' => sub { $config{'show_timestamps'} = false },
 
 	'double_entry|double-entry' => sub { $config{'double_entry'} = true },
+	'output_pcap|output-pcap' => sub { $config{'output_pcap'} = true },
 
 	'help|h' => sub {
 		usage();
@@ -2422,6 +2423,639 @@ sub myopen {
 	open my $fh, "@_" or die "blah: $!\n";
 	return $fh;
 }
+##### pcap-generation #####
+use constant {
+        CALL => 1,
+        COMPLETION => 2,
+};
+
+use constant {
+        EPB_HEADER_LEN => 9*4, # 9*4 + any options size
+        ETH_HEADER_LEN => 14, # 2x eth addrs + 4-byte type
+        IP_HEADER_LEN => 20,
+        UDP_HEADER_LEN => 8,
+};
+
+# linktypes
+use constant {
+        LINKTYPE_ETH => 1,
+        LINKTYPE_DLT_RAW => 101,
+};
+
+my $pcap_queued_bytes = '';
+my $pcap_queued_len = 0;
+
+use constant {
+        SHB => 0x0a0d0d0a,
+        IDB => 0x00000001,
+#       PB => 0x00000002, # obsolete
+        SPB => 0x00000003,
+        NRB => 0x00000004,
+        ISB => 0x00000005,
+        EPB => 0x00000006,
+#       SDJ => 0x00000009,
+#       DSB => 0x0000000a, # also 'ZigBee NWK Key Data', 'ZigBee APS Key Data'
+        CB => 0x00000bad,
+        CB2 => 0x40000bad,
+};
+#   IDB - interface description block
+#   EPB - enhanced packet block
+#   SPB - simple packet block
+#   NRB - name resolution block
+#   ISB - interface statistics block
+#   CB - custom block
+#      - systemd Journal Export Block
+#   DSB - Decryption Secrets Block
+my %pcap_config = (
+        'program_name' => "",
+        'subsec_digits' => 6,
+        'linktype' => LINKTYPE_DLT_RAW,
+        'src_ip' => 0x7f000001,
+        'dst_ip' => 0x7f000001,
+        'dst_ip_call' => 0x7f000001,
+        'dst_ip_completion' => 0x7f000002,
+);
+sub pcap_calc_pad_bytes { ($_[0] % 4 == 0) ? 0 : 4 - ($_[0] % 4); }
+sub pcap_print_pad_bytes {
+        my $len = shift;
+        for (my $i = 0 ; $i < $len ; $i++) {
+                printf("%c", 0);
+        }
+}
+sub bytes_u8 { return (chr($_[0] & 0xff)); }
+sub bytes_u16 { return (chr(($_[0] >> 8) & 0xff) . chr($_[0] & 0xff)); }
+sub bytes_u32 { return (chr(($_[0] >> 24) & 0xff) . chr(($_[0] >> 16) & 0xff) .
+        chr(($_[0] >> 8) & 0xff) . chr($_[0] & 0xff)); }
+sub bytes_u64 { bytes_u32($_[0] >> 32) . bytes_u32($_[0] & 0xffffffff); }
+
+sub pcap_print_u8 {
+        my $val = shift;
+
+        printf("%c", $val & 0xff);
+}
+sub pcap_print_u16 {
+        my $val = shift;
+
+        printf("%c%c", $val & 0xff, ($val >> 8) & 0xff);
+}
+sub pcap_print_u32 {
+        my $val = shift;
+
+        printf("%c%c%c%c",
+                $val & 0xff, ($val >> 8) & 0xff,
+                ($val >> 16) & 0xff, ($val >> 24) & 0xff);
+}
+sub pcap_output_queued {
+        printf STDERR "queued len: %d (%x) - writing %d (%x), count of queued bytes: %d (%x)\n",
+        $pcap_queued_len, $pcap_queued_len,
+        $pcap_queued_len + 12, $pcap_queued_len + 12,
+        length($pcap_queued_bytes), length($pcap_queued_bytes) if ($config{'debug'} >= 1);
+
+        pcap_print_u32($pcap_queued_len + 12);
+        for (my $i = 0 ; $i < $pcap_queued_len ; $i++) {
+                printf("%c", ord(substr($pcap_queued_bytes, $i, 1)) & 0xff);
+        }
+        pcap_print_pad_bytes(calc_pad_bytes($pcap_queued_len));
+        pcap_print_u32($pcap_queued_len + 12);
+        $pcap_queued_bytes = '';
+        $pcap_queued_len = 0;
+}
+sub pcap_queue_u8 {
+        $pcap_queued_bytes .= chr(int($_[0]) & 0xff);
+        $pcap_queued_len++;
+        printf STDERR "queued 1 byte\n" if ($config{'debug'} >= 1);
+}
+sub pcap_queue_u16 {
+        my $val = shift;
+
+        $pcap_queued_bytes .= sprintf("%c%c", $val & 0xff, ($val >> 8) & 0xff);
+        $pcap_queued_len += 2;
+        printf STDERR "queued 2 bytes\n" if ($config{'debug'} >= 1);
+}
+sub pcap_queue_u32 {
+        my $val = shift;
+
+        $pcap_queued_bytes .= sprintf("%c%c%c%c",
+                $val & 0xff, ($val >> 8) & 0xff,
+                ($val >> 16) & 0xff, ($val >> 24) & 0xff);
+        $pcap_queued_len += 4;
+        printf STDERR "queued 4 bytes\n" if ($config{'debug'} >= 1);
+}
+sub pcap_queue_u64 {
+        my $val = shift;
+
+        pcap_queue_u32($val & 0xffffffff);
+        pcap_queue_u32(($val >> 32) & 0xffffffff);
+        printf STDERR "queued 8 bytes\n" if ($config{'debug'} > 1);
+}
+sub pcap_queue_bytes {
+        my $val = shift;
+        my $len = length($val);
+
+        for (my $i = 0 ; $i < $len ; $i++) {
+                $pcap_queued_bytes .= sprintf("%c", ord(substr($val, $i, 1)) & 0xff);
+                $pcap_queued_len++;
+        }
+        printf STDERR "queued %d bytes\n", $len if ($config{'debug'} >= 1);
+}
+sub pcap_queue_pad_bytes {
+        my $len = shift;
+        for (my $i = 0 ; $i < $len ; $i++) {
+                $pcap_queued_bytes .= sprintf("%c", 0);
+                $pcap_queued_len++;
+        }
+        printf STDERR "queued %d pad bytes\n", $len if ($config{'debug'} >= 1);
+}
+sub pcap_queue_end_of_options {
+        pcap_queue_u16(0); # opt_endofopt = 0
+        pcap_queue_u16(0); # option length = 0
+}
+# magic (32 bits)
+sub pcap_print_magic { print_u32(SHB); }
+# byte order magic (32 bits)
+# 0x1a2b3c4d by endian
+sub pcap_queue_byte_order_magic {
+        $pcap_queued_bytes .= sprintf("%c%c%c%c", 0x4d, 0x3c, 0x2b, 0x1a);
+        $pcap_queued_len += 4;
+}
+# major version (16 bits)
+# minor version (16 bits)
+sub pcap_queue_version {
+	my $maj = shift;
+	my $min = shift;
+
+	pcap_queue_u16($maj);
+	pcap_queue_u16($min);
+}
+# SECTION (pcapng file) HEADER BLOCK
+#
+# from https://github.com/pcapng/pcapng/blob/master/reference-draft-tuexen-opsawg-pcapng.xml
+
+#    0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+# 0 |                   Block Type = 0x0A0D0D0A                     |
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+# 4 |                      Block Total Length                       |
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+# 8 |                      Byte-Order Magic                         |
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+#12 |          Major Version        |         Minor Version         |
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+#16 |                                                               |
+#   |                          Section Length                       |
+#   |                                                               |
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+#24 /                                                               /
+#   /                      Options (variable)                       /
+#   /                                                               /
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+#   |                      Block Total Length                       |
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
+# SHB - mandatory; must appear at least once in each file
+# optional blocks:
+#   IDB - interface description block
+#   EPB - enhanced packet block
+#   SPB - simple packet block
+#   NRB - name resolution block
+#   ISB - interface statistics block
+#   CB - custom block
+#      - systemd Journal Export Block
+#   DSB - Decryption Secrets Block
+#
+
+# options
+#       opt_endofopt - code: 0; length: 0
+#       opt_comment - code: 1; length: variable
+#
+# section header block options
+#       2 - shb_hardware  - variable length
+#       3 - shb_os        - variable length
+#       4 - shb_userappl  - variable length
+#
+#
+# interface description block
+#                        1                   2                   3
+#    0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+# 0 |                    Block Type = 0x00000001                    |
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+# 4 |                      Block Total Length                       |
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+# 8 |           LinkType            |           Reserved            |
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+#12 |                            SnapLen                            |
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+#16 /                                                               /
+#   /                      Options (variable)                       /
+#   /                                                               /
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+#   |                      Block Total Length                       |
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+# Interface Description Block options'
+#       3 - if_description (variable)
+#       4 - if_IPv4addr (8 bytes)
+#       5 - if_IPv6addr (17 bytes)
+#       6 - if_MACaddr (8 bytes)
+#       7 - if_EUIaddr (8 bytes)
+#       8 - if_speed (8 bytes)
+#       9 - if_tsresol (1 byte)
+#       10 - if_tzone (4 bytes)
+#       11 - if_filter (variable, minimum 1)
+#       12 - if_os (variable)
+#       13 - if_fcslen (1 byte)
+#       14 - if_tsoffset (8 bytes)
+#       15 - if_hardware (variable)
+#       16 - if_txspeed (8 bytes)
+#       17 - if_rxspeed (8 bytes)
+
+# Enhanced Packet Block
+#                        1                   2                   3
+#    0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+# 0 |                    Block Type = 0x00000006                    |
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+# 4 |                      Block Total Length                       |
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+# 8 |                         Interface ID                          |
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+#12 |                        Timestamp (High)                       |
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+#16 |                        Timestamp (Low)                        |
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+#20 |                    Captured Packet Length                     |
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+#24 |                    Original Packet Length                     |
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+#28 /                                                               /
+#   /                          Packet Data                          /
+#   /              variable length, padded to 32 bits               /
+#   /                                                               /
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+#   /                                                               /
+#   /                      Options (variable)                       /
+#   /                                                               /
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+#   |                      Block Total Length                       |
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
+# Table 4: Enhanced Packet Block Options
+# Name          Code    Length                  Multiple allowed?
+# epb_flags     2       4                       no
+# epb_hash      3       variable, minimum hash type-dependent   yes
+# epb_dropcount 4       8                       no
+# epb_packetid  5       8                       no
+# epb_queue     6       4                       no
+# epb_verdict   7       variable, minimum verdict type-dependent        yes
+
+
+# Simple Packet Block
+#                        1                   2                   3
+#    0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+# 0 |                    Block Type = 0x00000003                    |
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+# 4 |                      Block Total Length                       |
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+# 8 |                    Original Packet Length                     |
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+#12 /                                                               /
+#   /                          Packet Data                          /
+#   /              variable length, padded to 32 bits               /
+#   /                                                               /
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+#   |                      Block Total Length                       |
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
+# Name Resolution Block
+#                        1                   2                   3
+#    0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+# 0 |                    Block Type = 0x00000004                    |
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+# 4 |                      Block Total Length                       |
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+# 8 |      Record Type              |      Record Value Length      |
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+#12 /                       Record Value                            /
+#   /              variable length, padded to 32 bits               /
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+#   .                                                               .
+#   .                  . . . other records . . .                    .
+#   .                                                               .
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+#   |  Record Type = nrb_record_end |   Record Value Length = 0     |
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+#   /                                                               /
+#   /                      Options (variable)                       /
+#   /                                                               /
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+#   |                      Block Total Length                       |
+#   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
+# Name                  Code    Length
+#nrb_record_end         0x0000  0
+#nrb_record_ipv4        0x0001  variable
+#nrb_record_ipv6        0x0002  variable
+
+# Table 7: Name Resolution Block Options
+# Name  Code    Length  Multiple allowed?
+# ns_dnsname    2       variable        no
+# ns_dnsIP4addr 3       4       no
+# ns_dnsIP6addr 4       16      no
+
+sub pcap_queue_option_varlen {
+        my $id = shift;
+        my $val = shift;
+        my $len = length($val);
+
+        pcap_queue_u16($id); # option num
+        pcap_queue_u16($len);
+        pcap_queue_bytes($val);
+        pcap_queue_pad_bytes(pcap_calc_pad_bytes($len));
+}
+
+sub pcap_queue_option {
+        my $name = shift;
+        my $val = shift;
+
+        if ($name eq "opt_comment") { pcap_queue_option_varlen(1, $val);
+        ##### Section Header Block options
+        } elsif ($name eq "shb_hardware") { pcap_queue_option_varlen(2, $val)
+        } elsif ($name eq "shb_os") { pcap_queue_option_varlen(3, $val);
+        } elsif ($name eq "shb_userappl") { pcap_queue_option_varlen(4, $val);
+
+        } elsif ($name eq "if_name") { pcap_queue_option_varlen(2, $val);
+        } elsif ($name eq "if_tsresol") {
+                pcap_queue_u16(9); # option #
+                pcap_queue_u16(1); # length
+                pcap_queue_u8($val);
+                pcap_queue_pad_bytes(3);
+        } elsif ($name eq "if_filter") { pcap_queue_option_varlen(11, $val);
+        } elsif ($name eq "if_os") { pcap_queue_option_varlen(12, $val);
+
+        }
+}
+sub pcap_output_SHB {
+	pcap_print_magic();
+
+	pcap_queue_byte_order_magic();
+	pcap_queue_version(1, 0);
+	pcap_queue_u64(0xffffffffffffffff); # section length - use -1 for 'figure it out'
+	# block total length (32 bits) -- same as above
+
+	# OS option
+	pcap_queue_option('opt_comment', "strace-to-pcap");
+	#queue_option("opt_comment", "Generated from input file Standard input.");
+	#queue_option("shb_userappl", "Text2pcap (Wireshark) 3.4.7 (Git commit e42cbf6a415f)");
+
+	#queue_option(3, "Linux 3.10.0-1160.11.1.el7.x86_64");
+	#queue_option(4, "Dumpcap 1.10.14 (Git Rev Unknown from unknown)");
+	pcap_queue_end_of_options();
+	pcap_output_queued();
+
+
+	#########################################
+
+
+	# block type (32 bits)
+	# block total length (32 bits)
+	# linktype (16 bits)
+	# reserved (16 bits) -- must be 0
+	# snaplen (32 bits) -- 0 means no limit
+
+	# build an idb
+	pcap_print_u32(1); # block type IDB
+	# queue_u16(1); # linktype - ethernet - https://www.ietf.org/id/draft-tuexen-opsawg-pcapng-03.html#LINKTYPES
+	# queue_u16(101); # linktype - DLT_RAW raw ip - https://www.ietf.org/id/draft-tuexen-opsawg-pcapng-03.html#LINKTYPES
+	pcap_queue_u16($pcap_config{'linktype'});
+	pcap_queue_u16(0); # reserved - must be 0
+	pcap_queue_u32(256*1024); # snaplen - 0 = no limit
+
+	pcap_queue_option("if_name", "strace");
+
+	# tsresol
+	pcap_queue_option("if_tsresol", 6);
+
+	#queue_option(11, "\0tcp port 2049 or udp port 514"); # prefixed by an octet designating the type of filter
+	#queue_option(12, "Linux 3.10.0-1160.11.1.el7.x86_64");
+
+	pcap_queue_end_of_options();
+	pcap_output_queued();
+}
+sub htons { return (($_[0] >> 8) & 0xff) + (($_[0] << 8) & 0xff00); }
+sub ntohs { return htons($_[0]); }
+sub u16_endian { (($_[0] >> 8) & 0xff) + (($_[0] & 0xff) << 8); }
+sub u32_endian {
+        (($_[0] >> 24) & 0x000000ff) + (($_[0] >> 8) & 0x0000ff00) +
+        (($_[0] << 8) & 0x00ff0000) + (($_[0] <<24) & 0xff000000); }
+sub endian_u16 { u16_endian($_[0]); }
+sub endian_u32 { u32_endian($_[0]); }
+sub pcap_ip_chksum_add {
+        my $ip_chksum = shift;
+        my $add = shift;
+
+        $ip_chksum += $add;
+
+        $ip_chksum = (($ip_chksum & 0xffff) + (($ip_chksum >> 16) & 0xffff)) & 0xffff;
+        return $ip_chksum;
+}
+sub pcap_ip_chksum_get { $_[0] ^ 0xffff; }
+my $pcap_udp_chksum;
+sub pcap_udp_chksum_init { $pcap_udp_chksum = 0; }
+sub pcap_udp_chksum_add {
+        $pcap_udp_chksum += $_[0];
+        $pcap_udp_chksum = (($pcap_udp_chksum & 0xffff) + (($pcap_udp_chksum >> 16) & 0xffff)) & 0xffff;
+}
+sub pcap_udp_chksum_get { $pcap_udp_chksum ^ 0xffff; }
+
+sub pcap_construct_EPB_opts {
+	my $epb_opts = '';
+# add epb options
+	$epb_opts .= bytes_u16(0x0002); # epb_flags
+	$epb_opts .= bytes_u8(0x04); # length of epb_flags
+	# bits 16-31 - LL depenent errors
+	# bits 9-15 - reserved - must be 0
+	# bits 5-8 - fcs length, in octets (0000 if not available)
+	# bits 2-4 - reception type
+	#     000 - not specified
+	#     001 - unicast
+	#     010 - multicast
+	#     011 - broadcast
+	#     100 - promisc
+	$epb_opts .= bytes_u16(0x0002); # multicast
+	$epb_opts .= bytes_u8(0); # pad to 32-bit
+	$epb_opts .= bytes_u8(0); # pad to 32-bit
+	$epb_opts .= bytes_u8(0); # pad to 32-bit
+	return $epb_opts;
+}
+sub pcap_construct_EPB {
+	my $ts = shift;
+	my $ts_subsec = shift;
+	my $payload = shift;
+	my $payload_len = length($payload);
+
+
+	my $payload_pad_len = pcap_calc_pad_bytes($payload_len);
+
+	my $EPB_opts = pcap_construct_EPB_opts();
+	my $EPB_opts_len = length($EPB_opts);
+
+	my $EPB_len = EPB_HEADER_LEN + $payload_len +
+		$payload_pad_len + $EPB_opts_len;
+
+	my $ret = '';
+
+	$ret .= bytes_u32(endian_u32(EPB));
+
+	$ret .= bytes_u32(endian_u32($EPB_len));
+
+	$ret .= bytes_u32(0); # interface id
+
+	# frame
+	$ts *= (10**$pcap_config{'subsec_digits'});
+	$ts += $ts_subsec;
+
+	my $ts_high = $ts >> 32;
+	my $ts_low = $ts & 0xffffffff;
+
+	$ret .= bytes_u32(endian_u32($ts_high));
+	$ret .= bytes_u32(endian_u32($ts_low));
+
+	$ret .= bytes_u32(endian_u32($payload_len)); # captured len         # 4 bytes
+	$ret .= bytes_u32(endian_u32($payload_len)); # frame length         # 4 bytes
+
+	$ret .= $payload;
+	while (length($ret) % 4) { $ret .= chr(0); } # pad to 32-bit
+
+	$ret .= $EPB_opts;
+	$ret .= bytes_u32(0); # end of options
+
+	$ret .= bytes_u32(endian_u32($EPB_len));
+	return $ret;
+}
+sub pcap_construct_eth { # irrelevant if frames are not encapsulated in eth
+	my $type = shift;
+	my $ret = '';
+
+	$ret .= chr(0x0a) . chr(0x02) . chr(0x02) . chr(0x02) . chr(0x02) . chr(0x01); # dst eth
+	$ret .= chr(0x0a) . chr(0x02) . chr(0x02) . chr(0x02) . chr(0x02) . chr(0x02); # src eth
+	$ret .= chr(($type >> 8) & 0xff) . chr($type & 0xff);
+	return $ret;
+}
+sub construct_ipv4_header {
+        my $src_ip = shift;
+        my $dst_ip = shift;
+        my $len = shift;
+
+        my $ip_chksum = 0;
+        my $ret = "";
+
+        my $ip_len = IP_HEADER_LEN + $len;
+
+
+	# ip version (4 bits)
+	# ip header len (4 bits): 20 bytes
+	$ret .= chr(0x45); # 0x40 (ipv4) | header: 20 bytes/4 (4-byte words)
+	$ret .= chr(0); # ecn
+	$ip_chksum = pcap_ip_chksum_add($ip_chksum, 0x4500);
+
+	#total length
+	$ret .= chr(($ip_len >> 8) & 0xff) . chr($ip_len & 0xff);
+	$ip_chksum = pcap_ip_chksum_add($ip_chksum, $ip_len);
+
+	# id
+	$ret .= chr(0x12) . chr(0x34); # id: 0x1234
+	$ip_chksum = pcap_ip_chksum_add($ip_chksum, 0x1234);
+
+	$ret .= chr(0) . chr(0); # 3 bits of flags + 13 bits of fragment offset
+	$ip_chksum = pcap_ip_chksum_add($ip_chksum, 0);
+
+	$ret .= chr(255); # ttl = 255
+	$ret .= chr(17); # UDP
+	$ip_chksum = pcap_ip_chksum_add($ip_chksum, 0xff11);
+
+	# calc checksum of the rest, then output checksum, then remaining bytes
+	$ip_chksum = pcap_ip_chksum_add($ip_chksum, ($src_ip >> 16) & 0xffff);
+	$ip_chksum = pcap_ip_chksum_add($ip_chksum, $src_ip & 0xffff);
+	$ip_chksum = pcap_ip_chksum_add($ip_chksum, ($dst_ip >> 16) & 0xffff);
+	$ip_chksum = pcap_ip_chksum_add($ip_chksum, $dst_ip & 0xffff);
+
+	$ip_chksum = pcap_ip_chksum_get($ip_chksum);
+	$ret .= chr(($ip_chksum >> 8) & 0xff) . chr($ip_chksum & 0xff);
+
+	$ret .= chr(($src_ip >> 24) & 0xff) . chr(($src_ip >> 16) & 0xff) .
+		chr(($src_ip >> 8) & 0xff) . chr($src_ip & 0xff);
+	$ret .= chr(($dst_ip >> 24) & 0xff) . chr(($dst_ip >> 16) & 0xff) .
+		chr(($dst_ip >> 8) & 0xff) . chr($dst_ip & 0xff);
+
+	return $ret;
+}
+sub pcap_construct_udp {
+        my $src_ip = shift;
+        my $dst_ip = shift;
+        my $src_port = shift;
+        my $dst_port = shift;
+        my $data = shift;
+        my $ret = "";
+
+        my $len = length($data);
+        my $udp_len = $len + UDP_HEADER_LEN;
+
+        $ret .= chr(($src_port >> 8) & 0xff) . chr($src_port & 0xff);
+        $ret .= chr(($dst_port >> 8) & 0xff) . chr($dst_port & 0xff);
+        $ret .= chr(($udp_len >> 8) & 0xff) . chr($udp_len & 0xff);
+
+        $ret .= chr(0) . chr(0); # checksum
+
+        for (my $i = 0 ; $i < $len ; $i++) {
+                $ret .= chr(ord(substr($data, $i, 1)));
+        }
+        return $ret;
+}
+sub pcap_output_udp {
+	my $src_ip = shift;
+	my $dst_ip = shift;
+	my $src_port = shift;
+	my $dst_port = shift;
+	my $data = shift;
+
+	my $len = length($data);
+	my $pad_bytes = pcap_calc_pad_bytes($len);
+
+        pcap_print_u16(u16_endian($src_port));       # 2 bytes
+        pcap_print_u16(u16_endian($dst_port));       # 2 bytes
+
+	$data .= sprintf("%c", 0) if ($len % 2);
+
+	pcap_print_u16(u16_endian($len + 8));        # 2 bytes
+	pcap_print_u16(0);                           # 2 bytes - checksum - fudge with '0'
+
+	for (my $i = 0 ; $i < $len ; $i++) { pcap_print_u8(ord(substr($data, $i, 1))); }
+	pcap_print_pad_bytes($len % 4);
+}
+sub output_udp_syslog_frame {
+	my $ts = shift;
+	my $ts_subsec = shift;
+	my $call_completion = shift;
+	my $payload = shift;
+
+	my $dst_ip = ($call_completion == CALL) ? $pcap_config{'dst_ip_call'} : $pcap_config{'dst_ip_completion'};
+
+	$payload = construct_udp($pcap_config{'src_ip'}, $dst_ip, 30000, 514, $payload);
+	$payload = construct_ipv4_header($pcap_config{'src_ip'}, $dst_ip, length($payload)) . $payload;
+
+	if ($pcap_config{'linktype'} eq LINKTYPE_ETH) {
+		$payload = construct_eth(0x0800) . $payload;
+	} elsif ($config{'linktype'} eq LINKTYPE_DLT_RAW) {
+		# nothing to do
+	}
+
+	my $EPB_data = construct_EPB($ts, $ts_subsec, $payload);
+
+	printf "%s", $EPB_data;
+}
+
 
 if (! -t STDIN) {
 	$config{'input_pipe'} = true;
