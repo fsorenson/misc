@@ -662,7 +662,7 @@ struct stat_info_struct show_stat_info(int fd, struct path_ele *current_path, ch
 	output("uid: %d (%s) ", stat_info.uid, idtoname_uid(stat_info.uid));
 	output("gid: %d (%s) ", stat_info.gid, idtoname_gid(stat_info.gid));
 
-	output(" maj: %d  min: %d ", stat_info.major, stat_info.minor);
+	output(" maj/min: %d/%d ", stat_info.major, stat_info.minor);
 	if (stat_info.have_mount_id)
 		output(" mount_id: %ld ", stat_info.mount_id);
 
