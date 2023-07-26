@@ -644,6 +644,18 @@ struct stat_info_struct show_stat_info(int fd, struct path_ele *current_path, ch
 		goto out;
 
 	fstatfs(fd, &stfs);
+	if (! this_name || !strcmp(this_name, "")) {
+		current_path_str = path_to_string(current_path);
+		if (!strcmp(current_path_str, "")) {
+			free_mem(current_path_str);
+			current_path_str = strdup("/");
+		}
+	} else {
+		char *tmp_path_str = path_to_string(current_path);
+		asprintf(&current_path_str, "%s/%s", tmp_path_str, this_name);
+
+		free_mem(tmp_path_str);
+	}
 
 	output("%6s %s ", fstype(stfs.f_type), make_mode_string(mode_string, stat_info.mode));
 
@@ -653,10 +665,9 @@ struct stat_info_struct show_stat_info(int fd, struct path_ele *current_path, ch
 		output(" mount_id: %ld ", stat_info.mount_id);
 
 	output(" inode: %ld ", stat_info.ino);
-	print_path(current_path);
 
-	if (this_name)
-		output("/%s ", this_name);
+	output("%s\n", current_path_str);
+
 	if (stat_info.link_target && config.show_steps)
 		output("    => '%s'\n", stat_info.link_target);
 
@@ -664,9 +675,9 @@ struct stat_info_struct show_stat_info(int fd, struct path_ele *current_path, ch
 	output("  %6s filesystem mounted at %s", fstype(stfs.f_type), mountpoint);
 
 	if (remaining_path && !path_empty(remaining_path)) {
-		output(" (remaining path to resolve: ");
-		print_path(remaining_path);
-		output(") ");
+		char *remaining_path_str = path_to_string(remaining_path);
+		output(" (remaining path to resolve: %s)\n", remaining_path_str + 1);
+		free_mem(remaining_path_str);
 	}
 out:
 	free_mem(stat_info.mountpoint);
