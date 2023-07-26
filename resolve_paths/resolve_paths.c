@@ -613,8 +613,23 @@ struct stat_info_struct get_stat_info(int dfd, const char *pathname) {
 		stat_info.minor = minor(st.st_dev);
 	}
 
+	if ((stat_info.mode & S_IFMT) == S_IFLNK) {
+		int ret;
+
+		stat_info.link_target = malloc(stat_info.size + 1);
+
+		if ((ret = readlinkat(dfd, pathname, stat_info.link_target, stat_info.size + 1)) < 0)
+			goto out_invalid_link; // not sure there's much we can do, unfortunately
+
+		stat_info.link_target[ret] = '\0';
+	}
+
 out:
 	return stat_info;
+
+out_invalid_link:
+	free_mem(stat_info.link_target);
+	goto out;
 }
 
 struct stat_info_struct show_stat_info(int fd, struct path_ele *current_path, char *this_name, struct path_ele *remaining_path) {
@@ -642,6 +657,8 @@ struct stat_info_struct show_stat_info(int fd, struct path_ele *current_path, ch
 
 	if (this_name)
 		output("/%s ", this_name);
+	if (stat_info.link_target && config.show_steps)
+		output("    => '%s'\n", stat_info.link_target);
 
 	mountpoint = mnt_get_mountpoint(current_path_str);
 	output("  %6s filesystem mounted at %s", fstype(stfs.f_type), mountpoint);
@@ -653,6 +670,7 @@ struct stat_info_struct show_stat_info(int fd, struct path_ele *current_path, ch
 	}
 out:
 	free_mem(stat_info.mountpoint);
+	free_mem(current_path_str);
 	return stat_info;
 }
 
@@ -735,23 +753,13 @@ open_root:
 			} ; break;
 			case S_IFLNK: {
 				struct loop_checker_struct lcs;
-				char *link = NULL;
-				int is_loop, ret;
+				int is_loop;
 
 				lcs = (struct loop_checker_struct) {
 					.major = stat_info.major,
 					.minor = stat_info.minor,
 					.ino = stat_info.ino
 				};
-
-				link = malloc(stat_info.size + 1);
-
-				if ((ret = readlinkat(dfd, this_ele->name, link, stat_info.size + 1)) < 0)
-					goto out_invalid_link;
-				link[ret] = '\0';
-
-				if (config.show_steps)
-					output("               => '%s'\n", link);
 
 				if ((is_loop = symlink_is_loop(&lcs)) != 0) {
 					if (config.show_steps) {
@@ -769,25 +777,27 @@ open_root:
 					goto out;
 				}
 
-				dedup_slashes(&link);
+				dedup_slashes(&stat_info.link_target);
 
-				if (link[0] == '/') {
+				if (stat_info.link_target[0] == '/') {
 					free_path_list(current_path);
 					close(dfd);
 					dfd = open("/", O_RDONLY|O_PATH|O_DIRECTORY);
-				} else if (!strcmp(link, this_ele->name)) {
-					free_mem(link);
+				} else if (!strcmp(stat_info.link_target, this_ele->name)) {
+					free_mem(stat_info.link_target);
 					output("ELOOP - symlink loops back to itself\n");
 					goto out;
 				}
-				tmp_list = string_to_path_list(link);
+				tmp_list = string_to_path_list(stat_info.link_target);
 				while (!path_empty(tmp_list))
 					path_add(path_pop_last(tmp_list), remaining_path);
 				free_ele(tmp_list);
 
-				free_mem(link);
-				if (path_empty(current_path))
+				free_mem(stat_info.link_target);
+				if (path_empty(current_path)) {
+					output("\n");
 					goto open_root;
+				}
 			} break;
 
 			/* should be done */
