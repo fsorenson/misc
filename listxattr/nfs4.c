@@ -174,7 +174,7 @@ void nfs4_print_acl(struct nfs4_acl_struct *acl, int is_dir) {
 }
 
 
-void *show_nfs4_acl(char *buf, int len, int is_dir) {
+void *show_nfs4_acl(const char *attr_name, const unsigned char *buf, int len, bool is_dir) {
 	struct nfs4_acl_struct acl;
 	int ace_i;
 

@@ -8,8 +8,8 @@
 	gcc listxattr.c -o listxattr -lacl
 */
 
-#ifndef __EXT_H__
-#define __EXT_H__
+#ifndef __LISTXATTR_EXT_H__
+#define __LISTXATTR_EXT_H__
 
 #include "listxattr.h"
 
@@ -46,4 +46,4 @@
 
 void decode_ioctl_flags_ext(unsigned long val);
 
-#endif /* __EXT_H__ */
+#endif /* __LISTXATTR_EXT_H__ */
