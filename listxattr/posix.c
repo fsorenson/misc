@@ -6,29 +6,9 @@
 	and decode as many of them as possible
 */
 
-/*
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <stdint.h>
-#include <unistd.h>
-#include <ctype.h>
-#include <sys/types.h>
-#include <attr/xattr.h>
-#include <sys/stat.h>
-#include <arpa/inet.h>
-#include <acl/libacl.h>
-#include <sys/queue.h>
-#include <fcntl.h>
-#include <sys/ioctl.h>
-#include <sys/statvfs.h>
-#include <linux/fs.h>
-#include <sys/vfs.h>
-*/
-
+#include "encdec.h"
 #include "posix.h"
 #include <sys/acl.h>
-
 
 #if 0
 
@@ -123,9 +103,10 @@ const char *posix_tag_name(int tag) {
 //static const char *perm_str[] = { "---", "--x", "-w-", "-wx", "r--", "--x", "rw-", "rwx" };
 //static const char *perm_str[] = { "---", "--x", "-w-", "-wx", "r--", "r-x", "rw-", "rwx" };
 
-void *show_posix_acl(const char *attr_name, const unsigned char *buf, int len, bool is_dir) {
+int decode_posix_acl(const char *attr_name, const unsigned char *buf, int len, bool is_dir) {
 	unsigned char *p = (unsigned char *)buf;
 	bool is_default = false;
+	int ret = EXIT_SUCCESS;
 
 	int entry_count = (len - 4) / sizeof(struct ace);
 
@@ -173,10 +154,23 @@ void *show_posix_acl(const char *attr_name, const unsigned char *buf, int len, b
 					is_default ? "default:" : "",
 					perm_str[ace->perm]);
 				break;
-			default: return "ERROR"; break;
+			default: output("error\n"); ret = EXIT_FAILURE; goto out; break;
 		};
 
 		p += sizeof(struct ace);
 	}
-	return NULL;
+out:
+	return ret;
 }
+
+static char *posix_xattrs[] = {
+	ACL_POSIX_ACCESS,
+	ACL_POSIX_DEFAULT,
+	NULL,
+};
+
+static struct encdec_ops_struct encdec_posix_ops = {
+	.decode = decode_posix_acl,
+};
+
+ADD_ENCDEC(posix, "posix", &encdec_posix_ops, posix_xattrs);

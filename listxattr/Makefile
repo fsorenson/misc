@@ -9,12 +9,11 @@ CFLAGS += -I$(current_dir) -I$(current_dir)/encdec
 all: listxattr
 
 SRCS=listxattr.c listxattr.h lib.h lib.c
-SRCS += posix.h posix.c
 SRCS += ext.h ext.c
 
 #OBJS=$(SRCS:.[ch]=.o)
 OBJS=listxattr.o lib.o
-OBJS += posix.o ext.o
+OBJS += ext.o
 
 
 encdec_dir = encdec
