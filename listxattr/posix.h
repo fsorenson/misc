@@ -13,6 +13,9 @@
 
 static const char *perm_str[] = { "---", "--x", "-w-", "-wx", "r--", "r-x", "rw-", "rwx" };
 
-void *show_posix_acl(const char *attr_name, const unsigned char *buf, int len, bool is_dir);
+#define ACL_POSIX_ACCESS        "system.posix_acl_access"
+#define ACL_POSIX_DEFAULT       "system.posix_acl_default"
+
+int decode_posix_acl(const char *attr_name, const unsigned char *buf, int len, bool is_dir);
 
 #endif /* __LISTXATTR_POSIX_H__ */
