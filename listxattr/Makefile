@@ -12,14 +12,12 @@ SRCS=listxattr.c listxattr.h lib.h lib.c
 SRCS += posix.h posix.c
 SRCS += ext.h ext.c
 SRCS += xfs.h xfs.c
-SRCS += nfs4.h nfs4.c
 SRCS += ntacl.h ntacl.c
-SRCS += selinux.h selinux.c
 SRCS += capability.h capability.c
 
 #OBJS=$(SRCS:.[ch]=.o)
 OBJS=listxattr.o lib.o
-OBJS += posix.o ext.o xfs.o ntacl.o selinux.o capability.o
+OBJS += posix.o ext.o xfs.o ntacl.o capability.o
 
 
 encdec_dir = encdec
