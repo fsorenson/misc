@@ -6,25 +6,6 @@
 	and decode as many of them as possible
 */
 
-/*
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <stdint.h>
-#include <unistd.h>
-#include <ctype.h>
-#include <sys/types.h>
-#include <attr/xattr.h>
-#include <sys/stat.h>
-#include <arpa/inet.h>
-#include <acl/libacl.h>
-#include <sys/queue.h>
-#include <fcntl.h>
-#include <sys/ioctl.h>
-#include <sys/statvfs.h>
-#include <linux/fs.h>
-#include <sys/vfs.h>
-*/
 
 #include "ntacl.h"
 
@@ -510,7 +491,7 @@ char *sid_to_string(struct smb_sid *sid) {
 	return strdup(buf);
 }
 
-void *show_NTACL(const char *name, const unsigned char *buf, int len, bool is_dir) {
+int decode_NTACL(const char *name, const unsigned char *buf, int len, bool is_dir) {
         unsigned char *p = (unsigned char *)buf;
 
 
@@ -805,3 +786,14 @@ if (0) {
 
 	return 0;
 }
+
+static char *ntacl_xattrs[] = {
+	ACL_SMBCACLS,
+	NULL,
+};
+
+static struct encdec_ops_struct encdec_ntacl_ops = {
+	.decode = decode_NTACL,
+};
+
+ADD_ENCDEC(ntacl, "ntacl", &encdec_ntacl_ops, ntacl_xattrs);
