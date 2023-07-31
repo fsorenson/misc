@@ -291,7 +291,7 @@ listxattr.c:52:43: warning: initialization of
 
 		printf("fstype: 0x%08lx\n", fstype);
 
-		if (fstype == 0x1234)
+		if (result)
 			decode_ioctl_flags_ext(result);
 	}
 
