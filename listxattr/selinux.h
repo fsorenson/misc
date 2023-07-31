@@ -12,8 +12,8 @@
 #define __SELINUX_H__
 
 #include "listxattr.h"
-#include "ntacl.h"
+#include "encdec.h"
 
-void *show_selinux(const char *xattr_name, const unsigned char *attr, int attr_len, bool is_dir);
+int decode_selinux(const char *xattr_name, const unsigned char *attr, int attr_len, bool is_dir);
 
 #endif
