@@ -342,6 +342,7 @@ int decode_this(const char *path, char *xattr_name, int len, unsigned char *attr
 				ret += encdec_info[i].decode(xattr_name, attr_bytes, len, is_dir);
 				goto out;
 			}
+			p++;
 		}
 	}
 	ret = EXIT_FAILURE;
