@@ -6,29 +6,8 @@
 	and decode as many of them as possible
 */
 
-/*
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <stdint.h>
-#include <unistd.h>
-#include <ctype.h>
-#include <sys/types.h>
-#include <attr/xattr.h>
-#include <sys/stat.h>
-#include <arpa/inet.h>
-#include <acl/libacl.h>
-#include <sys/queue.h>
-#include <fcntl.h>
-#include <sys/ioctl.h>
-#include <sys/statvfs.h>
-#include <linux/fs.h>
-#include <sys/vfs.h>
-*/
-
 #include "xfs.h"
 #include <sys/acl.h>
-
 
 #if 0
 struct xfs_acl_entry {
@@ -46,20 +25,13 @@ struct xfs_acl {
 
 #include "posix.h"
 
-void *show_xfs_acl(const char *name, const unsigned char *buf, int len, bool is_dir) {
+int decode_xfs_acl(const char *name, const unsigned char *buf, int len, bool is_dir) {
 	struct xfs_acl *xfs_acl = (struct xfs_acl *)buf;
 	struct xfs_acl_entry *ace;
-	int i;
+	int ret = EXIT_SUCCESS, i;
 
-//	printf("acl count: %d\n", htobe32(xfs_acl->acl_cnt));
 	xfs_acl->acl_cnt = htobe32(xfs_acl->acl_cnt);
-//	printf("acl count: 0x%08x\n", htobe32(xfs_acl->acl_cnt));
 	printf("acl count: %d\n", xfs_acl->acl_cnt);
-
-
-//	struct posix_acl *acl = posix_acl_alloc(xfs_acl->acl_cnt);
-//	acl_t *acl = posix_acl_alloc(xfs_acl->acl_cnt);
-
 
 	for (i = 0 ; i < xfs_acl->acl_cnt ; i++) {
 //		struct posix_acl_entry *acl_e = &acl->a_entries[i];
@@ -101,5 +73,19 @@ printf("tag: %d\n", ace->ae_tag);
 
 
 out:
-	return NULL;
+	return ret;
 }
+
+static char *xfs_xattrs[] = {
+	"trusted." SGI_ACL_FILE,
+	"trusted." SGI_ACL_DEFAULT,
+	NULL,
+};
+
+static struct encdec_ops_struct encdec_xfs_ops = {
+	.init = NULL,
+	.decode = decode_xfs_acl,
+	.cleanup = NULL,
+};
+
+ADD_ENCDEC(xfs, "xfs acls", &encdec_xfs_ops, xfs_xattrs);
