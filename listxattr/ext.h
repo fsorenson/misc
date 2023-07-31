@@ -44,6 +44,6 @@
 #define EXT4_FL_USER_VISIBLE            0x004BDFFF /* User visible flags */
 #define EXT4_FL_USER_MODIFIABLE         0x004380FF /* User modifiable flags */
 
-void decode_ioctl_flags_ext(unsigned long val);
+void read_decode_ioctl_flags(const char *path);
 
 #endif /* __LISTXATTR_EXT_H__ */

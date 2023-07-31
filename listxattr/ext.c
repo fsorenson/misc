@@ -55,3 +55,18 @@ void decode_ioctl_flags_ext(unsigned long val) {
 
 }
 
+void read_decode_ioctl_flags(const char *path) {
+	int result, fd, ret;
+
+	if ((fd = open(path, O_RDONLY|O_NONBLOCK)) >= 0) {
+		ret = ioctl(fd, FS_IOC_GETFLAGS, &result);
+		close(fd);
+
+		printf("ioctl returned %d, result: 0x%08x\n", ret, result);
+		printf("flags: 0x%08x\n", result);
+
+		if (result)
+			decode_ioctl_flags_ext(result);
+	}
+}
+
