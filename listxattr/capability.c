@@ -121,7 +121,7 @@ struct cpu_vfs_cap_data {
 #define CAP_FOR_EACH_U32(__capi)  \
 	for (__capi = 0; __capi < _KERNEL_CAPABILITY_U32S; ++__capi)
 
-void *show_capability(const char *attr_name, const unsigned char *buf, int len, bool is_dir) {
+void *decode_capability(const char *attr_name, const unsigned char *buf, int len, bool is_dir) {
 	unsigned char *p = (unsigned char *)buf;
 	const struct vfs_cap_data *caps = buf;
 	struct cpu_vfs_cap_data cpu_caps = { 0 };
@@ -187,3 +187,16 @@ ESIZE:
 	output("Bad size\n");
 	goto out;
 }
+
+static char *capability_xattrs[] = {
+	"security.capability",
+	NULL,
+};
+
+static struct encdec_ops_struct encdec_capability_ops = {
+	.init = NULL,
+	.decode = decode_capability,
+	.cleanup = NULL,
+};
+
+ADD_ENCDEC(capability, "Linux capabilities", &encdec_capability_ops, capability_xattrs);

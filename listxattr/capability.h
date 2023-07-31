@@ -9,9 +9,11 @@
 #ifndef __LISTXATTR_CAPABILITY_H__
 #define __LISTXATTR_CAPABILITY_H__
 
-#include "listxattr.h"
+#include "../listxattr.h"
+#include "../encdec.h"
+
 #include <linux/capability.h>
 
-void *show_capability(const char *attr_name, const unsigned char *buf, int len, bool is_dir);
+void *decode_capability(const char *attr_name, const unsigned char *buf, int len, bool is_dir);
 
 #endif /* __LISTXATTR_CAPABILITY_H__ */
