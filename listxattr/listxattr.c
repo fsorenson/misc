@@ -32,6 +32,7 @@
 #define DEBUG 0
 
 #include "listxattr.h"
+#include "encdec.h"
 
 #include "posix.h"
 #include "ext.h"
@@ -51,18 +52,6 @@ struct show_funcs_struct {
 	char *name;
 	show_acl_t *show;
 } show_funcs[] = {
-
-
-	{ .name = "trusted." SGI_ACL_FILE, .show = show_xfs_acl },
-	{ .name = "trusted." SGI_ACL_DEFAULT, .show = show_xfs_acl },
-	{ .name = ACL_NFS4_XATTR, .show = show_nfs4_acl },
-	{ .name = DACL_NFS4_XATTR, .show = show_nfs4_acl },
-	{ .name = SACL_NFS4_XATTR, .show = show_nfs4_acl },
-	{ .name = ACL_SELINUX_XATTR, .show = show_selinux },
-	{ .name = ACL_POSIX_ACCESS, .show = show_posix_acl },
-	{ .name = ACL_POSIX_DEFAULT, .show = show_posix_acl },
-	{ .name = ACL_SMBCACLS, .show = show_NTACL },
-	{ .name = CAPABILITY_XATTR, .show = show_capability },
 };
 
 /*
@@ -342,63 +331,23 @@ listxattr.c:52:43: warning: initialization of
 
 
 int decode_this(const char *path, char *xattr_name, int len, unsigned char *attr_bytes, bool is_dir) {
-	int i;
+	int ret = EXIT_SUCCESS, i;
 
-	for (i = 0 ; i < sizeof(show_funcs)/sizeof(show_funcs[0]) ; i++) {
-		if (!strcmp(xattr_name, show_funcs[i].name)) {
-			printf("%s (%d bytes)\n", xattr_name, len);
-			show_funcs[i].show(xattr_name, attr_bytes, len, is_dir);
-			printf("\n");
-			return EXIT_SUCCESS;
-		}
-	}
-
-	printf("decoding xattr '%s' with %d bytes\n", xattr_name, len);
-
-	if (!strcmp(xattr_name, ACL_NFS4_XATTR)) {
-		show_nfs4_acl(xattr_name, attr_bytes, len, is_dir);
-	} else if (!strcmp(xattr_name, ACL_SELINUX_XATTR)) {
-		printf("will decode as selinux\n");
-		show_selinux(xattr_name, attr_bytes, len, is_dir);
-	} else if (!strcmp(xattr_name, ACL_POSIX_ACCESS) || !strcmp(xattr_name, ACL_POSIX_DEFAULT)) {
-#if DEBUG || 1
-//		int slen = strlen(xattr_name);
-		printf("contents of '%s':\n", xattr_name);
-		hexprint(attr_bytes, len);
-#endif
-		show_posix_acl(xattr_name, attr_bytes, len, false);
-
-		if (0) {
-// may need to implement __acl_from_xattr from acl-2.3.1/libacl/__acl_from_xattr.c
-
-			char *acl_text = acl_to_any_text((acl_t)attr_bytes, "\n\t", ':', TEXT_ALL_EFFECTIVE);
-			if (!acl_text) {
-				printf("error calling acl_to_any_text: %m\n");
-			} else {
-				printf("%s acl is %s\n",
-				  "access",
-				  acl_text);
+	for (i = 0 ; i < encdec_count ; i++) {
+		char **p = encdec_info[i].xattr_strings;
+		while (*p) {
+			if (!strcmp(*p, xattr_name)) {
+				output("can decode as %s\n", encdec_info[i].name);
+				ret += encdec_info[i].decode(xattr_name, attr_bytes, len, is_dir);
+				goto out;
 			}
 		}
-	} else if (!strncmp(xattr_name, "trusted.", 8)) {
-		char *name2 = xattr_name + 8;
-
-		if (!strcmp(xattr_name + 8, SGI_ACL_FILE)) {
-			show_xfs_acl(xattr_name, attr_bytes, len, is_dir);
-		} else if (!strcmp(xattr_name + 8, SGI_ACL_DEFAULT)) {
-			show_xfs_acl(xattr_name, attr_bytes, len, is_dir);
-		}
-	} else if (!strcmp(xattr_name, ACL_SMBCACLS)) {
-		show_NTACL(xattr_name, attr_bytes, len, is_dir);
-	} else {
-		printf("generic decoding\n");
-//		show_xattr_generic(path, xattr_name, val_buf, &val_buf_len);
-		show_xattr_generic(path, xattr_name, &len, attr_bytes, is_dir);
 	}
+	ret = EXIT_FAILURE;
 
-	return EXIT_SUCCESS;
+out:
+	return ret;
 }
-
 
 #define ATTR_LIST_BUF_DEFAULT_LEN 128
 #define ATTR_VALUE_BUF_DEFAULT_LEN 512

@@ -1,7 +1,10 @@
 CC=gcc
 LIBS=-lacl
 
+current_dir = $(shell pwd)
+
 CFLAGS= -Wall -g
+CFLAGS += -I$(current_dir) -I$(current_dir)/encdec
 
 all: listxattr
 
@@ -16,7 +19,8 @@ SRCS += capability.h capability.c
 
 #OBJS=$(SRCS:.[ch]=.o)
 OBJS=listxattr.o lib.o
-OBJS += posix.o ext.o xfs.o nfs4.o ntacl.o selinux.o capability.o
+OBJS += posix.o ext.o xfs.o nfs4.o ntacl.o selinux.o capability.o encdec.o
+
 
 lib.o: lib.c lib.h
 	$(CC) -c $(CFLAGS) $(INCLUDES) $< -o $@
