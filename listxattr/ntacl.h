@@ -9,7 +9,10 @@
 #define __LISTXATTR_NTACL_H__
 
 #include "listxattr.h"
+#include "encdec.h"
 
-void *show_NTACL(const char *name, const unsigned char *buf, int len, bool is_dir);
+#define ACL_SMBCACLS "security.NTACL"
+
+int decode_NTACL(const char *name, const unsigned char *buf, int len, bool is_dir);
 
 #endif /* __LISTXATTR_NTACL_H__ */
