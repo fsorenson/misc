@@ -19,7 +19,7 @@ SRCS += capability.h capability.c
 
 #OBJS=$(SRCS:.[ch]=.o)
 OBJS=listxattr.o lib.o
-OBJS += posix.o ext.o xfs.o nfs4.o ntacl.o selinux.o capability.o encdec.o
+OBJS += posix.o ext.o xfs.o ntacl.o selinux.o capability.o
 
 
 encdec_dir = encdec
@@ -30,7 +30,7 @@ encdecs = $(notdir $(basename $(encdec_c_srcs)))
 encdecs_deps = $(addprefix $(encdec_deps_dir)/, $(addsuffix .d, $(encdecs)))
 
 encdec_objs = $(addprefix $(encdec_objs_dir)/, $(addsuffix .o, $(encdecs)))
-encdec_objs += lib.o encdec.o
+encdec_objs += encdec.o
 
 $(encdec_objs_dir)/%.o: $(encdec_dir)/%.c $(encdec_dir)/%.h $(encdec_deps_dir)/%.d
 	@mkdir -p $(@D)

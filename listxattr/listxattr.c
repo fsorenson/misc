@@ -323,10 +323,11 @@ listxattr.c:52:43: warning: initialization of
 		printf("bar\n");
 	}
 
-	static struct option long_opts[] = {
-		{ "decode", required_argument, NULL, 'd' },
-		{ NULL, 0, 0, 0 },
-	};
+static struct option long_opts[] = {
+	{ "decode", required_argument, NULL, 'd' },
+	{ "list", no_argument, NULL, 'l' },
+	{ NULL, 0, 0, 0 },
+};
 
 
 
@@ -594,12 +595,23 @@ int main(int argc, char *argv[]) {
 return EXIT_SUCCESS;
 #endif
 
-	while ((arg = getopt_long(argc, argv, "d:", long_opts, NULL)) != EOF) {
+	while ((arg = getopt_long(argc, argv, "d:l", long_opts, NULL)) != EOF) {
 		switch (arg) {
 			case 'd':
 				ret = decode_string(strdup(optarg));
 				goto out;
 				break;
+			case 'l': {
+				output("looks like there are %d encdec types:\n", encdec_count);
+				for (i = 0 ; i < encdec_count ; i++) {
+					char **p = encdec_info[i].xattr_strings;
+					output("%d) %s\n", i, encdec_info[i].name);
+						while (*p) {
+						output("\t%s\n", *p);
+						p++;
+					}
+				}
+			} ; break;
 			default:
 				printf("usage: %s ...\n", argv[0]);
 //				usage(argv[0]);
