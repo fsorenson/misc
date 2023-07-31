@@ -6,27 +6,8 @@
 	and decode as many of them as possible
 */
 
-/*
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <stdint.h>
-#include <unistd.h>
-#include <ctype.h>
-#include <sys/types.h>
-#include <attr/xattr.h>
-#include <sys/stat.h>
-#include <arpa/inet.h>
-#include <acl/libacl.h>
-#include <sys/queue.h>
-#include <fcntl.h>
-#include <sys/ioctl.h>
-#include <sys/statvfs.h>
-#include <linux/fs.h>
-#include <sys/vfs.h>
-*/
-
 #include "nfs4.h"
+#include "encdec.h"
 
 static struct val_char_pair nfs4_ace_flag_pairs[] = {
 	{ 0x00000001, 'f', "FILE_INHERIT_ACE" },
@@ -174,9 +155,9 @@ void nfs4_print_acl(struct nfs4_acl_struct *acl, int is_dir) {
 }
 
 
-void *show_nfs4_acl(const char *attr_name, const unsigned char *buf, int len, bool is_dir) {
+int decode_nfs4_acl(const char *attr_name, const unsigned char *buf, int len, bool is_dir) {
 	struct nfs4_acl_struct acl;
-	int ace_i;
+	int ace_i, ret = EXIT_SUCCESS;
 
 	acl.num_aces = (uint32_t)ntohl(*((uint32_t *)buf));
 	buf += sizeof(uint32_t);
@@ -210,18 +191,33 @@ void *show_nfs4_acl(const char *attr_name, const unsigned char *buf, int len, bo
 			goto err2;
 	}
 	nfs4_print_acl(&acl, is_dir);
-	return 0;
+	goto out;
 
 err2:
 #if DEBUG
 	printf("skipping to err2, len = %d\n", len);
 #endif /* DEBUG */
-	free(acl.aces[ace_i].who);
+	free_mem(acl.aces[ace_i].who);
 err1:
 #if DEBUG
 	printf("skipping to err1\n");
 #endif /* DEBUG */
-	free(acl.aces);
-	return NULL;
+out:
+	free_mem(acl.aces);
+	return ret;
 }
 
+static char *nfs4_xattrs[] = {
+	ACL_NFS4_XATTR,
+	DACL_NFS4_XATTR,
+	SACL_NFS4_XATTR,
+	NULL,
+};
+
+static struct encdec_ops_struct encdec_nfs4_ops = {
+	.init = NULL,
+	.decode = decode_nfs4_acl,
+	.cleanup = NULL,
+};
+
+ADD_ENCDEC(nfs4, "nfs4", &encdec_nfs4_ops, nfs4_xattrs);

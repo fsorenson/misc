@@ -11,6 +11,10 @@
 
 #include "listxattr.h"
 
-void *show_nfs4_acl(const char *attr_name, const unsigned char *buf, int len, bool is_dir);
+#define ACL_NFS4_XATTR	"system.nfs4_acl"
+#define DACL_NFS4_XATTR	"system.nfs4_dacl"
+#define SACL_NFS4_XATTR	"system.nfs4_sacl"
+
+int decode_nfs4_acl(const char *attr_name, const unsigned char *buf, int len, bool is_dir);
 
 #endif /* __LISTXATTR_NFS4_H__ */
