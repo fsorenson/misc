@@ -86,7 +86,9 @@ struct config_struct {
 
 	bool worker_delays;
 	struct timespec sleep_time;
-	bool use_direct;
+	bool open_direct;
+	bool open_sync;
+	bool open_dsync;
 	bool do_fdatasync;
 	bool trunc_on_open;
 	char *path;
@@ -267,10 +269,12 @@ int usage(char *cmd, int ret) {
 
 	output("\t\t[-s | --size=<file_size>] - specify the per-testfile size\n");
 	output("\t\t[-S <total_file_size>] - specify the total size of all testfiles\n");
-	output("\t\t[-f | --fdatasync] - perform fdatasync() after each write\n");
 
+	output("\t\t[-f | --fdatasync] - perform fdatasync() after each write\n");
 	output("\t[-d | --direct]\n");
-//	output("\t[-i | --stats_interval=<seconds_between_updates>]\n");
+	output("\t[ --sync=<sync|dsync>] - open the file with O_SYNC or O_DSYNC (may be specified more than once)\n");
+
+	output("\t[-i | --stats_interval=<seconds_between_updates>]\n");
 	output("\t[-B | --burn=<thread_count>] - start threads which do nothing but burn cpu cycles\n");
 	output("\t[-y | --yield=<thread_count>] - start threads which do nothing but immediately call sched_yield()\n");
 	output("\t[-p | --path=<test_directory>]\n");
@@ -290,7 +294,9 @@ void set_defaults(void) {
 	config->stats_interval_sec = DEFAULT_TIMER_FREQ_S;
 	config->stats_interval_usec = DEFAULT_TIMER_FREQ_US;
 
-	config->use_direct = false;
+	config->open_direct = false;
+	config->open_sync = false;
+	config->open_dsync = false;
 	config->do_fdatasync = false;
 	config->trunc_on_open = true;
 	stats->stop_time = (struct timespec){ 0, 0 };
@@ -308,6 +314,7 @@ int parse_opts(int argc, char *argv[]) {
 		{ "notrunc", no_argument, 0, 'n'},
 		{ "read", no_argument, 0, 'r' },
 		{ "write", no_argument, 0, 'w' },
+		{ "sync", required_argument, NULL, 'Z' },
 		{ "fdatasync", no_argument, 0, 'f' },
 
 		{ "burn", required_argument, 0, 'B' },
@@ -321,7 +328,7 @@ int parse_opts(int argc, char *argv[]) {
 	set_defaults();
 
 	opterr = 0;
-	while ((opt = getopt_long(argc, argv, "s:S:b:B:c:dD:fi:np:rwy:", long_options, &long_index)) != -1) {
+	while ((opt = getopt_long(argc, argv, "s:S:b:B:c:dD:fi:np:rwy:Z:", long_options, &long_index)) != -1) {
 		switch (opt) {
 			case 's': config->file_size = parse_size(optarg); break;
 			case 'S': {
@@ -336,7 +343,7 @@ int parse_opts(int argc, char *argv[]) {
 					else
 						output("broken 'c' argument\n");
 				} ; break;
-			case 'd': config->use_direct = true; break;
+			case 'd': config->open_direct = true; break;
 			case 'f': config->do_fdatasync = true; break;
 			case 'i': {
 				char str[7], *ptr;
@@ -360,6 +367,14 @@ int parse_opts(int argc, char *argv[]) {
 				break;
 			case 'r': config->read_write = perform_reads; break;
 			case 'w': config->read_write = perform_writes; break;
+			case 'Z': {
+				if (!strcmp(optarg, "sync")) config->open_sync = true;
+				else if (!strcmp(optarg, "dsync")) config->open_dsync = true;
+				else {
+					output("error: unrecognized sync option: %s\n", optarg);
+					exit(1);
+				}
+			} ; break;
 			case 'h':
 				ret = EXIT_SUCCESS;
 			default:
@@ -403,7 +418,7 @@ int parse_opts(int argc, char *argv[]) {
 			}
 			output("file size: %" PRIu64 "\n", config->file_size);
 		}
-		output("O_DIRECT: %s\n", config->use_direct ? "yes" : "no");
+		output("O_DIRECT: %s\n", config->open_direct ? "yes" : "no");
 	}
 	if (config->burn_count)
 		output("starting %d proces%s burning cpu\n", config->burn_count, config->burn_count == 1 ? "" : "es");
@@ -426,8 +441,13 @@ int writer_thread_work(int child_id) {
 
 	memset(thread_config->buf, 0x55, config->block_size);
 
-	if (config->use_direct)
+	if (config->open_direct)
 		file_open_flags |= O_DIRECT;
+	if (config->open_sync)
+		file_open_flags |= O_SYNC;
+	if (config->open_dsync)
+		file_open_flags |= O_DSYNC;
+
 	if ((thread_config->fd = openat(config->dfd, thread_config->filename, file_open_flags, 0644)) < 0) {
 		output("child %d: error opening '%s': %m\n", thread_config->child_id, thread_config->filename);
 		goto out;
@@ -462,8 +482,12 @@ int reader_thread_work(int child_id) {
 	int ret = EXIT_FAILURE;
 	struct stat st;
 
-	if (config->use_direct)
+	if (config->open_direct)
 		file_open_flags |= O_DIRECT;
+	if (config->open_sync)
+		file_open_flags |= O_SYNC;
+	if (config->open_dsync)
+		file_open_flags |= O_DSYNC;
 
 	if ((thread_config->fd = openat(config->dfd, thread_config->filename, file_open_flags, 0644)) < 0) {
 		output("child %d: error opening '%s': %m\n", thread_config->child_id, thread_config->filename);
@@ -514,12 +538,12 @@ int worker_thread(int child_id) {
 
 	exit(ret);
 }
-int do_burn(void) {
+void do_burn(void) {
 	volatile unsigned long i = 0;
 	while (42)
 		i++;
 }
-int do_yield(void) {
+void do_yield(void) {
 	while (42)
 		sched_yield();
 }
