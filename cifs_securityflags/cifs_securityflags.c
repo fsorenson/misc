@@ -43,7 +43,7 @@ struct security_flag_pairs cifs_flags[] = {
 };
 
 void decode_cifs_flags(uint32_t flags) {
-	uint32_t i = 0, count = 0;
+	uint32_t i = 0;
 	char *str;
 
 	while (cifs_flags[i].flavor != 0) {
