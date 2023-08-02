@@ -58,10 +58,13 @@ void decode_cifs_flags(uint32_t flags) {
 int main(int argc, char *argv[]) {
 	char buf[BUF_LEN];
 	uint32_t secFlags;
-	int ret;
+	int ret, fd;
 
 	if (argc == 1) {
-		int fd = open("/proc/fs/cifs/SecurityFlags", O_RDONLY);
+		if ((fd = open("/proc/fs/cifs/SecurityFlags", O_RDONLY)) < 0) {
+			printf("error opening /proc/fs/cifs/SecurityFlags: %m\n");
+			return EXIT_FAILURE;
+		}
 		ret = read(fd, buf, BUF_LEN);
 		close(fd);
 
