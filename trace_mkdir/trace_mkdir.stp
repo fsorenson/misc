@@ -1,3 +1,7 @@
+/*
+	Frank Sorenson <sorenson@redhat.com>, 2023
+*/
+
 function tstamp:string(epochns:long) %{ /* pure */
 	u64 nsec = STAP_ARG_epochns;
 	time_t epochsec = nsec / 1000000000;
@@ -16,6 +20,78 @@ function errno_str2(errno) {
 	if (errno < 0 && errno > -140)
 		return errno_str(errno)
 	return "SUCCESS"
+}
+
+function task_user_ns(task:long) %{
+	struct task_struct *p = (struct task_struct *)((long)STAP_ARG_task);
+	struct user_namespace *ns = NULL;
+
+	rcu_read_lock();
+	ns = task_cred_xxx(p, user_ns);
+	rcu_read_unlock();
+	STAP_RETVALUE = (long)ns;
+%}
+function task_cred(task:long) {
+	task = &@cast(task, "struct task_struct", "kernel")
+	return rcu_dereference(task->cred)
+}
+function cred_group_info(cred:long) {
+	cred = &@cast(cred, "struct cred", "kernel")
+
+	return cred->group_info
+}
+function task_group_info(task:long) {
+	cred = task_cred(task)
+	return cred_group_info(cred)
+}
+function gi_getgroup(ns:long, gi:long, i:long) %{ /* pure */
+	struct user_namespace *ns = (struct user_namespace *)STAP_ARG_ns;
+	struct group_info *gi = (struct group_info *)STAP_ARG_gi;
+	int i = (int)STAP_ARG_i;
+	gid_t gid;
+
+	gid = from_kgid_munged(ns, GROUP_AT(gi, i));
+	STAP_RETVALUE = gid;
+%}
+function gi_ngroups(gi:long) %{ /* pure */
+	struct group_info *gi = (struct group_info *)STAP_ARG_gi;
+
+	rcu_read_lock();
+	kderef_buffer(NULL, &gi->ngroups, sizeof(gi->ngroups));
+	rcu_read_unlock();
+	STAP_RETVALUE = gi->ngroups;
+%}
+function task_getgroups(task:long) {
+	ns = task_user_ns(task)
+	gi = task_group_info(task)
+
+	ngroups = gi_ngroups(gi)
+
+	ret = sprintf("%d groups:", ngroups)
+	for (i = 0 ; i < ngroups ; i++)
+		ret .= sprintf(" %d", gi_getgroup(ns, gi, i))
+
+	return ret
+}
+
+function fsuid() %{
+	kuid_t uid;
+	kgid_t gid;
+	current_fsuid_fsgid(&uid, &gid);
+	STAP_RETVALUE = __kuid_val(uid);
+%}
+function fsgid() %{
+	kuid_t uid;
+	kgid_t gid;
+	current_fsuid_fsgid(&uid, &gid);
+	STAP_RETVALUE = __kgid_val(gid);
+%}
+function format_uidgids() {
+	gids = task_getgroups(task_current())
+	uidgids = sprintf("uid:gid: %d:%d, euid:egid: %d:%d, fsuid:fsgid: %d:%d, %s",
+		uid(), euid(), gid(), egid(), fsuid(), fsgid(), gids)
+
+	return uidgids
 }
 
 global tracing_pids[1000]
@@ -39,13 +115,11 @@ probe kernel.function("sys_mkdirat") {
 
 	mode_owner = sprintf("mode: 0%o, ownership %d:%d",
 		cwd_inode->i_mode, cwd_inode->i_uid->val, cwd_inode->i_gid->val)
-
-	uidgid = sprintf("uid:gid: %d:%d, euid:egid: %d:%d",
-		uid(), euid(), gid(), egid())
+	uidgids = format_uidgids()
 
 	printf("%s:  %s (%d) %s(AT_FDCWD<%s> (%s), \"%s\", 0%o) (%s)\n",
 		tstamp_now(), execname(), tid(), ppfunc(), cwd_path_str, 
-		mode_owner, pathname, $mode, uidgid)
+		mode_owner, pathname, $mode, uidgids)
 }
 
 probe kernel.function("sys_mkdirat").return {
@@ -63,12 +137,11 @@ probe kernel.function("sys_mkdirat").return {
 	mode_owner = sprintf("mode: 0%o, ownership %d:%d",
 		cwd_inode->i_mode, cwd_inode->i_uid->val, cwd_inode->i_gid->val)
 
-	uidgid = sprintf("uid:gid: %d:%d, euid:egid: %d:%d",
-		uid(), euid(), gid(), egid())
+	uidgids = format_uidgids()
 
 	printf("%s:  %s (%d) %s(AT_FDCWD<%s> (%s), \"%s\", 0%o) (%s) = %s\n",
 		tstamp_now(), execname(), tid(), ppfunc(), cwd_path_str,
-		mode_owner, pathname, mode, uidgid, errno_str2($return))
+		mode_owner, pathname, mode, uidgids, errno_str2($return))
 
 	delete tracing_pids[tid()]
 }
