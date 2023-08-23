@@ -1,0 +1,67 @@
+function tstamp:string(epochns:long) %{ /* pure */
+	u64 nsec = STAP_ARG_epochns;
+	const time_t epochsecs = nsec / 1000000000;
+	struct tm gmt;
+
+	nsec = nsec % 1000000000;
+
+	time_to_tm(epochsecs, -tz_gmtoff, &gmt);
+	snprintf(STAP_RETVALUE, MAXSTRINGLEN, "%04ld-%02d-%02d %02d:%02d:%02d.%09llu",
+		gmt.tm_year + 1900, gmt.tm_mon + 1, gmt.tm_mday,
+		gmt.tm_hour, gmt.tm_min, gmt.tm_sec, nsec);
+%}
+function tstamp_now:string() {
+	return tstamp(gettimeofday_ns())
+}
+
+global trace_pids[5000]
+global trace_addrs[5000]
+global trace_counts[5000]
+
+probe syscall.getdents {
+	if (execname() == "find") {
+		printf("%s - %s (%d): getdents(%s)\n",
+			tstamp_now(), execname(), tid(), argstr)
+
+		trace_pids[tid()] = 1
+		trace_addrs[tid()] = dirp_uaddr
+		trace_counts[tid()] = count
+	}
+}
+probe syscall.getdents.return {
+	tid = tid()
+
+	if (trace_pids[tid]) {
+		printf("%s - %s (%d): getdents returning %d/%d\n", tstamp_now(), execname(), tid, retval, trace_counts[tid])
+
+		if (retval > 0) {
+			offset = 0
+			filenames_str = ""
+			while (offset < retval) {
+				base_addr = trace_addrs[tid] + offset
+#				d_ino = user_long(base_addr)
+#				d_off = user_long(base_addr + 8)
+				d_reclen = user_short(base_addr + 16)
+#				d_type = user_char(base_addr + 18)
+				filename = user_string(base_addr + 19)
+
+				offset += d_reclen
+				filenames_str .= filename . " "
+				if (strlen(filenames_str) > 80) {
+					printf("    %d: %s\n", tid, filenames_str)
+					filenames_str = ""
+				}
+			}
+			if (strlen(filenames_str))
+				printf("    %d: %s\n", tid, filenames_str)
+		}
+		delete trace_pids[tid]
+		delete trace_addrs[tid]
+		delete trace_counts[tid]
+	}
+}
+
+probe kprocess.exec {
+	if (filename == "\"/usr/bin/find\"")
+		printf("%s - %s (%d) filename: *%s* %s\n", tstamp_now(), execname(), tid(), filename, argstr)
+}
