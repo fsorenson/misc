@@ -51,7 +51,6 @@ GetOptions(
 );
 $config{'show_all'} = true if (! $config{'match_mp'} && ! $config{'match_mnt_src'});
 
-
 my %pats = (
 	'numbers' => '([0-9]+)',
 	'maj_min' => '([0-9]+:[0-9]+)',
@@ -71,11 +70,6 @@ my @proc_pid_stat_fields = ('st_pid', 'comm', 'state', 'ppid', 'pgrp', 'session'
 	'rt_prio', 'policy', 'delayacct_blkio_ticks', 'guest_time', 'cguest_time',
 	'start_data', 'end_data', 'start_brk', 'arg_start', 'arg_end', 'env_start',
 	'env_end', 'exit_code');
-
-
-
-
-
 
 my @proc_pid_mountinfo_fields = ( 'mount_id', 'parent_id', 'maj_min', 'root', 'mp', 'mount_opts', 'optional', 'fstype', 'source', 'super_opts' );
 
@@ -105,17 +99,7 @@ sub match_pid_mountinfo_field {
 
 
 	for my $line (@lines) {
-#		my %match;
-#		if (my ($mount_id, $parent_id, $maj_min, $root, $mp, $mount_opts, $optional, $fstype, $source, $super_opts) = $line =~ $proc_pid_mountinfo_splitter) {
-#		if (($match{'mount_id'}, $match{'parent_id'}, $match{'maj_min'}, $match{'root'}, $match{'mp'}, $match{'mount_opts'}, $match{'optional'}, $match{'fstype'}, $match{'source'}, $match{'super_opts'}) = $line =~ $proc_pid_mountinfo_splitter) {
-
 		if (my @matches = $line =~ $proc_pid_mountinfo_splitter) {
-#printf "going to map %d fields and %d matching fields\n", $#proc_pid_mountinfo_fields, $#matches;
-
-#			my %match ; map { $match{$proc_pid_mountinfo_fields[$_]} = $matches[$_] } (0..$#matches);
-
-#			my %match = { map { printf "iterator is '%s', field is '%s', value is '%s'\n", $_, $proc_pid_mountinfo_fields[$_], $matches[$_]; $proc_pid_mountinfo_fields[$_] => $matches[$_] } (0..$#matches) }; #
-#			my %match = { map { printf "iterator is '%s', field is '%s', value is '%s'\n", $_, $proc_pid_mountinfo_fields[$_], $matches[$_]; $match{$proc_pid_mountinfo_fields[$_]} = $matches[$_] } (0..$#matches) };
 			my %match ; map { $match{$proc_pid_mountinfo_fields[$_]} = $matches[$_] } (0..$#matches);
 
 			push @ret, $line if ($match_val eq $match{$match_field});
@@ -129,36 +113,6 @@ sub match_pid_mountinfo_source {
 sub match_pid_mountinfo_mountpoint {
 	return match_pid_mountinfo_field($_[0], 'mp', $_[1]);
 }
-
-sub foo1 {
-	my $c = 0;
-	while (<>) {
-		chomp;
-		if (my @matches = $_ =~ $proc_pid_mountinfo_splitter) {
-#		if (my ($mount_id, $parent_id, $maj_min, $root, $mp, $mount_opts, $optional, $fstype, $source, $super_opts) = $_ =~ $proc_pid_mountinfo_splitter) {
-			my $i = 0;
-
-			printf ">> %s\n", $_;
-			foreach my $val (@matches) {
-				if (defined $val) {
-					$val =~ s/\\([0-7]{1,3})/chr oct $1/ge;
-					printf "\t%d: %s\n", $i, $val;
-				} else {
-					printf "\t%d: NO VALUE\n", $i;
-				}
-				$i++;
-			}
-			printf "\n";
-		} else {
-			printf "no match: %s\n", $_;
-		}
-
-		$c++;
-		exit if ($c >= 40000);
-	}
-	exit;
-}
-
 
 # DEV="/dev/loop1" ; for pid in $(lsns -nt mnt -o pid) ; do nsenter -t $pid -m /usr/bin/awk -vPID=$pid -vDEV="$DEV" '$9==DEV {print PID}' /proc/self/mountinfo 2>/dev/null ; done
 # MOUNT="/mnt/tmp" ; for pid in $(lsns -nt mnt -o pid) ; do nsenter -t $pid -m /usr/bin/awk -vPID=$pid -vMOUNT="$MOUNT" '$6==MOUNT {print PID}' /proc/self/mountinfo 2>/dev/null ; done
@@ -214,7 +168,6 @@ sub read_cmdline {
  	my @args = split("\0", $content);
 	my $cmdline = "";
 	for my $arg (@args) {
-#	for my $arg (split("\0", $content)) {
 		$cmdline .= " " if ($cmdline ne "");
 
 		$cmdline .= "'" if (scalar @args > 1 && $arg =~ /[ \[\]\(\)]/);
@@ -242,7 +195,6 @@ sub get_pid_info {
 #	my @st = split ' ', $content;
 
 	my @vals;
-#	if (my @vals = ($content =~ $proc_pid_stat_splitter)) {
 	if (@vals = ($content =~ $proc_pid_stat_splitter_v3) or @vals = ($content =~ $proc_pid_stat_splitter_v26)) {
 		$pids{$pid} = {};
 
@@ -270,7 +222,6 @@ sub get_pid_group {
 }
 
 sub find_proc_nsids {
-#	my $pid = shift;
 	my $path = shift;
 
 	return if $path eq "/proc";
@@ -280,7 +231,6 @@ sub find_proc_nsids {
 
 	if ($pid =~ /^[0-9]+$/ && (my $lnk = readlink "$pid/ns/mnt")) {
 		if (my ($nsid) = $lnk =~ /^mnt:\[([0-9]+)\]$/) {
-#			my $pid_grp = get_pid_group $pid;
 
 			return if (get_pid_info($pid) == -1);
 
@@ -288,9 +238,6 @@ sub find_proc_nsids {
 
 			printf "pid grp is not defined for pid %d\n", $pid if !defined($pid_grp);
 			printf "nsid is not defined for pid %d\n", $pid if !defined($nsid);
-
-#			printf "pid %d in pid group %d has mnt nsid: %s\n", $pid, $pids{$pid}{'pgrp'}, $nsid;
-#			printf "pid %d in pid group %d has mnt nsid: %s\n", $pid, $pid_grp, $nsid;
 
 			if (! defined $pid_grps{$pid_grp}) {
 				$pid_grps{$pid_grp} = {
@@ -308,9 +255,7 @@ sub find_proc_nsids {
 				};
 			} else {
 				push @{$mnt_ns{$nsid}{'pids'}}, $pid;
-#				push(@{$mnt_ns{$nsid}{'pid_grps'}}, $pid_grp) unless (grep($_ == $pid_grp), @{$mnt_ns{$nsid}{'pid_grps'}});
 				if (! grep($_ == $pid_grp, @{$mnt_ns{$nsid}{'pid_grps'}}) ) {
-#					printf "pid grp %d is not in mnt_ns pid_grps\n", $pid_grp;
 					push(@{$mnt_ns{$nsid}{'pid_grps'}}, $pid_grp);
 				}
 			}
@@ -322,10 +267,6 @@ sub show_processes {
 	my @pids = @_;
 
 	printf "%8s %4s  %s\n", "PID", "STAT", "COMMAND";
-#	foreach my $pid (@pids) {
-#		printf "%s\n", substr(sprintf("  %8d %4s  %s",
-#			$pid, $pids{$pid}{'state'}, $pids{$pid}{'cmdline'}), 0, $config{'maxlinewidth'});
-#	}
 	map {
 		printf "%s\n", substr(sprintf("  %8d %4s  %s",
 			$_, $pids{$_}{'state'}, $pids{$_}{'cmdline'}), 0, $config{'maxlinewidth'});
@@ -339,9 +280,6 @@ find( {
 		find_proc_nsids($File::Find::name);
 	},
 }, "/proc");
-
-#printf "%d pid groups found\n", scalar %pid_grps;
-#printf "%d mnt namespaces found\n", scalar %mnt_ns;
 
 foreach my $nsid (sort (keys %mnt_ns)) {
 	my @ns_pids = @{$mnt_ns{$nsid}{'pids'}};
