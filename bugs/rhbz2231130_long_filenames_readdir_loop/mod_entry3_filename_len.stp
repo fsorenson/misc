@@ -1,0 +1,127 @@
+/*
+
+   Frank Sorenson <sorenson@redhat.com>, 2023
+
+   reproducer for Red Hat bugzilla 2231130 / https://issues.redhat.com/browse/RHELPLAN-165534
+
+*/
+
+global mod_count = 0
+
+# module("nfsd").function("svcxdr_encode_entry3_common@fs/nfsd/nfs3xdr.c:1101")
+#	$resp:struct nfsd3_readdirres*
+#	$name:char const*
+#	$namlen:int
+#	$ino:u64
+#	$offset:loff_t
+#	$dirlist:struct xdr_buf*
+probe module("nfsd").function("svcxdr_encode_entry3_common") {
+	if ($namlen >= 255) {
+		new_name = "AAAAABBBBBCCCCCDDDDDEEEEEFFFFFGGGGGHHHHHIIIIIJJJJJKKKKKLLLLLMMMMMNNNNNOOOOOPPPPPQQQQQRRRRRSSSSSTTTTTUUUUUVVVVVWWWWWXXXXXYYYYYZZZZZAAAAABBBBBCCCCCDDDDDEEEEEFFFFFGGGGGHHHHHIIIIIJJJJJKKKKKLLLLLMMMMMNNNNNOOOOOPPPPPQQQQQRRRRRSSSSSTTTTTUUUUUVVVVVWWWWWXXXXXYYYYYZZZZZ"
+		# replace the filename with a longer one, and set the length accordingly
+		set_kernel_string($name, new_name)
+		$namlen = strlen(new_name)
+	}
+}
+
+/*
+     ***** need to get the address for a particular instruction in svcxdr_encode_entry3_common *****
+
+get the address and registers of the 'cmovle' following the second 0xff
+we then overwrite the value in that register with the string length to allow longer filenames
+
+# echo 'dis svcxdr_encode_entry3_common' | crash 2>/dev/null | grep -w 0xff -A1
+0xffffffffc0580471 <svcxdr_encode_entry3_common+81>:	cmp    $0xff,%ebx
+0xffffffffc0580477 <svcxdr_encode_entry3_common+87>:	bswap  %r14
+--
+0xffffffffc0580480 <svcxdr_encode_entry3_common+96>:	mov    $0xff,%r14d
+0xffffffffc0580486 <svcxdr_encode_entry3_common+102>:	cmovle %ebx,%r14d
+
+# echo 'dis svcxdr_encode_entry3_common' | crash 2>/dev/null | grep -w 0xff -A1 | tail -n1
+0xffffffffc0580486 <svcxdr_encode_entry3_common+102>:	cmovle %ebx,%r14d
+^^^^^^^^^^^^^^^^^^                                             ^^^^, ^^^^
+statement address                                              len   limit
+*/
+probe kernel.statement(0xffffffffc0580486).absolute {
+	len = register("ebx")
+	if (len >= 255) {
+		stp_set_register("r14", len)
+		mod_count++
+		printf("%d: modified maximum filename length to %d bytes\n", mod_count, len)
+
+	}
+}
+
+# set_register setup and functions from /usr/share/systemtap/tapset/x86_64/registers.stp
+global reg_offsets[21], r32_offsets[10]
+probe init {
+	reg_offsets["r15"] = 0
+	reg_offsets["r14"] = 8
+	reg_offsets["r13"] = 16
+	reg_offsets["r12"] = 24
+	reg_offsets["rbp"] = 32
+	reg_offsets["rbx"] = 40
+	reg_offsets["r11"] = 48
+	reg_offsets["r10"] = 56
+	reg_offsets["r9"]  = 64
+	reg_offsets["r8"]  = 72
+	reg_offsets["rax"] = 80
+	reg_offsets["rcx"] = 88
+	reg_offsets["rdx"] = 96
+	reg_offsets["rsi"] = 104
+	reg_offsets["rdi"] = 112
+	reg_offsets["orig_rax"] = 120
+	reg_offsets["rip"] = 128
+	reg_offsets["xcs"] = 136
+	reg_offsets["eflags"] = 144
+	reg_offsets["rsp"] = 152
+	reg_offsets["xss"] = 160
+
+	r32_offsets["ebp"] = 32
+	r32_offsets["ebx"] = 40
+	r32_offsets["eax"] = 80
+	r32_offsets["ecx"] = 88
+	r32_offsets["edx"] = 96
+	r32_offsets["esi"] = 104
+	r32_offsets["edi"] = 112
+	r32_offsets["orig_eax"] = 120
+	r32_offsets["eip"] = 128
+	r32_offsets["esp"] = 152
+}
+function stp_set_register_by_offset:long (offset:long, value:long) %{
+	unsigned long value = STAP_ARG_value;
+	struct pt_regs *regs;
+	regs = (CONTEXT->user_mode_p ? CONTEXT->uregs : CONTEXT->kregs);
+	if (!regs) {
+		CONTEXT->last_error = "No registers available in this context";
+		return;
+	}
+	if (STAP_ARG_offset < 0 || STAP_ARG_offset > sizeof(struct pt_regs) - sizeof(long)) {
+		snprintf(CONTEXT->error_buffer, sizeof(CONTEXT->error_buffer),
+		"Bad register offset: %lld", STAP_ARG_offset);
+		CONTEXT->last_error = CONTEXT->error_buffer;
+		return;
+	}
+	memcpy(((char *)regs) + STAP_ARG_offset, &value, sizeof(value));
+	STAP_RETVALUE = value;
+%}
+function stp_set_register:long (name:string, value:long) {
+	if (!registers_valid()) {
+		error("cannot access CPU registers in this context")
+		return 0
+	}
+	offset = reg_offsets[name]
+	if (offset == 0 && !(name in reg_offsets)) {
+		offset = r32_offsets[name]
+		if (offset == 0 && !(name in r32_offsets)) {
+			error("Unknown register: " . name)
+			return 0
+		}
+	}
+	stp_set_register_by_offset(offset, value)
+	test_value = u_register(name)
+	if (value != test_value)
+		printf("hrm.  register doesn't match value just set for '%s': %p vs %p",
+			name, value, test_value)
+	return value
+}
