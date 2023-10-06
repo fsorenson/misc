@@ -91,6 +91,7 @@ struct config_struct {
 	bool open_dsync;
 	bool do_fdatasync;
 	bool trunc_on_open;
+	bool fallocate;
 	char *path;
 
 	pid_t *workers;
@@ -299,6 +300,7 @@ void set_defaults(void) {
 	config->open_dsync = false;
 	config->do_fdatasync = false;
 	config->trunc_on_open = true;
+	config->fallocate = false;
 	stats->stop_time = (struct timespec){ 0, 0 };
 }
 
@@ -316,6 +318,7 @@ int parse_opts(int argc, char *argv[]) {
 		{ "write", no_argument, 0, 'w' },
 		{ "sync", required_argument, NULL, 'Z' },
 		{ "fdatasync", no_argument, 0, 'f' },
+		{ "fallocate", no_argument, 0, 'F' },
 
 		{ "burn", required_argument, 0, 'B' },
 		{ "yield", required_argument, 0, 'y' },
@@ -345,6 +348,7 @@ int parse_opts(int argc, char *argv[]) {
 				} ; break;
 			case 'd': config->open_direct = true; break;
 			case 'f': config->do_fdatasync = true; break;
+			case 'F': config->fallocate = true; break;
 			case 'i': {
 				char str[7], *ptr;
 				config->stats_interval_sec = strtol(optarg, &ptr, 10);
@@ -452,10 +456,10 @@ int writer_thread_work(int child_id) {
 		output("child %d: error opening '%s': %m\n", thread_config->child_id, thread_config->filename);
 		goto out;
 	}
-	ftruncate(thread_config->fd, config->file_size);
-	if ((fallocate(thread_config->fd, 0, 0, config->file_size)) < 0) {
+	if (config->trunc_on_open)
+		ftruncate(thread_config->fd, config->file_size);
+	if (config->fallocate && (fallocate(thread_config->fd, 0, 0, config->file_size)) < 0) { // may only work with some fs types
 		output("child %d: unable to allocate disk space: %m\n", thread_config->child_id);
-		goto out;
 	}
 
 	__atomic_add_fetch(&stats->total_bytes, config->file_size, __ATOMIC_SEQ_CST);
