@@ -57,10 +57,7 @@ my %paths;
 #			# inum
 #			0x80ad337 => '/path/to/file'
 
-
-
 use constant { true => 1, false => 0 };
-
 
 use constant {
 	IN_ACCESS => 0x00000001,
@@ -434,35 +431,22 @@ sub find_inotify_fds {
 	}
 	my $pid = $path_elements[1];
 
-#if ($pid == 2 && $path_elements_count >= 2) {
-
 	if ($path_elements_count == 2) {
-#printf "getting pid info for %s\n", $pid;
-#		get_pid_info($pid);
 		return;
 	}
 
 
 	if ($path_elements_count == 3) {
-
-#		if (defined($pids{$pid}{'fds'})) { # already found 'fd' or 'fdinfo' ... now we're on the other -- only helps if we found inotify fds already
 #		if (defined($pids{$pid}{'fds'})) { # already found 'fd' or 'fdinfo' ... now we're on the other -- only helps if we found inotify fds already
 		if (defined $pids{$pid} && defined($pids{$pid}{'fds'})) { # already found 'fd' or 'fdinfo' ... now we're on the other -- only helps if we found inotify fds already
 			$File::Find::prune = 1;
 			return;
 		}
 
-#		if ($path_elements[2] eq
 		if ($path_elements[2] ne "fdinfo") {
 			$File::Find::prune = 1;
 			return;
 		}
-#		if (($path_elements[2] eq "fdinfo") || ($path_elements[2] eq "fd")) {
-#			$pids{$pid}{'fds'} = ();
-#			return;
-#		}
-		# any other files/subdirectories?
-#		$File::Find::prune = 1;
 		return;
 	}
 
@@ -482,10 +466,6 @@ sub find_inotify_fds {
 		$File::Find::prune = 1;
 		return;
 	}
-	# prune everything else (if there is anything)
-#	$File::Find::prune;
-#	get_proc_pid_fd_info($pid, $fd);
-
 }
 sub find_inums {
 	my $mp = shift;
@@ -580,7 +560,24 @@ find( {
 	},
 }, "/proc");
 
+printf "    found %d pids with inotify fds\n", scalar(keys(%pids));
+
+
 # get mountpoints for device ids
+
+my @inotify_pids = sort(keys(%pids));
+for my $pid (@inotify_pids) {
+	printf "pid %d - %s\n", $pid, $pids{$pid}{'comm'};
+	my @inotify_fds = sort(keys(%{$pids{$pid}{'fds'}}));
+
+	for my $fd (@inotify_fds) {
+		my @wds = sort(keys(%{$pids{$pid}{'fds'}{$fd}}));
+		my $wd_count = scalar @wds;
+		printf "    fd %d - %d watch%s\n", $fd, $wd_count, $wd_count == 1 ? "" : "es";
+	}
+}
+
+exit;
 
 printf "finding device majors:minors\n";
 my @maj_minors = keys %watches;
