@@ -1,4 +1,4 @@
-TARGETS = writing_circlefs.html
+TARGETS = writing_circlefs.html circlefs
 
 ifeq "$(shell which asciidoctor-pdf >/dev/null 2>&1 && echo $$?)" "0"
 	# have asciidoctor-pdf
@@ -20,5 +20,8 @@ writing_circlefs.html: writing_circlefs.adoc
 writing_circlefs.pdf: writing_circlefs.adoc
 	asciidoctor-pdf writing_circlefs.adoc
 
+circlefs: circlefs.c circlefs.h
+	gcc -Wall circlefs.c -o circlefs -g -lm -lfuse3
+
 clean:
-	rm -f writing_circlefs.html writing_circlefs.pdf
+	rm -f circlefs writing_circlefs.html writing_circlefs.pdf
