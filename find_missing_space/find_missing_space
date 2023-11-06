@@ -12,7 +12,6 @@ use Getopt::Long;
 use File::Find;
 use File::stat;
 use File::Temp qw/tempdir/;
-use List::Util qw(uniq);
 use Fcntl ':mode';
 use POSIX;
 use Cwd 'realpath';
@@ -247,6 +246,15 @@ sub is_link {
 #	my $mode = shift;
 #	return (S_ISLNK($mode) ? 1 : 0);
 	return (S_ISLNK($_[0]) ? 1 : 0);
+}
+sub uniq {
+	my @list = @_;
+	my %seen = ();
+
+	foreach my $item (@list) {
+		$seen{$item}++;
+	}
+	return keys(%seen);
 }
 sub compare_path_lists {
 	my ($hrefa, $hrefb) = @_;
