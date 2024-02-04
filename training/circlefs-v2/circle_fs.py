@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 #!/usr/bin/python3.7
 #!/usr/bin/env python3.7
 
@@ -20,9 +21,15 @@ class circlefs(Operations):
 	def __call__(self, op, *args):
 		print(" call: {}".format(op))
 		if not hasattr(self, op):
-			raise FuseOSError(EFAULT)
-		ret = getattr(self, op)(*args)
-		print(" {} returned {}".format(op, ret))
+#			raise FuseOSError(EFAULT)
+#			raise FuseOSError(ENOTSUP)
+			raise FuseOSError(ENOSYS)
+		try:
+			ret = getattr(self, op)(*args)
+			print(" {} returned {}".format(op, ret))
+		except Exception as e:
+#			print("exception: {}".format(repr(e)))
+			ret = None
 		return ret
 #		return getattr(self, op)(*args)
 
@@ -49,6 +56,7 @@ class circlefs(Operations):
 		elif path in [ '/π' ]: # link π to pi
 			mode = 0o777 | S_IFLNK
 		else:
+			print("  no entry: {}".format(path))
 			raise FuseOSError(ENOENT)
 
 		now = time.time()
@@ -98,7 +106,7 @@ class circlefs(Operations):
 
 	def write(self, path, buf, offset, fh):
 		print("  write({}, '{}', offset: {}".format(path, buf, offset))
-		if offset is not 0:
+		if offset != 0:
 			raise FuseOSError(EINVAL)
 
 		val = float(buf)
@@ -147,6 +155,7 @@ class circlefs(Operations):
 			return 'pi'
 
 		return ''
+
 
 
 def main(mountpoint):
