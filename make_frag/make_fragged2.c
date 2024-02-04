@@ -3,6 +3,21 @@
 
 	Create a badly-fragmented file
 
+	usage: ./make_fragged2 [ ... options ... ]
+		[-s | --size <size>] - specify the size of the fragmented file to create
+		[-b | --block_size <size>] - specify the size of blocks to allocate
+		[-d | --dir <directory>] - create the file in this directory
+		[-f | --filename <filename>] - name of file to create
+
+	the defaults will create a 100 GiB file with 16 KiB blocks (6553600 blocks)
+	default directory is /mnt/tmp, and fragmented filename is 'testfile'
+
+	an additional file is also created to track the state of the file
+	creation/fragmentation, allowing resumption of fragmentation if
+	interrupted
+
+	WARNING: badly-fragmented files WILL take a long time to delete, read from
+	disk, etc.  You have been warned.
 */
 
 #define _GNU_SOURCE
@@ -27,11 +42,10 @@
 #define GiB (KiB * KiB * KiB)
 #define TiB (KiB * KiB * KiB * KiB)
 
-#define BLOCK_SIZE (4 * KiB)
-#define FILE_SIZE (1 * TiB)
-#define NUM_BLOCKS (FILE_SIZE / BLOCK_SIZE)
+#define DEFAULT_BLOCK_SIZE (16 * KiB)
+#define DEFAULT_FILE_SIZE (100 * GiB)
 
-#define TESTPATH "/mnt/tmp"
+#define DEFAULT_TESTPATH "/mnt/tmp"
 #define TESTFILE "testfile"
 #define STATEFILE TESTFILE ".state"
 
@@ -54,10 +68,10 @@ struct run_data {
 	struct random_data random_data;
 	char random_state[RAND_STATE_SIZE];
 } run_data = {
-	.test_dir = TESTPATH,
+	.test_dir = DEFAULT_TESTPATH,
 	.test_file = TESTFILE,
-	.file_size = FILE_SIZE,
-	.block_size = BLOCK_SIZE,
+	.file_size = DEFAULT_FILE_SIZE,
+	.block_size = DEFAULT_BLOCK_SIZE,
 };
 
 struct state_data {
@@ -326,7 +340,7 @@ void frag_file(void) {
 	while (state_data->remaining_blocks) {
 		uint32_t this_block = state_data->blocks[state_data->remaining_blocks - 1];
 
-		fallocate(run_data.fd, FALLOC_FL_KEEP_SIZE|FALLOC_FL_ZERO_RANGE, this_block * BLOCK_SIZE, BLOCK_SIZE);
+		fallocate(run_data.fd, FALLOC_FL_KEEP_SIZE|FALLOC_FL_ZERO_RANGE, this_block * state_data->block_size, state_data->block_size);
 		state_data->remaining_blocks--;
 		if ((state_data->remaining_blocks % 100) == 0)
 			print_pct(state_data->num_blocks - state_data->remaining_blocks, state_data->num_blocks);
