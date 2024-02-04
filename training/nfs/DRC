@@ -1,0 +1,44 @@
+Certain nfs operations must only be acted on a single time...  for example, renaming a file.  If you try to do it a second time, the source file just won't exist
+
+So the server maintains a cache of operations that can only happen once, and if it sees it a second time, it just returns the same result as the first time.  In this case, it should just reply that the rename was successful
+
+There are a lot of pieces of data that go into the cache key which is used to determine a match or not: IP address, rpc xid, etc. and the source port used on the client side
+
+
+Here's an example of what can happen if the source port is not reused, and the TCP connection gets dropped:
+
+
+ # echo foo > /mnt/vm23/testfile ; while [[ 42 ]] ; do mv -f /mnt/vm23/testfile /mnt/vm23/testfile2 || break ; mv -f /mnt/vm23/testfile2 /mnt/vm23/testfile || break ; echo -n . ; done
+..........................................................................................mv: cannot stat '/mnt/vm23/testfile2': No such file or directory
+
+
+1835    5.174495983     V3 RENAME Call, From DH: 0xd02cc096/testfile2 To DH: 0xd02cc096/testfile
+
+server disconnects
+
+1861    5.180331220     2049 → 684 [FIN, ACK] Seq=23929 Ack=23057 Win=164096 Len=0 TSval=689220820 TSecr=246959842
+1864    5.180747541     684 → 2049 [FIN, ACK] Seq=23057 Ack=23930 Win=95744 Len=0 TSval=246959849 TSecr=689220820
+1865    5.180776540     2049 → 684 [ACK] Seq=23930 Ack=23058 Win=164096 Len=0 TSval=689220820 TSecr=246959849
+
+client reconnects using different source port
+
+1866    5.181113017     701 → 2049 [SYN] Seq=0 Win=29200 Len=0 MSS=1460 SACK_PERM TSval=246959849 TSecr=0 WS=128
+1867    5.181171555     2049 → 701 [SYN, ACK] Seq=0 Ack=1 Win=28960 Len=0 MSS=1460 SACK_PERM TSval=689220820 TSecr=246959849 WS=128
+1868    5.181387648     701 → 2049 [ACK] Seq=1 Ack=1 Win=29312 Len=0 TSval=246959849 TSecr=689220820
+1871    5.181534334     V3 RENAME Call (Reply In 1874), From DH: 0xd02cc096/testfile2 To DH: 0xd02cc096/testfile
+1873    5.181574744     2049 → 701 [ACK] Seq=1 Ack=213 Win=30080 Len=0 TSval=689220821 TSecr=246959849
+1874    5.181689106     V3 RENAME Reply (Call In 1871) Error: NFS3ERR_NOENT
+1876    5.181877052     701 → 2049 [ACK] Seq=213 Ack=265 Win=30336 Len=0 TSval=246959850 TSecr=689220821
+
+
+Most RHEL kernels will resuse the source port, however there's apparently a bug whereby sometimes the source port is not reused:
+https://issues.redhat.com/browse/RHEL-16743
+
+
+
+
+
+
+
+
+
