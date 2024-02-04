@@ -1,0 +1,105 @@
+function tstamp:string(epochns:long) %{ /* pure */
+	u64 nsec = STAP_ARG_epochns;
+	time_t epochsec = nsec / 1000000000;
+	struct tm gmt;
+
+	nsec = nsec % 1000000000;
+	time_to_tm(epochsec, -tz_gmtoff, &gmt);
+	snprintf(STAP_RETVALUE, MAXSTRINGLEN, "%04ld-%02d-%02d %02d:%02d:%02d.%09llu",
+		gmt.tm_year + 1900, gmt.tm_mon + 1, gmt.tm_mday,
+		gmt.tm_hour, gmt.tm_min, gmt.tm_sec, nsec);
+%}
+function tstamp_now:string() {
+	return tstamp(gettimeofday_ns())
+}
+function errno_str2(errno) {
+	if (errno < 0 && errno > -140)
+		return errno_str(errno)
+	return "SUCCESS"
+}
+
+global tracing_pids[1000]
+
+probe kernel.function("sys_mkdirat") {
+# kernel.function("SyS_mkdirat@fs/namei.c:3727") $dfd:long int $pathname:long int $mode:long int
+
+	// we only care about AT_FDCWD with relative paths
+	if ($dfd != @const("AT_FDCWD") && $dfd != 0xffffff9c)
+		next
+
+	pathname = user_string($pathname)
+	if (substr(pathname, 0, 1) == "/")
+		next
+
+	tracing_pids[tid()] = 1
+
+	cwd_path = &@cast(task_cwd_path(task_current()), "struct path")
+	cwd_inode = &@cast(cwd_path->dentry->d_inode, "struct inode")
+	cwd_path_str = task_dentry_path(task_current(), cwd_path->dentry, cwd_path->mnt)
+
+	mode_owner = sprintf("mode: 0%o, ownership %d:%d",
+		cwd_inode->i_mode, cwd_inode->i_uid->val, cwd_inode->i_gid->val)
+
+	uidgid = sprintf("uid:gid: %d:%d, euid:egid: %d:%d",
+		uid(), euid(), gid(), egid())
+
+	printf("%s:  %s (%d) %s(AT_FDCWD<%s> (%s), \"%s\", 0%o) (%s)\n",
+		tstamp_now(), execname(), tid(), ppfunc(), cwd_path_str, 
+		mode_owner, pathname, $mode, uidgid)
+}
+
+probe kernel.function("sys_mkdirat").return {
+	if (! tracing_pids[tid()])
+		next
+
+#	dfd = @entry($dfd)
+	pathname = @entry(user_string($pathname))
+	mode = @entry($mode)
+
+	cwd_path = &@cast(task_cwd_path(task_current()), "struct path")
+	cwd_inode = &@cast(cwd_path->dentry->d_inode, "struct inode")
+	cwd_path_str = task_dentry_path(task_current(), cwd_path->dentry, cwd_path->mnt)
+
+	mode_owner = sprintf("mode: 0%o, ownership %d:%d",
+		cwd_inode->i_mode, cwd_inode->i_uid->val, cwd_inode->i_gid->val)
+
+	uidgid = sprintf("uid:gid: %d:%d, euid:egid: %d:%d",
+		uid(), euid(), gid(), egid())
+
+	printf("%s:  %s (%d) %s(AT_FDCWD<%s> (%s), \"%s\", 0%o) (%s) = %s\n",
+		tstamp_now(), execname(), tid(), ppfunc(), cwd_path_str,
+		mode_owner, pathname, mode, uidgid, errno_str2($return))
+
+	delete tracing_pids[tid()]
+}
+probe kernel.function("vfs_mkdir") {
+	if (! tracing_pids[tid()])
+		next
+
+	inode = &@cast($dir, "struct inode")
+
+	d_name = kernel_string($dentry->d_name->name)
+
+	printf("%s:  %s (%d) %s(\"%s\") (dir mode: 0%o, ownership %d:%d)\n",
+		tstamp_now(), execname(), tid(), ppfunc(), d_name,
+		inode->i_mode, inode->i_uid->val, inode->i_gid->val)
+}
+
+probe
+	kernel.function("user_path_create").return,
+	kernel.function("security_path_mkdir").return,
+	kernel.function("security_inode_mkdir").return,
+	kernel.function("inode_permission").return,
+	kernel.function("__inode_permission").return,
+	kernel.function("security_inode_permission").return,
+	kernel.function("vfs_mkdir").return
+	{
+	if (tracing_pids[tid()])
+		printf("%s:  %s (%d) %s() = %s\n",
+			tstamp_now(), execname(), tid(), ppfunc(), errno_str2($return))
+}
+probe kernel.function("do_inode_permission") {
+	if (tracing_pids[tid()])
+		printf("%s:  %s (%d) %s()\n",
+			tstamp_now(), execname(), tid(), ppfunc())
+}
