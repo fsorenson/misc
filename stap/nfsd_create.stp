@@ -1,0 +1,67 @@
+
+function print_callers(callers:string) {
+         __sym = tokenize (callers, " ");
+         __foo = ""; __l = 0
+         while (__sym != "") {
+               // cleanly handle overflow instead of printing partial line:
+	       __sym_addr = strtol(__sym, 16)
+
+	       __fname = symfile(__sym_addr)
+	       __lnum = symline(__sym_addr)
+	       __func_name = symname(__sym_addr)
+	       __sym_data = symdata(__sym_addr)
+               __line = sprintf (" %s : %s - %s:%s - %s - symdata: %s\n", __sym, __func_name, __fname, __lnum, symfileline(__sym_addr), __sym_data);
+               __l += strlen(__line)
+               if (__l > @MAXSTRINGLEN) break
+               __foo .= __line
+               __sym = tokenize ("", " ")
+         }
+         return __foo
+}
+
+
+# module("nfsd").statement("nfsd4_decode_open@fs/nfsd/nfs4xdr.c:917") $argp:struct nfsd4_compoundargs* $open:struct nfsd4_open* $status:__be32 $dummy:u32
+
+probe module("nfsd").statement("nfsd4_decode_open@fs/nfsd/nfs4xdr.c+28") {
+	printf("at %s, op_create+28 is %d\n", ppfunc(), $open->op_create)
+
+}
+probe module("nfsd").statement("nfsd4_decode_open@fs/nfsd/nfs4xdr.c+68") {
+	printf("at %s, op_create+68 is %d\n", ppfunc(), $open->op_create)
+
+}
+probe module("nfsd").statement("nfsd4_decode_open@fs/nfsd/nfs4xdr.c+70") {
+	printf("at %s, op_create+70, op_create: %d claim_type: %d\n", ppfunc(), $open->op_create, $open->op_claim_type)
+
+}
+probe module("nfsd").statement("nfsd4_decode_open@fs/nfsd/nfs4xdr.c:975") {
+	printf("at %s, op_create+975, op_fname: %s\n", ppfunc(), kernel_string_n($argp->p, $open->op_fname->len))
+#	printf("at %s, op_create+975, op_fname->len: %d, op_fname: %s\n", ppfunc(), $open->op_fname->len, kernel_string_n($argp->p, $open->op_fname->len))
+//	printf("at %s, op_create+975, argp: %s\n", ppfunc(), $argp$$)
+}
+probe module("nfsd").statement("nfsd4_decode_open@fs/nfsd/nfs4xdr.c:980") {
+//	printf("at %s, op_create+980, op_fname: %s\n", ppfunc(), kernel_string_n($open->op_fname->data, $open->op_fname->len))
+	printf("at %s, op_create+980, op_fname->len: %d, op_fname: %s\n", ppfunc(), $open->op_fname->len, kernel_string_n($argp->p, $open->op_fname->len))
+//	printf("at %s, op_create+980, argp: %s\n", ppfunc(), $argp$$)
+}
+probe module("nfsd").statement("nfsd4_decode_open@fs/nfsd/nfs4xdr.c:991") {
+	printf("at %s, op_create+991, op_fname: %s\n", ppfunc(), kernel_string_n($open->op_fname->data, $open->op_fname->len))
+//	printf("at %s, op_create+991, argp: %s\n", ppfunc(), $argp$$)
+}
+probe module("nfsd").statement("nfsd4_decode_open@fs/nfsd/nfs4xdr.c+81") {
+	printf("at %s, op_create+81, op_fname: %s\n", ppfunc(), kernel_string_n($open->op_fname->data, $open->op_fname->len))
+
+}
+
+probe module("nfsd").function("check_filename") {
+	printf("%s(): %s\n", ppfunc(), kernel_string_n($str, $len))
+//	print_backtrace()
+	c = callers(-1)
+	printf("  callers: %s\n", c);
+	printf("%s\n", print_callers(c))
+	printf("\n")
+
+	print_backtrace();
+	printf("\n\n");
+
+}
