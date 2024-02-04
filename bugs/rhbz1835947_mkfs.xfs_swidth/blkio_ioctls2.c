@@ -116,7 +116,7 @@ int ioctl(int fd, unsigned long req, ...) {
 	if (req == BLKIOMIN) {
 		unsigned int val = *(unsigned int *)arg_addr;
 
-		*(unsigned int *)arg_addr = 1048576;
+		*(unsigned int *)arg_addr = 524288;
 		output("BLKIOMIN result: %u => %u\n", val, *(unsigned int *)arg_addr);
 
 		ret = 0;

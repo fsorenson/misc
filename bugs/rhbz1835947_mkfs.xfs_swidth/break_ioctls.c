@@ -357,8 +357,8 @@ output("ioctl(%d, %lx (%s)) = %d",
 //output(" = %d", read_int(cpid, ret));
 
 if (cmd == BLKIOMIN) {
-	write_int(cpid, ret, 1048576);
-	output(" - adjusted to 1048576");
+	write_int(cpid, ret, 524288);
+	output(" - adjusted to 524288");
 } else if (cmd == BLKIOOPT) {
 	write_int(cpid, ret, 262144);
 	output(" - adjusted to 262144");
@@ -453,7 +453,7 @@ static void init(void) {
 		trace_child(cpid);
 
 //	raise(SIGSTOP);
-	child_initialized = true;
+	config.child_initialized = true;
 	ptrace(PTRACE_TRACEME, NULL, NULL, NULL);
 
 	config.initialized = true;
