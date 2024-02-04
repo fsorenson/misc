@@ -1,0 +1,232 @@
+
+EXT* directory index
+
+
+Each directory contains a list of the files in the directory.  With a large number of files/directories inside a particular directory, looking up a particular filename in the directory can potentially take a very long time; finding each filename in a particular directory will require scanning the whole directory until the particular filename is found.
+
+To speed up the lookup of a particular filename in a directory, as soon as a directory has enough entries to benefit from indexing, ext* uses a per-directory index of filenames (the index does nothing for speed of a full directory listing...  just filename lookup).
+
+The directory index consists of a set of hash buckets.  A hash is a one-way transformation of some data item that generates output where all values have the same number of bits in length, and which always produces the same result.
+
+A (very) simple hashing algorithm could be as simple as integer division of the input data by a constant:
+
+    HASH = (INPUT % 4)
+
+This would divide the INPUT into 4 (theoretically-equal-sized) hash buckets, so searching for the input would only take 1/4 as long (on average).
+
+
+In the case of EXT* filenames, the hashing algorithm takes into account the filename, length, and a filesystem-wide hash seed, and the output consists of a 32-bit number.
+
+
+    $ truncate -s 100M test.img
+    $ mkfs.ext4 test.img >/dev/null 2>&1
+    $ dumpe2fs -h test.img | egrep -i hash
+    dumpe2fs 1.46.5 (30-Dec-2021)
+    Filesystem flags:         signed_directory_hash 
+    Default directory hash:   half_md4
+    Directory Hash Seed:      bde5406b-5aae-4fd9-9bc8-626ce556215d
+
+    $ sudo mount test.img mnt
+    $ sudo chown -R $(id -u):$(id -g) mnt
+    $ for i in {1..62} ; do touch mnt/test_$i ; done
+
+    $ debugfs -R "htree /" test.img 2>&1
+    htree: Not a hash-indexed directory
+
+(the directory does not contain enough entries to benefit from indexing)
+
+
+    $ touch mnt/test_63
+    $ debugfs -R "htree /" test.img 2>&1
+    debugfs 1.46.5 (30-Dec-2021)
+    Root node dump:
+             Reserved zero: 0
+             Hash Version: 1
+             Info length: 8
+             Indirect levels: 0
+             Flags: 0
+    Number of entries (count): 2
+    Number of entries (limit): 123
+    Checksum: 0x6bfd86a5
+    Entry #0: Hash 0x00000000, block 1
+    Entry #1: Hash 0x9b4c7052, block 2
+
+    Entry #0: Hash 0x00000000, block 1
+    Reading directory block 1, phys 6695
+    12 0x640add58-35fed102 (16) test_1   14 0x54d807c8-65468414 (16) test_3
+    17 0x9a9674f8-681e3539 (16) test_6   19 0x4110039a-f2ac1b71 (16) test_8
+    20 0x2400c5d6-0a303760 (16) test_9   21 0x30b969a0-05230208 (16) test_10
+    22 0x211ae82e-86bab6b9 (16) test_11   23 0x3238f4ea-08ea0104 (16) test_12
+    25 0x5f65db8a-569a2ca1 (16) test_14   26 0x6842476c-62138825 (16) test_15
+    28 0x99edd816-2041ee93 (16) test_17   32 0x86990532-ab74facc (16) test_21
+    ...
+
+
+The 32-bit hash is divided into two parts, with the first part being used to determine the hash bucket.  According to the above output, there are two hash buckets:
+
+    Entry #0: Hash 0x00000000, block 1
+    Entry #1: Hash 0x9b4c7052, block 2
+
+The first hash bucket contains hashes with the first part between 0x00000000 and 0x9b4c7051, and the second hash bucket contains hashes with the first part between 0x0x9b4c7052 and 0xffffffff.  In this case, the two hash buckets contain the same number of entries, whereas a perfect hash would have resulted in the division at 0x80000000 instead of 0x9b4c7052.
+
+As more entries are added, the hash table (number of hash buckets) will be increased, with a hash bucket being split once it gets 'too full'.
+
+
+    $ for i in {64..123} ; do touch mnt/test_$i ; done
+    $ debugfs -R "htree /" test.img 2>&1
+    debugfs 1.46.5 (30-Dec-2021)
+    Root node dump:
+             Reserved zero: 0
+             Hash Version: 1
+             Info length: 8
+             Indirect levels: 0
+             Flags: 0
+    Number of entries (count): 3
+    Number of entries (limit): 123
+    Checksum: 0x5d2313b8
+    Entry #0: Hash 0x00000000, block 1
+    Entry #1: Hash 0x4b6bae38, block 3
+    Entry #2: Hash 0x9b4c7052, block 2
+    ...
+
+Here we see that the first hash bucket has been split at 0x4b6bae38.
+
+
+    $ for i in {4097..16384} ; do touch mnt/test_$i ; done
+    $ debugfs -R "htree /" test.img 2>&1
+    debugfs 1.46.5 (30-Dec-2021)
+    Root node dump:
+             Reserved zero: 0
+             Hash Version: 1
+             Info length: 8
+             Indirect levels: 1
+             Flags: 0
+    Number of entries (count): 4
+    Number of entries (limit): 123
+    Checksum: 0x4c241c16
+    Entry #0: Hash 0x00000000, block 124
+    Entry #1: Hash 0x401705f6, block 246
+    Entry #2: Hash 0x83c62292, block 128
+    Entry #3: Hash 0xc123ae9c, block 265
+
+Note that the root node dump now has 'Indirect levels: 1'.  This means that the system has established a 2-level hash tree, where both levels are consulted to find the correct hash bucket.
+
+
+The size of each hash bucket is limited to the filesystem's blocksize, so if the blocksize is lower than 4096, the hash buckets will fill and get split more frequently.  Note what happens with 120-byte filenames on a filesystem with 1024-byte blocks:
+
+    Number of entries (count): 50
+    Number of entries (limit): 123
+    Checksum: 0x818ee491
+    Entry #0: Hash 0x00000000, block 1
+    Entry #1: Hash 0x05f4a44e, block 50
+    ...
+    Entry #0: Hash 0x00000000, block 1
+    Reading directory block 1, phys 6695
+
+    16 0x02a168da-e0ffc784 (136) test_000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000005   
+    127 0x05c6c708-eb426da6 (136) test_000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000116   
+    128 0x007e7992-f302ae9c (136) test_000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000117   
+    265 0x01b3b6c4-5a89ea83 (604) test_000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000254   
+    leaf block checksum: 0x38ac5375  
+
+versus 4096-byte blocks:
+    Number of entries (count): 11
+    Number of entries (limit): 507
+    Checksum: 0x6abc8f19
+    Entry #0: Hash 0x00000000, block 1
+    Entry #1: Hash 0x147fb4ca, block 6
+    ...
+    Entry #0: Hash 0x00000000, block 1
+    Reading directory block 1, phys 2646
+
+    13 0x009d91a2-2cc9f8f3 (136) test_000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002
+    30 0x137e546a-8b0f2ca1 (136) test_000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000019
+    42 0x03d7f550-442d1c16 (136) test_000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000031
+    53 0x08bf16d2-cd5ef410 (136) test_000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000042
+    55 0x0802dbd0-541464b4 (136) test_000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000044
+    61 0x0725cd70-3efe3cc5 (136) test_000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000050
+    63 0x117f107c-ec0e6cff (136) test_000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000052
+    85 0x01dbc356-3e5d6412 (136) test_000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000074
+    88 0x1267e918-a61687b5 (136) test_000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000077
+    99 0x0281aed8-0f525db9 (136) test_000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000088
+    103 0x11ddc2b6-cf52ea59 (136) test_000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000092
+    106 0x10c38b16-ff724c41 (136) test_000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000095
+    118 0x0b6a2f90-258ad7ae (136) test_000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000107
+    ...
+
+    208 0x1005d8f8-2512be92 (136) test_000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000197
+    246 0x07fd6ad6-78697693 (684) test_000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000235
+    leaf block checksum: 0x2c0fedc8
+
+
+
+Ideally, all filenames would be spread evenly across all of the hash buckets.  However, in practice that isn't the case; the hashing function is imperfect.
+
+The kernel attempts to split the hash buckets as much as possible, and will use as many as 2 levels of indirection.  Since it is impossible to predict what hash values will be used by files created in the future, the hash buckets are split as needed when filenames are added.  As a result, the hash buckets will eventually be split in a non-optimal way, and when many filenames hash to the same value/hash bucket, it is possible that the two levels of indirection may not be sufficient for tracking all the hash values.
+
+When this happens, the directory index is 'full', and error messages such as the following will appear in the kernel logs:
+
+$ dmesg|tail -n5
+[4797191.479376] EXT4-fs warning (device loop4): ext4_dx_add_entry:2491: Large directory feature is not enabled on this filesystem
+[4797191.479412] EXT4-fs warning (device loop4): ext4_dx_add_entry:2487: Directory (ino: 2) index full, reach max htree level :2
+[4797191.479417] EXT4-fs warning (device loop4): ext4_dx_add_entry:2491: Large directory feature is not enabled on this filesystem
+[4797191.479449] EXT4-fs warning (device loop4): ext4_dx_add_entry:2487: Directory (ino: 2) index full, reach max htree level :2
+[4797191.479454] EXT4-fs warning (device loop4): ext4_dx_add_entry:2491: Large directory feature is not enabled on this filesystem
+
+and new files that hash into the full hash bucket will fail to be created:
+
+$ touch mnt/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaePI
+touch: cannot touch 'mnt/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaePI': No space left on device
+
+
+The filesystem/device itself isn't full, however that part of the directory index hash tree IS full.
+
+
+
+The e2fsck program has a flag which is intended to correct this problem:
+
+       -D     Optimize  directories in file system.  This option causes e2fsck
+              to try to optimize all directories, either by  re-indexing  them
+              if  the  file system supports directory indexing,  or by sorting
+              and compressing directories for smaller directories, or for file
+              systems using traditional linear directories.
+
+              Even  without the -D option, e2fsck may sometimes optimize a few
+              directories --- for example, if directory  indexing  is  enabled
+              and  a directory is not indexed and would benefit from being in‐
+              dexed, or if the index structures are corrupted and need  to  be
+              rebuilt.   The -D option forces all directories in the file sys‐
+              tem to be optimized.  This can  sometimes  make  them  a  little
+              smaller  and  slightly  faster  to  search, but in practice, you
+              should rarely need to use this option.
+
+              The -D option will detect directory entries with duplicate names
+              in  a  single  directory, which e2fsck normally does not enforce
+              for performance reasons.
+
+
+The option causes e2fsck to re-divide the hash entries in order to redistribute the entries more evenly across the hash buckets.
+
+
+
+$ sudo umount mnt
+$ e2fsck -fD test.img
+e2fsck 1.46.5 (30-Dec-2021)
+Pass 1: Checking inodes, blocks, and sizes
+Pass 2: Checking directory structure
+Pass 3: Checking directory connectivity
+Pass 3A: Optimizing directories
+Pass 4: Checking reference counts
+Pass 5: Checking group summary information
+
+test.img: ***** FILE SYSTEM WAS MODIFIED *****
+test.img: 15694/65536 files (0.0% non-contiguous), 41197/1048576 blocks
+$ sudo mount test.img mnt
+
+The file can now be created:
+
+$ touch mnt/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaePI
+
+
+
+
