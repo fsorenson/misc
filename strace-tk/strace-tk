@@ -2,6 +2,7 @@
 
 use strict;
 use warnings FATAL => 'all';
+no warnings 'portable';
 
 #use List::MoreUtils qw/indexes/;
 use File::Basename qw/basename/;
@@ -15,9 +16,9 @@ use Errno qw( :POSIX);
 
 my %config = (
 	'debug' => 0,
-	'file_positions|file-positions' => false, # TODO - open(), read(), write(), lseek()
-	'expand_getdents|expand-getdents' => false, # like strace_getdents awk script -- not very reversible, though
-	'output_ls|output-ls' => false, # gather file & directory information from getdents, *stat*, readlink* calls, and output at end as if from 'ls -alR'
+	'file_positions' => false, # TODO - open(), read(), write(), lseek()
+	'expand_getdents' => false, # like strace_getdents awk script -- not very reversible, though
+	'output_ls' => false, # gather file & directory information from getdents, *stat*, readlink* calls, and output at end as if from 'ls -alR'
 	'combined_stats' => false, # syscall stats (ala '-c')
 	'times' => false, # output only start & end times
 	'proc_stats' => false, # output per-process syscall stats (rather than combined '-c' stats)
@@ -63,6 +64,7 @@ sub usage {
 	printf "\t\t--output-ls - track directory contents and output directory listings at exit - NOT IMPLEMENTED\n";
 	printf "\t\t--adjust_locale - change the locale of error messages - PARTIALLY IMPLEMENTED - only changes TO English\n";
 
+	printf "\t\t--double_entry|double-entry - output trace entries at both call time and completion time - NOT IMPLEMENTED\n";
 	printf "\t\t--output_pcap|--output-pcap - output strace entries as syslog entries in a packet capture (implies 'double-entry') - NOT IMPLEMENTED\n";
 
 	printf "\t\t-v|--debug|--verbose - increase debugging level\n";
@@ -163,11 +165,7 @@ sub log_error {
 	}
 }
 sub output_errors {
-
-	if (scalar(keys(%unknown_syscalls))) {
-		printf "unrecognized syscalls: %s\n", join(" ", keys(%unknown_syscalls));
-	}
-
+	printf "unrecognized syscalls: %s\n", join(" ", keys(%unknown_syscalls)) if (scalar(keys(%unknown_syscalls)));
 
 	printf "%d errors:\n", scalar(@logged_errors) if scalar @logged_errors;
 	my $i = 1;
@@ -579,13 +577,6 @@ sub ret_is_error {
 }
 sub ts_to_sec {
 	my $ts = shift;
-
-#	my $ets = "(?:[12][0-9]{9}\\b)";
-#	my $tss = "(?:\\.[0-9]{3}(?:[0-9]{3}(?:[0-9]{3})?)?)";
-#	my $tpss = "(?:$tss)?";
-
-#	my $epoch_re = qr/^$patterns{'epoch_time_string'}$patterns{'time_possible_subseconds'}$/;
-#	my $epoch_re = qr/^$ets$tpss$/;
 	my $epoch_re = qr/^$patterns{'epoch_time_string'}$patterns{'time_possible_subseconds'}$/;
 
 	return $ts if ($ts =~ $epoch_re);
@@ -595,6 +586,17 @@ sub ts_to_sec {
 	my $s = substr($ts, 6) + 0;
 
 	return (($h*60)+$m)*60 + $s;
+}
+sub sec_to_ts {
+	my $s = shift;
+	my $us = int(($s * 1000000) % 1000000);
+	$s = int($s);
+	my $m = int($s / 60);
+	$s -= (60 * $m);
+	my $h = int($m / 60);
+	$m -= (60 * $h);
+
+	return sprintf("%02d:%02d:%02d.%06d", $h, $m, $s, $us);
 }
 sub format_delay {
 	my $rel = shift;
@@ -881,9 +883,11 @@ sub output_stats {
 			$this_syscall_stats{'min'}, $this_syscall_stats{'max'},
 			$this_syscall_stats{'mean'}, $this_syscall_stats{'rolling_M2'} ? $this_syscall_stats{'rolling_M2'} : 0,
 			$this_syscall_stats{'errors'};
+if (0) {
 if ($this_syscall_stats{'rolling_mean'}) {
 	printf "                   rolling mean: %10.6f\n", $this_syscall_stats{'rolling_mean'};
 	printf "                   rolling M2 %10.6f\n", $this_syscall_stats{'rolling_M2'};
+}
 }
 		$total_elapsed += $this_syscall_stats{'elapsed'};
 	}
@@ -959,6 +963,39 @@ sub change_err_locale {
 	return $ret;
 }
 
+sub reconstruct_call_line {
+	my ($trace_entry) = @_;
+
+	$trace_entry->{'pid'} = -1 if !defined $trace_entry->{'pid'};
+	$trace_entry->{'this_line_execname'} = "" if !defined $trace_entry->{'pid'};
+	$trace_entry->{'timestamp'} = "" if ! defined $trace_entry->{'timestamp'};
+	$trace_entry->{'delay'} = "" if ! defined $trace_entry->{'delay'};
+	$trace_entry->{'syscall'} = "" if ! defined $trace_entry->{'syscall'};
+	$trace_entry->{'args'} = "" if ! defined $trace_entry->{'args'};
+	$trace_entry->{'msg'} = "" if ! defined $trace_entry->{'msg'};
+	$trace_entry->{'ret'} = "" if ! defined $trace_entry->{'ret'};
+	$trace_entry->{'elapsed'} = "" if ! defined $trace_entry->{'elapsed'};
+
+	my $ret = sprintf("%s%s%s%s",
+		$trace_entry->{'pid'} ne '' ? $trace_entry->{'pid'} . " " : "",
+		($config{'show_execnames'} && $trace_entry->{'this_line_execname'} ne "") ? "(" . $trace_entry->{'this_line_execname'} . ") " : "",
+		($config{'show_timestamps'} && $trace_entry->{'timestamp'} ne '') ? $trace_entry->{'timestamp'} . " " : "",
+		($config{'show_delays'} && $trace_entry->{'delay'} ne '') ? format_delay($trace_entry->{'delay'}) . ' ' : ''
+	);
+
+	if ($trace_entry->{'syscall'} ne '') {
+		if ($trace_entry->{'ret'} && $config{'adjust_locale'}) {
+			$trace_entry->{'ret'} = change_err_locale($trace_entry->{'ret'});
+		}
+
+		$ret .= sprintf("%s CALL(%s) = %s",
+			$trace_entry->{'syscall'}, $trace_entry->{'args'}, $trace_entry->{'ret'});
+	} elsif ($trace_entry->{'msg'} ne '') { # non-call/return
+		$ret .= $trace_entry->{'msg'};
+	}
+	$ret .= sprintf(" <%s>", $trace_entry->{'elapsed'}) if ($config{'show_elapsed'} && $trace_entry->{'elapsed'} ne '');
+	return $ret;
+}
 sub reconstruct_line {
 	my ($trace_entry) = @_;
 
@@ -984,8 +1021,13 @@ sub reconstruct_line {
 			$trace_entry->{'ret'} = change_err_locale($trace_entry->{'ret'});
 		}
 
-		$ret .= sprintf("%s(%s) = %s",
-			$trace_entry->{'syscall'}, $trace_entry->{'args'}, $trace_entry->{'ret'});
+		if ($config{'double_entry'}) {
+			$ret .= sprintf("%s RETURN(%s) = %s",
+				$trace_entry->{'syscall'}, $trace_entry->{'args'}, $trace_entry->{'ret'});
+		} else {
+			$ret .= sprintf("%s(%s) = %s",
+				$trace_entry->{'syscall'}, $trace_entry->{'args'}, $trace_entry->{'ret'});
+		}
 	} elsif ($trace_entry->{'msg'} ne '') { # non-call/return
 		$ret .= $trace_entry->{'msg'};
 	}
@@ -1368,12 +1410,23 @@ sub extract_metadata {
 
 	my @vals = (split / /, $remain);
 
+	if ($config{'debug'} >= 2) {
+		printf "when extracting metadata: \n";
+		foreach my $z (@vals) {
+			printf "    *%s*\n", $z;
+		}
+		printf "\n";
+	}
+
 	if ($vals[0] =~ $extract_pid_str) {
 		$trace_entry->{'pid'} = $1;
 		shift @vals;
 	} else {
 		$trace_entry->{'pid'} = -1;
 	}
+
+	shift @vals while ($vals[0] eq ""); # sometimes pid is padded with spaces
+
 	if ($vals[0] =~ $extract_timestamp_str) {
 		$trace_entry->{'timestamp'} = $1;
 		$tracking_data{'trace_stats'}{'start_time'} = $trace_entry->{'timestamp'} if (! defined $tracking_data{'trace_stats'}{'start_time'});
@@ -1392,7 +1445,7 @@ sub extract_metadata {
 		$trace_entry->{'elapsed'} = $1;
 		pop @vals;
 	} else {
-		$trace_entry->{'elapsed'} = '';
+		$trace_entry->{'elapsed'} = 0;
 	}
 
 	$trace_entry->{'line'} = join(" ", @vals);
@@ -1485,7 +1538,7 @@ sub extract_metadata {
 	'lchown', 'listxattr', 'lstat',
 
 	'madvise', 'mbind', 'mkdir', 'mknod',
-	'mlock', 'mprotect', 'mremap', 'munmap',
+	'mlock', 'mprotect', 'mremap', 'msync', 'munmap',
 	'mount',
 
 	"nanosleep",
@@ -1494,7 +1547,7 @@ sub extract_metadata {
 
 	'prctl',
 
-	"recvfrom", "recvmsg", "rename", 'rmdir',
+	"recvfrom", "recvmsg", "rename", 'restart_syscall', 'rmdir',
 	'rt_sigaction', "rt_sigpending", 'rt_sigprocmask', 'rt_sigqueueinfo',
 	'rt_sigreturn', "rt_sigtimedwait",
 
@@ -1504,6 +1557,7 @@ sub extract_metadata {
 	"sched_setpriority_min", "sched_setpriority_max",
 	"semctl", "semget", "semop",
 	"setgid", "setgroups", "setpriority",
+	'setitimer',
 	'setrlimit',
 	"setregid", "setresgid", 'setsid',
 	'set_thread_area',
@@ -2418,7 +2472,6 @@ sub parse_generic_dfd_path_function {
 		log_error(sprintf("generic %s(dfd, path...), but '%s' didn't match the regex '%s'\n", $trace_entry->{'syscall'}, $trace_entry->{'args'}, $regexes{'generic_function_dfd_path'}));
 	}
 }
-
 sub myopen {
 	open my $fh, "@_" or die "blah: $!\n";
 	return $fh;
@@ -3057,6 +3110,21 @@ sub output_udp_syslog_frame {
 }
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 if (! -t STDIN) {
 	$config{'input_pipe'} = true;
 	$config{'in_fh'} = \*STDIN;
@@ -3291,7 +3359,13 @@ if (!defined($trace_entry{'syscall'})) {
 		log_error(sprintf("didn't match any patterns: %s\n", $trace_entry{'line'}));
 	}
 
-	$trace_entry{'line'} = reconstruct_line(\%trace_entry);
+	if ($config{'output_lines'}) {
+		$trace_entry{'line'} = reconstruct_line(\%trace_entry);
+	}
+	if ($config{'output_pcap'}) {
+		
+
+	}
 
 	add_syscall_stats(\%trace_entry);
 
