@@ -1,0 +1,207 @@
+#!/bin/bash
+
+# Frank Sorenson <sorenson@redhat.com>, 2022
+# reproducer for Red Hat bugziila 2139504 - autofs segfault
+
+
+autofs_dir="/rhbz2139504"
+mapname="repro"
+mapfile="/etc/$mapname.map"
+gold="$mapfile-gold"
+
+num_children=5		# number of child processes to create
+stat_timeout=60		# timeout the stat after this time - 0 = never timeouot
+stat_error_max=10	# child process exits once it gets this many errors on stat
+sleep_max_centisec=70	# probably best to just leave this at or below 100:  gives 0.0 - 0.99
+			#   second sleeps between stat
+
+reloads_initial_delay=3	# initial delay to let the other processes get started before
+			#   rebuilding the mapfile and sending the first HUP
+reloads_sleep_time=15	# sleep seconds after rebuilding the mapfile and sending HUP
+			#   before repeating
+
+repro_try_max=2		# try sending SIGHUP this many times; if not reproduced,
+			#   stop automount, unmount, restart automount, and try again
+repro_start_max=20	# if we don't repro in this many attempts, exit
+
+reproduced=0
+
+# code used when cleaning up existing autofs mounts
+umount_xargs_procs=10
+umount_xargs_count=25
+umount_rounds=20
+do_unmounts() {
+	pattern=$1
+	umount_type=$2
+
+	umount_round=0
+	while [[ $umount_round -lt $umount_rounds ]] ; do
+		umount_round=$(($umount_round + 1))
+		echo "attempting to unmount $umount_type - umount_round $umount_round"
+
+		to_unmount=$(egrep -o "$pattern" /proc/self/mountinfo | awk '{print $1}')
+
+		[[ -z $to_unmount ]] && { echo "  done" ; break ; }
+
+		echo "  trying to unmount $(echo $to_unmount | wc -w | awk '{print $1}')"
+		# sort by depth
+		to_unmount=$(echo "$to_unmount" | awk  'function depth(s) { count=0 ; while (s != "") { i = index(s, "/") ; if (i == 0) break ; s = substr(s, i + 1) ; count++} return count} { printf "%d %s\n", depth($1), $1}' | sort -rnk1 | awk '{print $2}')
+
+		echo "$to_unmount" | xargs -P $umount_xargs_procs -n $umount_xargs_count umount >/dev/null 2>&1
+		sleep 0.25
+	done
+if [[ -n $to_unmount ]] ; then
+exit
+fi
+}
+cleanup_mounts() {
+	echo "unmounting filesystems"
+
+	automount_pid=$(pidof automount) # kill and restart automount if running
+	[[ -n $automount_pid ]] && { kill -9 $automount_pid ; sleep 0.25 ; }
+
+	do_unmounts '/a/.+ (xfs|ext4|nfs(|4)) ' "bind/nfs mounts"
+	do_unmounts '(/rhbz2139504/| /rhbz2139504 rw).+ autofs ' "new repro autofs mounts"
+
+	[[ -n $automount_pid ]] && { systemctl start autofs.service ; sleep 0.25 ; automount_pid=$(pidof automount) ; }
+}
+
+if [[ $# -eq 1 && ($1 == "unmount" || $1 == "umount") ]] ; then
+	cleanup_mounts
+	exit
+fi
+
+kill_cpids() {
+        local i=0
+        local killsig=SIGINT
+        while [[ -n $cpids ]] ; do
+                new_cpids=""
+                i=$(($i + 1))
+		[[ $i -gt 3 ]] && killsig=SIGKILL
+		for cpid in $cpids ; do
+			if [[ -d /proc/$cpid ]] ; then
+				kill -$killsig $cpid
+				new_cpids="$new_cpids $cpid"
+			else
+				wait $cpid
+			fi
+		done
+		cpids=$new_cpids
+	done
+}
+
+exit_cleanup() {
+	trap - EXIT SIGINT SIGTERM SIGCHLD
+
+	[[ -n $child_id ]] && exit
+	kill_cpids
+	exit
+}
+trap exit_cleanup SIGINT SIGTERM EXIT
+
+do_one_child() {
+	child_id=$1
+
+	stat_errors=0
+	dirs=$(egrep "^$mapname/subdir_a$child_id/.+rhost:=" $gold | awk '{print $1}' | sort -R)
+	dircount=$(echo $dirs | wc -w)
+	if [[ $dircount -eq 0 ]] ; then
+		echo "child $child_id has no work to do...  will just sleep"
+		while [[ 42 ]] ; do sleep 10 ; done
+	fi
+	echo "child $child_id checking $dircount paths under subdir_a$child_id"
+
+	while [[ 42 ]] ; do
+		error=0
+		for dir in $dirs ; do
+			out=$($stat_cmd $autofs_dir/$dir 2>&1 >/dev/null) || { error=1 ; break ; }
+
+			sleep_time=$(( $RANDOM % $sleep_max_centisec ))
+			sleep $(printf "0.%02d" $sleep_time)
+		done
+		[[ $error -eq 1 ]] && {
+			echo "child process $child_id: error calling stat on $autofs_dir/$dir:"
+			echo "$out"
+			stat_errors=$(($stat_errors + 1))
+			[[ $stat_errors -ge $stat_error_max ]] && break
+		}
+	done
+	echo "child process $child_id exiting with error"
+	exit
+}
+do_reloads() {
+	sleep $reloads_initial_delay
+
+	automount_pid=$(pidof automount)
+
+	repro_try=0
+	while [[ $repro_try -lt $repro_try_max && -d /proc/$automount_pid ]] ; do
+		repro_try=$(($repro_try + 1))
+		sort -R $gold >$mapfile.tmp
+#		cp $gold $mapfile.tmp
+		mv $mapfile.tmp $mapfile
+
+		echo "sending SIGHUP #$repro_try"
+		kill -HUP $automount_pid
+		next_reload=$(($SECONDS + $reloads_sleep_time))
+		while [[ $SECONDS -lt $next_reload ]] && [[ -d /proc/$automount_pid ]] ; do
+			sleep 1
+		done
+	done
+	[[ ! -d /proc/$automount_pid ]] && reproduced=1
+
+	[[ $reproduced -eq 1 ]] && echo "automount process appears to have died"
+}
+
+
+[[ -f $gold ]] || { echo "'gold' mapfile '$gold' missing" ; exit 1 ; }
+[[ -f $mapfile ]] || { cp $gold $mapfile ; }
+
+automount_pid=$(pidof automount)
+[[ $? -ne 0 ]] || [[ -z $automount_pid ]] && {
+	echo "could not find automount process; starting"
+	systemctl start autofs.service
+	automount_pid=$(pidof automount)
+}
+echo "automount has pid $automount_pid"
+
+mounted_auto=$(egrep -c " $autofs_dir/$mapname.+ autofs .+$mapname.map " /proc/self/mountinfo)
+[[ $mounted_auto > 1 ]] && {
+	echo "WARNING: mounts exist already...  stopping automount, unmounting, and restarting"
+	cleanup_mounts
+}
+
+if [[ $stat_timeout -gt 0 ]] ; then
+	stat_cmd="timeout $stat_timeout stat "
+else
+	stat_cmd="stat "
+fi
+
+try_one_repro() {
+
+	cpids=""
+	for i in $(seq 1 $num_children) ; do
+		do_one_child $i &
+		cpids="$cpids $!"
+	done
+	echo "  started $(echo $cpids | wc -w) child processes"
+	do_reloads
+}
+
+repro_starts=0
+while [[ $repro_starts -lt $repro_start_max && $reproduced -ne 1 ]] ; do
+	repro_starts=$(($repro_starts + 1))
+
+	try_one_repro
+
+	if [[ $repro_starts -lt $repro_start_max && $reproduced -ne 1 ]] ; then
+		kill_cpids
+		cleanup_mounts
+	fi
+done
+
+if [[ $reproduced -eq 1 ]] ; then
+	echo "successfully reproduced the bug"
+else
+	echo "failed to reproduce the bug"
+fi
