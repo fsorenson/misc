@@ -1,0 +1,22 @@
+#!/bin/bash
+
+img=${1:-foo.fs}
+
+ret=( $(xfs_db -x -c 'sb 0' -c 'p agcount blocksize' $img | awk '{print $NF}') )
+
+ags=${ret[0]}
+bsize=${ret[1]}
+
+
+for i in $(seq 0 $(($ags - 1))) ; do
+	xfs_db -x -c "agi $i" -c 'p unlinked' $img
+done | \
+awk -vimg=$img '
+	BEGIN{ret=""; cmd="xfs_db"}
+	{
+		for (i = 3 ; i<=NF ; i++) {
+			cmd = sprintf("%s -c \"inode %d\" -c \"p core.nblocks\"", cmd, substr($i, index($i, ":") + 1))
+		}
+	}
+	END{cmd = sprintf("%s %s", cmd, img); system(cmd)}
+' | awk -vbsize=$bsize '{blks += $3}  END{ printf "%d\n", bsize * blks }'
