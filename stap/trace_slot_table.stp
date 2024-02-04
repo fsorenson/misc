@@ -1,0 +1,26 @@
+# stap -L 'module("sunrpc").function("xs_setup_xprt")'
+# module("sunrpc").function("xs_setup_xprt@net/sunrpc/xprtsock.c:2726")
+#	$args:struct xprt_create*
+#	$slot_table_size:unsigned int
+#	$max_slot_table_size:unsigned int
+
+# stap -L 'module("sunrpc").function("xs_setup_xprt").return'
+# module("sunrpc").function("xs_setup_xprt@net/sunrpc/xprtsock.c:2726").return
+#	$return:struct rpc_xprt*
+#	$args:struct xprt_create*
+#	$slot_table_size:unsigned int
+#	$max_slot_table_size:unsigned int
+
+probe module("sunrpc").function("xs_setup_xprt") {
+	printf("%s (%d) %s(slot_table_size: %d, max_slot_table_size: %d\n",
+		execname(), tid(), ppfunc(), $slot_table_size, $max_slot_table_size)
+}
+
+probe module("sunrpc").function("xs_setup_xprt").return {
+	xprt = &@cast($return, "struct rpc_xprt", "sunrpc")
+
+	printf("%s (%d) %s(slot_table_size: %d, max_slot_table_size: %d) initialized with max_reqs: %d (current num_reqs: %d)\n",
+		execname(), tid(), ppfunc(), @entry($slot_table_size),
+	       	@entry($max_slot_table_size), xprt->max_reqs, xprt->num_reqs)
+
+}
