@@ -1,0 +1,248 @@
+= strace
+Frank Sorenson <sorenson@redhat.com>
+:toc:
+:source-highlighter: pygments
+:pygments-style: colorful
+:pygments-style: igor
+:tabsize: 4
+
+
+There are tutorials out there which give examples of how to use strace.  This isn't one of them.
+
+There are tutorials out there describing how to hack processes using ptrace.  This isn't one of those either.
+
+In this tutorial, we will create our own rudimentary strace using ptrace.  Once the inner-workings of strace are understood, it will be much easier to understand how to operate the `real` strace program.
+
+
+== How does strace work
+
+strace uses the `ptrace()` system call, which provides a way for one process to observe and control the execution of another process.  The `ptrace()` syscall accepts a number of requests or instructions to control various aspects of the process.
+
+In the case of strace, the first step is for the tracing process (strace) to connect to another process (the traced process) using the `PTRACE_ATTACH` request.  For example:
+
+
+[source,c]
+----
+	ptrace(PTRACE_ATTACH, traced_pid, NULL, NULL);
+----
+
+At this point, the traced process is paused, awaiting further ptrace() instructions from the tracing process.
+
+The tracing process can now perform such tasks as:
+
+[cols="2a,1"]
+|===
+|[source,c]
+----
+ptrace(PTRACE_GETREGS, traced_pid, NULL, &registers)
+----
+|Read the values of the cpu registers of the traced process
+
+|[source,c]
+----
+ptrace(PTRACE_GETREGSET, traced_pid, NT_PRSTATUS, io_vector)
+----
+|Read the values of a set of cpu registers of the traced process
+
+|[source,c]
+----
+ptrace(PTRACE_SETREGS, traced_pid, NULL, &registers)
+----
+|Set the values of the cpu registers of the traced process
+
+|[source,c]
+----
+ptrace(PTRACE_SYSCALL, traced_pid, NULL, NULL)
+----
+|Restart the traced process, but stop it again when it makes or returns from the next syscall
+
+|[source,c]
+----
+ptrace(PTRACE_SETOPTIONS, traced_pid, 0, OPTION)
+----
+|Set a ptrace option for the traced process
+
+|===
+
+
+With the above ptrace calls, we can implement most of what the `strace` program actually does.
+
+Here is strace in its most basic form:
+
+[source,c]
+----
+void trace_process(pid_t traced_pid) {
+	struct user_regs_struct regs;
+	int status;
+
+	ptrace(PTRACE_ATTACH, traced_pid, NULL, NULL);
+	ptrace(PTRACE_SETOPTIONS, traced_pid, NULL, PTRACE_O_EXITKILL);
+	ptrace(PTRACE_SETOPTIONS, traced_pid, NULL, PTRACE_O_TRACESYSGOOD);
+	ptrace(PTRACE_SYSCALL, traced_pid, NULL, NULL);
+
+	while (1) {
+		waitpid(traced_pid, &status, 0);
+		if (WIFEXITED(status)) // traced process exited
+			break;
+		printf("got a syscall!\n");
+
+		ptrace(PTRACE_SYSCALL, traced_pid, NULL, NULL);
+		waitpid(traced_pid, &status, 0);
+		if (WIFEXITED(status)) // traced process exited
+			break;
+
+		printf("returned from a syscall\n");
+		ptrace(PTRACE_SYSCALL, traced_pid, NULL, NULL);
+	}
+}
+----
+
+In the above code, we first attach to the process, set some options, and then tell the system to run the traced process until it gets to the next system call or system call return.  When the system call occurs, the tracer will be awakened, print "got a syscall!", and tell the system to restart the traced process until it gets to the next system call or system call return.  When that happens, we output "returned from a syscall!" and start the loop again.
+
+
+Obviously there's more to `strace` than just stopping and starting the traced process.  The program has options for outputting plenty of additional information, such as a timestamp for when the event occurred, the system call name, the arguments to the system call, and the return value.  These are achieved using various other `ptrace` directives.
+
+First order of business would be to determine what the syscall is so that we know how to decode and output it.  To do this, we need to make a ptrace(PTRACE_GETREGS) call to obtain the current cpu registers:
+
+[source,c]
+----
+		ptrace(PTRACE_GETREGS, traced_pid, NULL, &regs);
+----
+
+Here, `regs` is a `struct user_regs_struct`, defined in `sys/user.h`, with members for each of the CPUs registers:
+[source,c]
+----
+struct user_regs_struct
+{
+  __extension__ unsigned long long int r15;
+  __extension__ unsigned long long int r14;
+  __extension__ unsigned long long int r13;
+  __extension__ unsigned long long int r12;
+  __extension__ unsigned long long int rbp;
+  __extension__ unsigned long long int rbx;
+  __extension__ unsigned long long int r11;
+  __extension__ unsigned long long int r10;
+  __extension__ unsigned long long int r9;
+  __extension__ unsigned long long int r8;
+  __extension__ unsigned long long int rax;
+  __extension__ unsigned long long int rcx;
+  __extension__ unsigned long long int rdx;
+  __extension__ unsigned long long int rsi;
+  __extension__ unsigned long long int rdi;
+  __extension__ unsigned long long int orig_rax;
+  __extension__ unsigned long long int rip;
+  __extension__ unsigned long long int cs;
+  __extension__ unsigned long long int eflags;
+  __extension__ unsigned long long int rsp;
+  __extension__ unsigned long long int ss;
+  __extension__ unsigned long long int fs_base;
+  __extension__ unsigned long long int gs_base;
+  __extension__ unsigned long long int ds;
+  __extension__ unsigned long long int es;
+  __extension__ unsigned long long int fs;
+  __extension__ unsigned long long int gs;
+};
+----
+
+
+
+For example, here is the sam
+
+
+
+
+For example, 
+
+
+
+
+
+Previous versions of this tutorial used `fusepy` for the python bindings to fuse.  Unfortunately, `fusepy` has been suffering bitrot, and is no longer a reliable set of bindings, so this version now uses the C bindings for fuse.  This requires the libs and devel components to be installed (fuse3-libs and fuse-devel in Fedora 37).  The C bindings have both a low-level and a high-level interface, and we'll just be using the high-level interface here.
+
+This filesystem is a silly use of fuse and filesystems in general, but should give an idea of what writing a filesystem entails.
+
+
+== circlefs - our example filesystem
+
+
+Our example filesystem will be a simple in-memory pseudo-filesystem named circlefs.  circlefs will store one piece of information, `radius`, which can be changed as desired.
+
+In addition to radius, the filesystem will provide files containing the `circumference` and `diameter` of a circle with the stored radius, as well as a file containing the value of `pi`.  All files will be read-write (except for `pi`, which will be read-only for obvious reasons).  Reading from any file will return either the value of the radius, the value of pi, or the computed value associated with the name of the file.  Modifying any file will result in a corresponding change to radius.
+
+
+== Excuse me... is that a skeleton in your closet?
+
+We start out with nothing but the skeleton C code, most of which we'll put into a header file:
+
+[source,c]
+.circlefs.h
+----
+#ifndef __CIRCLEFS_H__
+#define __CIRCLEFS_H__
+#define _GNU_SOURCE
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <inttypes.h>
+#include <math.h>
+#include <string.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <sys/sysmacros.h>
+
+#define FUSE_USE_VERSION 31
+
+#include <fuse3/fuse.h>
+
+struct circlefs_data {
+        long double radius;
+};
+
+#endif
+----
+
+[source,c]
+.circlefs.c
+----
+#include "circlefs.h"
+
+struct circlefs_data circlefs_data = {
+        .radius = 0,
+};
+
+static const struct fuse_operations circlefs_ops = {
+};
+
+int main(int argc, char *argv[]) {
+	return fuse_main(argc, argv, &circlefs_ops, NULL);
+}
+----
+
+
+== Houston, we have a filesystem (well, sort of)
+
+Let's compile it and test it out to see what it does (hint: nothing yet):
+
+[source,bash]
+----
+$ gcc -Wall circlefs.c -o circlefs -g -lfuse3
+$ mkdir mnt
+$ ./circlefs mnt
+
+$ ls -al mnt
+ls: cannot access 'mnt': Function not implemented
+$ ls -ald mnt
+ls: cannot access 'mnt': Function not implemented
+----
+
+So our filesystem really does nothing at this point.  But hey...  we did it.  I guess.
+
+Let's unmount before we forget:
+[source,bash]
+----
+$ fusermount -u mnt
+----
+
+// asciidoc -a data-uri -a icons -a toc -a max-width=55em writing_circlefs.adoc
