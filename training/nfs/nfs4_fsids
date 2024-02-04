@@ -1,0 +1,109 @@
+
+mkdir -p /exports/subdir{1,2,3,4}
+truncate -s 100M /exports/fs1.img && mkfs.xfs /exports/fs1.img >/dev/null 2>&1
+truncate -s 100M /exports/fs2.img && mkfs.xfs /exports/fs2.img >/dev/null 2>&1
+
+mount /exports/fs1.img /exports/subdir1
+mount /exports/fs2.img /exports/subdir2
+for i in {1..4} ; do touch /exports/subdir$i/file_in_subdir_$i ; done
+mount --bind /exports/subdir1 /exports/subdir3
+
+/etc/exports:
+	/exports *(rw,no_root_squash,fsid=0,crossmnt)
+
+exportfs -au ; exportfs -av
+
+
+
+# exportfs -au ; exportfs -av
+exporting *:/exports
+
+# showmount -e
+Export list for vm9:
+/exports *
+
+# losetup -a
+/dev/loop1: [64768]:1172018 (/exports/fs2.img)
+/dev/loop0: [64768]:1172013 (/exports/fs1.img)
+
+# grep exports /proc/self/mountinfo
+265 61 7:0 / /exports/subdir1 rw,relatime shared:137 - xfs /dev/loop0 rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,noquota
+274 61 7:1 / /exports/subdir2 rw,relatime shared:142 - xfs /dev/loop1 rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,noquota
+283 61 7:0 / /exports/subdir3 rw,relatime shared:137 - xfs /dev/loop0 rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,noquota
+
+# blkid | grep loop
+/dev/loop0: UUID="2eb69a5a-18bb-4af6-8280-49fb61ad56f4" BLOCK_SIZE="512" TYPE="xfs"
+/dev/loop1: UUID="808006c2-a8f6-41fc-8b88-afbec67c1773" BLOCK_SIZE="512" TYPE="xfs"
+
+
+# stat -c "%A %6D  %10i  %n" /exports /exports/subdir* /exports/subdir*/*
+drwxr-xr-x   fd00     1174047  /exports
+drwxr-xr-x    700         128  /exports/subdir1
+drwxr-xr-x    701         128  /exports/subdir2
+drwxr-xr-x    700         128  /exports/subdir3
+drwxr-xr-x   fd00   202086023  /exports/subdir4
+-rw-r--r--    700         131  /exports/subdir1/file_in_subdir_1
+-rw-r--r--    701         131  /exports/subdir2/file_in_subdir_2
+-rw-r--r--    700         131  /exports/subdir3/file_in_subdir_1
+-rw-r--r--   fd00   202086026  /exports/subdir4/file_in_subdir_4
+
+
+
+
+# mount 127.0.0.1:/ /mnt/tmp
+
+# grep nfs /proc/self/mountinfo
+293 61 0:38 / /mnt/tmp rw,relatime shared:151 - nfs4 127.0.0.1:/ rw,vers=4.2,rsize=262144,wsize=262144,namlen=255,hard,proto=tcp,timeo=600,retrans=2,sec=sys,clientaddr=127.0.0.1,local_lock=none,addr=127.0.0.1
+
+
+# stat -c "%A %6D  %10i  %n" /mnt/tmp /mnt/tmp/subdir* /mnt/tmp/subdir*/*
+drwxr-xr-x     26     1174047  /mnt/tmp
+drwxr-xr-x     27         128  /mnt/tmp/subdir1
+drwxr-xr-x     28         128  /mnt/tmp/subdir2
+drwxr-xr-x     27         128  /mnt/tmp/subdir3
+drwxr-xr-x     26   202086023  /mnt/tmp/subdir4
+-rw-r--r--     27         131  /mnt/tmp/subdir1/file_in_subdir_1
+-rw-r--r--     28         131  /mnt/tmp/subdir2/file_in_subdir_2
+-rw-r--r--     27         131  /mnt/tmp/subdir3/file_in_subdir_1
+-rw-r--r--     26   202086026  /mnt/tmp/subdir4/file_in_subdir_4
+
+
+# grep nfs4 /proc/self/mountinfo
+293 61 0:38 / /mnt/tmp rw,relatime shared:151 - nfs4 127.0.0.1:/ rw,vers=4.2,rsize=262144,wsize=262144,namlen=255,hard,proto=tcp,timeo=600,retrans=2,sec=sys,clientaddr=127.0.0.1,local_lock=none,addr=127.0.0.1
+292 293 0:39 / /mnt/tmp/subdir3 rw,relatime shared:156 - nfs4 127.0.0.1:/subdir3 rw,vers=4.2,rsize=262144,wsize=262144,namlen=255,hard,proto=tcp,timeo=600,retrans=2,sec=sys,clientaddr=127.0.0.1,local_lock=none,addr=127.0.0.1
+331 293 0:40 / /mnt/tmp/subdir2 rw,relatime shared:161 - nfs4 127.0.0.1:/subdir2 rw,vers=4.2,rsize=262144,wsize=262144,namlen=255,hard,proto=tcp,timeo=600,retrans=2,sec=sys,clientaddr=127.0.0.1,local_lock=none,addr=127.0.0.1
+340 293 0:39 / /mnt/tmp/subdir1 rw,relatime shared:177 - nfs4 127.0.0.1:/subdir3 rw,vers=4.2,rsize=262144,wsize=262144,namlen=255,hard,proto=tcp,timeo=600,retrans=2,sec=sys,clientaddr=127.0.0.1,local_lock=none,addr=127.0.0.1
+
+
+# cat /proc/fs/nfsfs/servers
+NV SERVER   PORT USE HOSTNAME
+v4 7f000001  801   3 127.0.0.1
+
+# cat /proc/fs/nfsfs/volumes
+NV SERVER   PORT DEV          FSID                              FSC
+v4 7f000001  801 0:38         0:0                               no 
+v4 7f000001  801 0:39         2eb69a5a18bb4af6:828049fb61ad56f4 no 
+v4 7f000001  801 0:40         808006c2a8f641fc:8b88afbec67c1773 no 
+
+                 ^^^^         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ fsid == uuid seen with blkid above
+                 ^^^^ device matches third column of /proc/self/mountinfo device
+
+
+and as far as the server goes:
+# cat /proc/net/rpc/nfsd.export/content
+#path domain(flags)
+/exports	*(rw,no_root_squash,sync,wdelay,crossmnt,no_subtree_check,fsid=0,uuid=4da63b13:b39b494c:a41a13b7:a7afbd02,sec=1)
+/exports/subdir2	*(rw,no_root_squash,sync,wdelay,crossmnt,no_subtree_check,uuid=808006c2:a8f641fc:8b88afbe:c67c1773,sec=1)
+/exports/subdir1	*(rw,no_root_squash,sync,wdelay,crossmnt,no_subtree_check,uuid=2eb69a5a:18bb4af6:828049fb:61ad56f4,sec=1)
+/exports/subdir3	*(rw,no_root_squash,sync,wdelay,crossmnt,no_subtree_check,uuid=2eb69a5a:18bb4af6:828049fb:61ad56f4,sec=1)
+
+
+# cat /proc/net/rpc/nfsd.fh/content
+#domain fsidtype fsid [path]
+* 6 0xc2068080fc41f6a8beaf888b73177cc6 /exports/subdir2
+* 1 0x00000000 /exports
+* 6 0x5a9ab62ef64abb18fb498082f456ad61 /exports/subdir1
+
+
+
+
