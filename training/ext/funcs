@@ -1,0 +1,31 @@
+filename_min_digits=6
+filename_max_digits=46
+filename_digits_span=$(($filename_max_digits - $filename_min_digits))
+filename_digits_div=$(($filename_digits_span / 4))
+
+make_entry_name() {
+        local i=$1
+        local digits=$(( (($i % $filename_digits_div) * 4) + 6 ))
+        printf "entry_%0${digits}d" $i
+}
+
+get_hash_seed () {
+	seed=$(dumpe2fs -h test.img 2>/dev/null | grep Hash | awk '{print $NF}')
+}
+
+# check hash $test_hash $min_hash
+# $test_hash must be >= $min_hash
+check_hash_lt() { [[ $(( $1 )) -lt $(( $2 )) ]] ; }
+check_hash_le() { [[ $(( $1 )) -lt $(( $2 )) ]] ; }
+check_hash_gt() { [[ $(( $1 )) -gt $(( $2 )) ]] ; }
+check_hash_ge() { [[ $(( $1 )) -ge $(( $2 )) ]] ; }
+# check_hash_range $test_hash $low_hash $high_hash
+#   $low_hash <= $test_hash < $high_hash
+check_hash_range() {
+        check_hash_ge $1 $2 && check_hash_lt $1 $3
+}
+get_hash() {
+        DEBUGFS_PAGER=/bin/cat debugfs -R "dx_hash -h half_md4 -s $seed $1" $fsfile 2>/dev/null | \
+                awk '{print $5" "substr($NF,1,length($NF)-1)}'
+}
+

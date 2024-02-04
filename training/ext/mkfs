@@ -1,0 +1,55 @@
+#!/bin/bash
+
+hash_seed=09567860-3a0d-46ef-960d-d582c7c80c8f
+
+sudo umount mnt >/dev/null 2>&1
+rm -f test.img
+truncate -s 1G test.img
+mkfs.ext4 test.img -b 1024 -m 0 >/dev/null 2>&1
+#mkfs.ext4 test.img -b 4096 >/dev/null 2>&1
+
+out=$(DEBUGS_PAGER=/bin/cat debugfs -w -R "ssv hash_seed $hash_seed" test.img 2>&1)
+echo $out
+
+#tune2fs -O dir_nlink test.img
+#tune2fs -O large_dir test.img
+
+dumpe2fs -h test.img | egrep -i hash
+
+sudo mount test.img mnt
+sudo chown -R $(id -u):$(id -g) mnt
+
+#for i in {1..512} ; do
+#	touch $(printf "mnt/test_%033d" $i)
+#done
+
+#rm -f mnt/test_*
+
+#for i in {1..512} ; do
+#	rm $(printf "mnt/test_%033d" $i)
+#	touch $(printf "mnt/test_%0120d" $i)
+#done
+
+
+#cat filenames | while read f ; do
+#	touch mnt/$f
+#done
+cat filenames-no_large_dir | xargs -I {} touch mnt/{}
+
+
+
+#for i in {1..4096} ; do
+#	touch $(printf "mnt/test_%0250d" $i)
+#done
+
+#rm -f mnt/test_*
+
+echo "try to create file mnt/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaePI"
+touch mnt/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaePI
+
+sync
+sudo mount -oremount mnt
+
+#sudo umount mnt
+
+
