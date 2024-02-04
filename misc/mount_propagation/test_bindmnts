@@ -1,0 +1,78 @@
+#!/bin/bash
+
+# already done
+# cd /var/tmp
+# truncate -s 100G test_fs
+# mkfs -t xfs test_fs >/dev/null 2>&1
+# mkdir /mnt
+# mount test_fs /mnt
+# mkdir /mnt/mnt
+
+bind_mount_path=/mnt/mnt
+
+
+fmt="%10s %13s %13s %13s %14s\n"
+
+
+do_umount() {
+	local out ret
+#	local count=0
+
+	while [[ 42 ]] ; do
+		out=$(umount $bind_mount_path 2>&1)
+		ret=$?
+		if [[ $ret -ne 0 ]] ; then
+			[[ $out =~ not\ mounted ]] && break
+			echo "unable to unmount: $out"
+			exit
+		fi
+#		count=$(($count + 1))
+	done
+#	echo "unmounted $count times"
+}
+
+count_entries() {
+	grep -c $bind_mount_path /proc/self/mountinfo
+}
+
+do_test() {
+	local count n time1 time2 time3 ret mount_time grep_time new_entries
+	local propagation=$1
+
+	do_umount
+
+	echo "propagation: $propagation"
+	printf "$fmt" "mount_#" "time-to-mount" "new_mounts" "total_mounts" "time-to-read_/proc/self/mountinfo"
+
+	count=$(count_entries)
+	for n in {1..20} ; do
+		last_count=$count
+		time1=$(date +%s.%N)
+		mount -o bind,$propagation,ro $bind_mount_path $bind_mount_path 2>&1
+		ret=$?
+		time2=$(date +%s.%N)
+		if [[ $ret -eq 0 ]] ; then
+			count=$(count_entries)
+			time3=$(date +%s.%N)
+
+			new_entries=$(($count - $last_count))
+			grep_time=$(echo "scale=9 ; $time3 - $time2" | bc)
+		else
+			count=$last_count
+			grep_time=""
+			new_entries=""
+		fi
+		mount_time=$(echo "scale=9 ; $time2 - $time1" | bc)
+
+		printf "$fmt" "$n" $mount_time "$new_entries" "$count" "$grep_time"
+
+		[[ $ret -ne 0 ]] && break
+	done
+	echo
+}
+
+#for prop in private shared ; do
+#for prop in private rprivate slave rslave shared rshared ; do
+for prop in private rprivate slave rslave ; do
+	do_test $prop
+done
