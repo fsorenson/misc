@@ -18,10 +18,56 @@ exit_cleanup() {
 trap exit_cleanup SIGINT SIGTERM EXIT
 
 echo "$pwd" | egrep -q : && echo "current path includes ':' characters, which will prevent gdb from locating files correctly; please rename the directory to eliminate the ':'s - often the following (repeated twice) will work:  rename : . <PATH>" >&2
-[[ -f dso_list ]] || {
-	echo "dso_list file not found" >&2
-	exit
+dso_list_file=dso_list
+
+
+declare -A sos_installed_rpms
+find_sos_installed() {
+	sos_installed_file=$(echo sos*/installed-rpms | awk '{print $1}')
+	[[ ! -f $sos_installed_file ]] && echo "no sosreport*/installed-rpms file" >&2 && exit
 }
+
+NVRA_RE='^(.*)-([^-]{1,})-([^-]{1,})\.([^-.]+)$'
+load_sos_installed() {
+	local rpm date pkg
+
+	echo -e "reading list of installed rpms from $sos_installed_file\n" >&2
+	for pkg in $(awk '{print $1}' $sos_installed_file) ; do
+		if [[ $pkg =~ $NVRA_RE ]] ; then
+			local n=${BASH_REMATCH[1]}
+			local v=${BASH_REMATCH[2]}
+			local r=${BASH_REMATCH[3]}
+			local a=${BASH_REMATCH[4]}
+
+			local value_str="$v-$r.$a"
+			[[ -n ${sos_installed_rpms[$n]} ]] && value_str="${sos_installed_rpms[$n]} $value_str"
+			sos_installed_rpms[$n]="$value_str"
+		else
+			:
+		fi
+	done
+}
+find_sos_installed
+load_sos_installed
+
+if [[ ! -f dso_list ]] ; then
+	dso_list_file=fake_dso_list
+
+	echo "dso_list file not found" >&2
+	echo "attempting to generate one" >&2
+
+	libs=$(readelf -a coredump | egrep '\s+/' | sort -u)
+	for lib in $libs ; do
+		if [[ -f $lib ]] ; then
+			rpm_name=$(rpm -qf --qf '%{NAME}\n' $lib)
+			rpm_nvra=${sos_installed_rpms[$rpm_name]}
+			[[ -n $rpm_nvra ]] || continue
+
+			echo "$lib $rpm_name-$rpm_nvra"
+		fi
+	done >$dso_list_file
+fi
+
 [[ -d $rpms_base_dir ]] || {
 	echo "nfs-mounted RPMs directory not found.  Please set up autofs with the following:" >&2
 	echo "/etc/auto.master.d/RH.autofs" >&2
@@ -270,7 +316,7 @@ LD_PRELOAD="$LD_PRELOAD_TMP" rpm -Uvh $rpm_args --nodeps --root=$pwd/root $files
 echo "determining needed rpms" >&2
 needed_rpms=$(while read path rpm_name other ; do
 	echo $rpm_name
-done <dso_list | sort -u)
+done <$dso_list_file | sort -u)
 
 echo "looking for rpms" >&2
 rpm_paths=$(for rpm_name in $needed_rpms ; do
