@@ -39,8 +39,13 @@
 #define offsetof(TYPE, MEMBER) ((size_t) &((TYPE *)0)->MEMBER)
 #endif
 
+#define min(_a,_b) ({ typeof(_a) a = _a; typeof(_b) b = _b; a < b ? a : b; })
+
 static int buf_size = DEFAULT_BUF_SIZE;
 static char *path = ".";
+
+#define CSI_CODE(seq)	"\33[" seq
+#define CSI_SGR(x)	CSI_CODE(#x) "m"
 
 #define ANSI_RESET      "\x1b[0m"
 #define ANSI_BOLD_ON    "\x1b[1m"
@@ -48,22 +53,37 @@ static char *path = ".";
 
 #define ANSI_INVERSE_ON "\x1b[7m"
 
-#define ANSI_FG_BLACK   "\x1b[30m"
-#define ANSI_FG_RED     "\x1b[31m"
-#define ANSI_FG_GREEN   "\x1b[32m"
-#define ANSI_FG_YELLOW  "\x1b[33m"
-#define ANSI_FG_BLUE    "\x1b[34m"
-#define ANSI_FG_MAGENTA "\x1b[35m"
-#define ANSI_FG_CYAN    "\x1b[36m"
-#define ANSI_FG_WHITE   "\x1b[37m"
+#define ANSI_FG_BLACK	"\x1b[30m"
+#define ANSI_FG_RED	"\x1b[31m"
+#define ANSI_FG_GREEN	"\x1b[32m"
+#define ANSI_FG_YELLOW	"\x1b[33m"
+#define ANSI_FG_BLUE	"\x1b[34m"
+#define ANSI_FG_MAGENTA	"\x1b[35m"
+#define ANSI_FG_CYAN	"\x1b[36m"
+#define ANSI_FG_WHITE	"\x1b[37m"
 
-#define ANSI_BG_RED     "\x1b[41m"
-#define ANSI_BG_GREEN   "\x1b[42m"
-#define ANSI_BG_YELLOW  "\x1b[43m"
-#define ANSI_BG_BLUE    "\x1b[44m"
-#define ANSI_BG_MAGENTA "\x1b[45m"
-#define ANSI_BG_CYAN    "\x1b[46m"
-#define ANSI_BG_WHITE   "\x1b[47m"
+#define ANSI_BG_BLACK	"\x1b[40m"
+#define ANSI_BG_RED	"\x1b[41m"
+#define ANSI_BG_GREEN	"\x1b[42m"
+#define ANSI_BG_YELLOW	"\x1b[43m"
+#define ANSI_BG_BLUE	"\x1b[44m"
+#define ANSI_BG_MAGENTA	"\x1b[45m"
+#define ANSI_BG_CYAN	"\x1b[46m"
+#define ANSI_BG_WHITE	"\x1b[47m"
+
+
+
+typedef enum { color_normal, color_ino, color_offset, color_reclen, color_type, color_name, color_filler, color_none } color_code;
+char *color_code_colors[] = {
+	[color_normal] = ANSI_RESET,
+	[color_ino] = ANSI_FG_CYAN,
+	[color_offset] = ANSI_FG_RED,
+	[color_reclen] = ANSI_FG_BLUE,
+	[color_type] = ANSI_FG_GREEN,
+	[color_name] = ANSI_FG_YELLOW,
+	[color_filler] = ANSI_FG_BLACK ANSI_BG_WHITE,
+	[color_none] = ANSI_FG_BLACK ANSI_BG_BLACK,
+};
 
 void dump_dirent(void) {
 	struct dirent de;
@@ -117,249 +137,114 @@ char *stat_file_type_str(int t) {
 	return type;
 }
 
-static void hexdump(const char *pre, size_t buf_offset, const char *addr, size_t len) {
-	size_t offset = 0;
-	char buf[17];
-	int i;
-
-	while (offset < len) {
-		int this_count = len - offset;
-		if (this_count > 16)
-		this_count = 16;
-
-		memcpy(buf, addr + offset, this_count);
-		printf("%s0x%08" PRIx32 ": ", pre, (uint32_t)(buf_offset + offset));
-		for (i = 0 ; i < 16 ; i++) {
-			if (i < this_count)
-				printf("%02x ", buf[i] & 0xff);
-			else
-				printf("   ");
-			if (i == 7)
-				printf("| ");
-			if (i >= this_count)
-				buf[i] = '\0';
-			else if (! isprint(buf[i] & 0xff))
-				buf[i] = '.';
-		}
-		buf[i] = '\0';
-		printf(" |%s|\n", buf);
-		offset += this_count;
-	}
-}
-
-enum hexdump_output_flags {
-	OUTPUT_NORMAL = 0,
-	OUTPUT_FLUSH_ONLY,
-	OUTPUT_FLUSH_AFTER,
-	OUTPUT_RESET,
-};
-
-void hexdump_output_add_char(const unsigned char ch, const char *color_code, int flag) {
-	static char output_buf[256] = [ '\0' ];
-	static int current_offset = 0;
-	static int output_buf_len = 0;
-
-	if (flag == OUTPUT_FLUSH_ONLY) {
-		if (current_offset % 16 == 0)
-			return;
-
-
-
-	if (current_offset % 16 == 0) {
-		printf("  0x%08" PRIx32 ": ", (uint32_t)current_offset);
-		output_buf_len = 0;
-		output_buf[0] = 0;
-	}
-
-
-				02" PRIx32 " ", (uint32_t)
-				addr[current_offset] & 0xff);
-
-
-
-
 static void dump_color_dirent(const char *addr, size_t entry_start) {
 	struct dirent *de = (struct dirent *)addr;
-	size_t end_offset = entry_start + de->d_reclen;
-	size_t current_offset = entry_start;
-	char hexbuf[128];
-	int hexbuf_len = 0;
-	int this_count;
+	size_t dirent_offset = 0; // offset from start of current dirent
+	char hexbuf[4096];
+	char colorbuf[4096];
+
+	int filler_len = 0;
+	int namelen;
 	int i;
 
-	printf("(" ANSI_FG_CYAN "%3d" ANSI_RESET " bytes) ", de->d_reclen);
-	printf(ANSI_FG_GREEN "%s" ANSI_RESET "; ", stat_file_type_str(DTTOIF(de->d_type)));
-	printf("inode " ANSI_FG_RED "%12lu" ANSI_RESET ": ", de->d_ino);
-	printf(ANSI_INVERSE_ON "%s" ANSI_RESET, de->d_name);
-	printf("\n");
+	// fill the colorbuf
+	memset(colorbuf, color_normal, sizeof(colorbuf));
+// printf("entry_start: %ld\n", entry_start);
+	for (i = 0 ; i < sizeof(de->d_ino) ; i++)
+		colorbuf[dirent_offset++] = color_ino;
 
-	printf(" offset of next entry: " ANSI_FG_YELLOW "%lu" ANSI_RESET "\n", de->d_off);
+	for (i = 0 ; i < sizeof(de->d_off) ; i++)
+		colorbuf[dirent_offset++] = color_offset;
 
+	for (i = 0 ; i < sizeof(de->d_reclen) ; i++)
+		colorbuf[dirent_offset++] = color_reclen;
 
-	printf("    0x%08" PRIx32 ": ", (uint32_t)current_offset);
-	printf(ANSI_FG_RED);
-	hexbuf_len += snprintf(hexbuf, sizeof(hexbuf) - hexbuf_len, "%s", ANSI_FG_RED);
-	for (current_offset = 0 ; current_offset < sizeof(de->d_ino) ; current_offset++) {
-		printf("%02" PRIx32 " ", (uint32_t)addr[current_offset] & 0xff);
+	for (i = 0 ; i < sizeof(de->d_type) ; i++)
+		colorbuf[dirent_offset++] = color_type;
 
-		if (isprint(addr[current_offset] & 0xff))
-			hexbuf[hexbuf_len++] = addr[current_offset];
-		else
-			hexbuf[hexbuf_len++] = '.';
-		hexbuf[hexbuf_len] = '\0';
-	}
-	hexbuf_len += snprintf(hexbuf + hexbuf_len, sizeof(hexbuf) - hexbuf_len, "%s", ANSI_RESET);
+	namelen = strlen(de->d_name);
 
-	if (current_offset == 8)
-		printf(" | ");
+	for (i = 0 ; i < namelen ; i++)
+		colorbuf[dirent_offset++] = color_name;
+	filler_len = de->d_reclen - dirent_offset;
+	while (dirent_offset < de->d_reclen)
+		colorbuf[dirent_offset++] = color_filler;
 
-	printf(ANSI_FG_YELLOW);
-	hexbuf_len += snprintf(hexbuf + hexbuf_len, sizeof(hexbuf) - hexbuf_len, "%s", ANSI_FG_YELLOW);
-	for ( ; current_offset < sizeof(de->d_ino) + sizeof(de->d_off) ; current_offset++) {
-		printf("%02" PRIx32 " ", (uint32_t)addr[current_offset] & 0xff);
-		if (isprint(addr[current_offset] & 0xff))
-			hexbuf[hexbuf_len++] = addr[current_offset];
-		else
-			hexbuf[hexbuf_len++] = '.';
-		hexbuf[hexbuf_len] = '\0';
-	}
-	printf(ANSI_RESET);
-	hexbuf_len += snprintf(hexbuf + hexbuf_len, sizeof(hexbuf) - hexbuf_len, "%s", ANSI_RESET);
+	memcpy(hexbuf, addr, de->d_reclen);
 
-/*
-	printf(ANSI_FG_RED "%02lx %02lx %02lx %02lx %02lx %02lx %02lx %02lx" ANSI_RESET,
-		 de->d_ino & 0xff, (de->d_ino >> 8) & 0xff, (de->d_ino >> 16) & 0xff, (de->d_ino >> 24) & 0xff,
-		 (de->d_ino >> 32) & 0xff, (de->d_ino >> 40) & 0xff, (de->d_ino >> 48) & 0xff, (de->d_ino >> 56) & 0xff);
+	dirent_offset = 0;
+	while (dirent_offset < de->d_reclen) {
+		int start_skip = min(16, (entry_start + dirent_offset) % 16);
+		int output_bytes = min(16 - start_skip, de->d_reclen - dirent_offset);
+		int end_skip = 16 - start_skip - output_bytes;
 
-	d_ino: offset=0, size=8
-	d_off: offset=8, size=8
-	d_reclen: offset=16, size=2
-	d_type: offset=18, size=1
+//		printf("at this dirent's offset of %ld:  start_skip: %d, output_bytes: %d, end_skip: %d\n",
+//			dirent_offset, start_skip, output_bytes, end_skip);
 
-	hexbuf_len += snprintf(hexbuf + hexbuf_len, sizeof(hexbuf) - hexbuf_len, "%s", ANSI_RESET);
+		printf("%08lx  ", entry_start + dirent_offset - start_skip);
 
-	printf(" | ");
-	printf(ANSI_FG_YELLOW "%02lx %02lx %02lx %02lx %02lx %02lx %02lx %02lx" ANSI_RESET,
-		de->d_off & 0xff, (de->d_off >> 8) & 0xff, (de->d_off >> 16) & 0xff, (de->d_off >> 24) & 0xff,
-		(de->d_off >> 32) & 0xff, (de->d_off >> 40) & 0xff, (de->d_off >> 48) & 0xff, (de->d_off >> 56) & 0xff);
+		for (i = 0 ; i < start_skip ; i++)
+			printf("   ");
+		if (start_skip >= 8)
+			printf(" ");
 
-	hexbuf_len += snprintf(hexbuf + hexbuf_len, sizeof(hexbuf) - hexbuf_len, "%s", ANSI_FG_YELLOW);
-	for (current_offset = 8 ; current_offset < 16 ; current_offset++) {
-		if (isprint(addr[current_offset] & 0xff))
-			hexbuf[hexbuf_len++] = addr[current_offset];
-		else
-			hexbuf[hexbuf_len++] = '.';
-		hexbuf[hexbuf_len] = '\0';
-	}
-	hexbuf_len += snprintf(hexbuf + hexbuf_len, sizeof(hexbuf) - hexbuf_len, "%s", ANSI_RESET);
-
-	if (hexbuf_len >= 16) {
-	printf("  [%s]", hexbuf);
-
-	printf("\n");
-*/
-
-	if (current_offset >= 16) {
-		printf("  |%s|", hexbuf);
-		hexbuf_len = 0;
-		printf("\n");
-	}
-
-
-	printf("    0x%08" PRIx32 ": ", (uint32_t)current_offset);
-	printf(ANSI_FG_CYAN "%02x %02x" ANSI_RESET, de->d_reclen & 0xff, (de->d_reclen >> 8) & 0xff);
-	current_offset += 2;
-
-	printf(" " ANSI_FG_GREEN "%02x" ANSI_RESET, de->d_type & 0xff);
-	current_offset += 1;
-
-	printf(" " ANSI_INVERSE_ON "%s" ANSI_RESET, de->d_name);
-/*
-
-	this_count = 3;
-	while (current_offset < end_offset) {
-		int this_count = end_offset - current_offset;
-		if (this_count > 16)
-
-*/
-
-/*
-	while (offset < len) {
-		int this_count = len - offset;
-		if (this_count > 16)
-			this_count = 16;
-
-		memcpy(buf, addr + offset, this_count);
-		printf("%s0x%08lx: ", pre, buf_offset + offset);
-		for (i = 0 ; i < 16 ; i++) {
-			if (i < this_count)
-				printf("%02x ", buf[i] & 0xff);
-			else
-				printf("   ");
-			if (i == 7)
-				printf("| ");
-			if (i >= this_count)
-				buf[i] = '\0';
-			else if (! isprint(buf[i] & 0xff))
-				buf[i] = '.';
+		for (i = 0 ; i < output_bytes ; i++) {
+			unsigned char ch = hexbuf[dirent_offset + i];
+			printf("%s%02x%s ", color_code_colors[(int)colorbuf[dirent_offset + i]], ch, color_code_colors[color_normal]);
+			if (start_skip + i == 7)
+				printf(" ");
 		}
-		buf[i] = '\0';
-		printf(" |%s|\n", buf);
-		offset += this_count;
+		for (i = 0 ; i < end_skip ; i++) {
+			printf("   ");
+			if (start_skip + output_bytes + i == 7)
+				printf(" ");
+		}
+
+		printf("|");
+		for (i = 0 ; i < start_skip ; i++)
+			printf(" ");
+		for (i = 0 ; i < output_bytes ; i++) {
+			unsigned char ch = hexbuf[dirent_offset + i];
+			printf("%s", color_code_colors[(int)colorbuf[dirent_offset + i]]);
+			if (isprint(ch))
+				printf("%c", ch);
+			else
+				printf(".");
+			printf("%s", color_code_colors[color_normal]);
+		}
+		printf("|");
+
+		printf("\n");
+
+		dirent_offset += output_bytes;
 	}
-*/
 
+	printf("  decoding of %d-byte dirent:\n", de->d_reclen);
 
+	printf("   inode: %s%12lu%s (%ld bytes)\n", color_code_colors[color_ino], de->d_ino, color_code_colors[color_normal], sizeof(de->d_ino));
+	printf("   offset of next entry: %s%ld%s (%ld bytes)\n", color_code_colors[color_offset], de->d_off, color_code_colors[color_normal], sizeof(de->d_off));
+	printf("    reclen: %s%d%s bytes (%ld bytes)\n", color_code_colors[color_reclen], de->d_reclen, color_code_colors[color_normal], sizeof(de->d_reclen));
+	printf("    type: %s%s%s (%ld bytes)\n", color_code_colors[color_type], stat_file_type_str(DTTOIF(de->d_type)), color_code_colors[color_normal], sizeof(de->d_type));
+	printf("    entry name: %s%s%s (%d bytes)\n", color_code_colors[color_name], de->d_name, color_code_colors[color_normal], namelen);
+	printf("    filler: %s%d bytes%s\n", color_code_colors[color_filler], filler_len, color_code_colors[color_normal]);
 
-
-
-
-
-
-
-
-
-	printf(ANSI_RESET "\n");
-/*
-linux_dirent size = 280
-	d_ino: offset=0, size=8
-	d_off: offset=8, size=8
-	d_reclen: offset=16, size=2
-	d_type: offset=18, size=1
-	d_name: offset=19, size=256
-
-
-			"%s0x%08lx: "
-
-	printf("\td_ino: offset=%d, size=%d\n", (int)offsetof(typeof(de), d_ino), sizeof(de.d_ino));
-	printf("\td_off: offset=%d, size=%d\n", (int)offsetof(typeof(de), d_off), sizeof(de.d_off));
-	printf("\td_reclen: offset=%d, size=%d\n", (int)offsetof(typeof(de), d_reclen), sizeof(de.d_reclen));
-	printf("\td_type: offset=%d, size=%d\n", (int)offsetof(typeof(de), d_type), sizeof(de.d_type));
-	printf("\td_name: offset=%d, size=%d\n", (int)offsetof(typeof(de), d_name), sizeof(de.d_name));
-*/
-/*
-			printf("(%3d bytes) %4s; inode %12lu: %s\n", de->d_reclen,
-				stat_file_type_str(DTTOIF(de->d_type)), de->d_ino,
-				de->d_name);
-			hexdump("    ", (char *)de - buf, (char *)de, de->d_reclen);
-*/
-
+	printf("\n");
 }
-
-
-
 
 void call_getdents(void) {
 	struct dirent *de;
 	int dir_fd;
 	char *bpos;
 	char *buf;
-	int nread;
+	int nread, ret;;
 	int entry_count = 0;
 	int getdents_count= 0;
 	unsigned long getdents_bytes = 0;
 
-	if ((dir_fd = open(path, O_RDONLY | O_DIRECTORY)) == -1) {
+	printf("open(\"%s\", O_RDONLY | O_DIRECTORY)", path);
+	dir_fd = open(path, O_RDONLY | O_DIRECTORY);
+	printf(" = %d  (errno: %d - %m)\n", dir_fd, errno);
+	if (dir_fd < 0) {
 		printf("could not open directory '%s': %m\n", path);
 		return;
 	}
@@ -367,31 +252,32 @@ void call_getdents(void) {
 	buf = malloc(buf_size);
 	while (42) {
 		getdents_count++;
-		if ((nread = syscall(SYS_getdents64, dir_fd, buf, buf_size)) < 0) {
-			printf("error caling getdents(): %m\n");
+		printf("getdents64(dir_fd: %d, buf: %p, buf_size: %d)",
+			dir_fd, buf, buf_size);
+		nread = syscall(SYS_getdents64, dir_fd, buf, buf_size);
+		printf(" = %d  (errno: %d - %m)\n", nread, errno);
+
+		if (nread < 0) {
+			printf("error caling getdents()\n");
 			return;
 		}
+
 		getdents_bytes += nread;
 		if (nread == 0) /* no more entries */
 			break;
 
-		printf("getdents returned %d bytes\n", nread);
-		hexdump("", 0, buf, nread);
-
 		bpos = buf; /* bpos is an iterator through the buffer */
 		while (bpos < buf + nread) {
-			entry_count++;
+			printf("*** directory entry %d\n", ++entry_count);
 			de = (struct dirent *)bpos; /* point de at the current location in the buffer */
 			bpos += de->d_reclen; /* move the iterator to the next entry */
 
-			printf("(%3d bytes) %4s; inode %12lu: %s\n", de->d_reclen,
-				stat_file_type_str(DTTOIF(de->d_type)), de->d_ino,
-				de->d_name);
 			dump_color_dirent((char *)de, (int)((char *)de - buf));
-			hexdump("    ", (char *)de - buf, (char *)de, de->d_reclen);
 		}
 	}
-	close(dir_fd);
+	printf("close(fd: %d)", dir_fd);
+	ret = close(dir_fd);
+	printf(" = %d  (errno: %d - %m)\n", ret, errno);
 	printf("%d directory entries returned from %d getdents() calls; total bytes returned: %lu\n",
 		entry_count, getdents_count, getdents_bytes);
 }
