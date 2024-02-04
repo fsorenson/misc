@@ -1016,7 +1016,7 @@ int usage(const char *exe, int ret) {
 	return ret;
 }
 
-// search the filesystem for symlinks to check for loops
+// TODO - search the filesystem for symlinks to check for loops
 bool search_paths(const char *path) {
 
 	return false;
