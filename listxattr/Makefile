@@ -6,6 +6,8 @@ current_dir = $(shell pwd)
 CFLAGS= -Wall -g
 CFLAGS += -I$(current_dir) -I$(current_dir)/encdec
 
+
+
 all: listxattr
 
 SRCS=listxattr.c listxattr.h lib.h lib.c
@@ -60,4 +62,4 @@ listxattr: $(encdec_objs) $(OBJS)
 #	$(CC) -c $(CFLAGS) $(INCLUDES) $<
 
 clean:
-	@rm listxattr $(OBJS)
+	@rm listxattr $(encdec_objs) $(OBJS)
