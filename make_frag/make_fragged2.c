@@ -81,8 +81,7 @@ struct state_data {
 	uint32_t remaining_blocks;
 	uint32_t filler[11];
 	uint32_t blocks[];
-};
-struct state_data *state_data;
+} *state_data = NULL;
 
 /* returns a size in bytes */
 uint64_t parse_size(const char *size_str) {
@@ -339,8 +338,10 @@ int setup_existing(void) {
 void frag_file(void) {
 	while (state_data->remaining_blocks) {
 		uint32_t this_block = state_data->blocks[state_data->remaining_blocks - 1];
+		uint64_t this_offset = (uint64_t)this_block * (uint64_t)state_data->block_size;
 
-		fallocate(run_data.fd, FALLOC_FL_KEEP_SIZE|FALLOC_FL_ZERO_RANGE, this_block * state_data->block_size, state_data->block_size);
+		fallocate(run_data.fd, FALLOC_FL_KEEP_SIZE|FALLOC_FL_UNSHARE_RANGE, this_offset, state_data->block_size);
+
 		state_data->remaining_blocks--;
 		if ((state_data->remaining_blocks % 100) == 0)
 			print_pct(state_data->num_blocks - state_data->remaining_blocks, state_data->num_blocks);
