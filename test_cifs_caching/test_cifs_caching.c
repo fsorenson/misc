@@ -74,6 +74,7 @@ struct test_state {
 	pid_t cpid;
 	bool exit;
 	bool found_nulls;
+	char write_char;
 	char *filename;
 
 	/* writer */
@@ -106,6 +107,10 @@ void write_one_file(void) {
 	}
 
 	while (current_size < FILE_SIZE) {
+		memset(test_state->outbuf, test_state->write_char++, OUTBUF_SIZE);
+		if (test_state->write_char > 'Z')
+			test_state->write_char = 'A';
+
 		write(fd, test_state->outbuf, WRITE_SIZE);
 		current_size += WRITE_SIZE;
 
@@ -198,7 +203,7 @@ int main(int argc, char *argv[]) {
 
 	if ((test_state->cpid = fork()) > 0) { /* parent process */
 		test_state->outbuf = malloc(OUTBUF_SIZE);
-		memset(test_state->outbuf, 'A', OUTBUF_SIZE);
+		test_state->write_char = 'A';
 
 		while (! test_state->exit)
 			write_one_file();
