@@ -32,6 +32,16 @@
 		block, ending on the boundary)
 
 
+              **************** **************** ****************
+              *    page n    * *    page n+1  * *    page n+2  *
+              **************** **************** ****************
+existing:     AAAAAAAAAAAAAAAA AA
+proc 1 write:                    BBBBBBBBBBBBBB BBBBBBBB
+proc 2 read:  AAAAAAAAAAAAAAAA AA00000000000000 BBBBBBBB
+
+expected:     AAAAAAAAAAAAAAAA AABBBBBBBBBBBBBB BBBBBBBB
+
+
 	time to replicate is varied; anywhere from 11 seconds
 		to 29 minutes have been seen
 */
