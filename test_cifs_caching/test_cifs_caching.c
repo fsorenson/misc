@@ -49,8 +49,6 @@
 #include <sys/mman.h>
 #include <sys/wait.h>
 
-#define mb()    __asm__ __volatile__("mfence" ::: "memory")
-
 #define KiB (1024ULL)
 #define MiB (KiB * KiB)
 
@@ -143,7 +141,6 @@ retry_open:
 					null_segment_count++;
 					test_state->found_nulls = true;
 					test_state->exit = true;
-					mb();
 					p = q;
 				} else
 					break;
