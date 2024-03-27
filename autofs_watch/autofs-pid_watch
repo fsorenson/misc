@@ -1,0 +1,19 @@
+#!/bin/bash
+
+# Frank Sorenson <sorenson@redhat.com> 20?? (2018, maybe?)
+# apparently I wrote this.  I probably put it in #sbr-filesystem, or in
+# a case, and then forgot about it.  shrug...
+
+tail -F /var/log/messages | while read l ; do
+	match=$(expr match "$l" '.\+, name \(.\+, request pid.\+[0-9]\+\)')
+
+	if [[ -n $match ]] ; then
+		mt=$(expr match "$match" '\(.\+\), request pid\+')
+		pid=$(expr match "$match" '.\+ request pid \([0-9]\+\)')
+
+		echo "*****************"
+		echo "$l"
+		echo "pid $pid requested mount of $mt"
+		pstree -alpsun $pid
+	fi
+done >/tmp/automount.out 2>&1
