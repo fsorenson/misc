@@ -44,3 +44,21 @@ tshark_any_of() {
 		tshark_any_of $field $args
 	fi
 }
+_complete_tshark_fields() {
+#	echo "$0 called with args: $@" >>/var/tmp/complete_tshark_fields.debug
+
+	local field="$2"
+#	echo "  trying to complete '$field'" >>/var/tmp/complete_tshark_fields.debug
+	local suggestions=( $(tshark -G fields | awk -vfield="$field" -F\\t 'substr($3,1,length(field))==field {print $3}' | paste -s - -d' ') )
+
+	# don't complete with more than X suggestions
+	if [[ "${#suggestions[@]}" -gt 100 ]] ; then
+		return
+	fi
+
+#	echo "  completing with '${suggestions[@]}'" >>/var/tmp/complete_tshark_fields.debug
+	COMPREPLY=("${suggestions[@]}")
+}
+
+complete -F _complete_tshark_fields tshark_fields
+complete -F _complete_tshark_fields tshark_cols
