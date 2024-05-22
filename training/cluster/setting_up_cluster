@@ -1,0 +1,385 @@
+set up IP addresses for each node and one for the cluster floating IP
+  /etc/hosts
+    192.168.122.97  vm27.sorenson.redhat.com clu1.sorenson.redhat.com cluster1.sorenson.redhat.com vm27 clu1 cluster1
+    192.168.122.96  vm28.sorenson.redhat.com clu2.sorenson.redhat.com cluster2.sorenson.redhat.com vm28 clu2 cluster2
+    192.168.122.95  cluster.sorenson.redhat.com cluster
+
+install fencing on KVM host system
+  # dnf install fence-virt fence-virtd fence-virtd-libvirt fence-virtd-multicast fence-virtd-serial
+
+  create fence key
+  # mkdir -p /etc/cluster
+  # dd if=/dev/urandom of=/etc/cluster/fence_xvm.key bs=4k count=1
+
+
+
+
+install RHEL onto cluster nodes
+ https://access.redhat.com/solutions/917833 - How to configure fence agent 'fence_xvm' in RHEL cluster
+  copy fence key from host to all cluster nodes
+  # mkdir /etc/cluster
+  # scp /etc/cluster/fence_xvm.key cluster1.sorenson.redhat.com:/etc/cluster
+
+  on KVM host:
+    create /etc/fence_virt.conf
+    (need example file)
+
+    enable and start fence_virtd
+    # systemctl enable fence_virtd
+    # systemctl start fence_virtd
+
+    enable firewall through tcp port 1229:
+    # firewall-cmd --permanent --add-port=1229/tcp
+    # firewall-cmd --permanent --add-port=1229/udp
+    # firewall-cmd --reload
+
+  on nodes:
+    # dnf install fence-virt
+    # firewall-cmd --permanent --add-port=1229/tcp
+    # firewall-cmd --reload
+
+  testing on host and nodes:
+  # fence_xvm -o list
+
+  create 'stonith device':
+    ** simple example  # pcs stonith create xvmfence fence_xvm key_file=/etc/cluster/fence_xvm.key
+    example where vm names and cluster node names differ
+    # pcs stonith create xvmfence fence_xvm pcmk_host_map="cluster1.sorenson.redhat.com:vm27 cluster2.sorenson.redhat.com:vm28" key_file=/etc/cluster/fence_xvm.key
+
+  ** optional? https://access.redhat.com/solutions/3565071 - How do I delay fencing to prevent fence races when using a shared stonith device in a two-node cluster?
+    # pcs stonith update vmfence pcmk_delay_max=15
+
+  see our great work:
+  # pcs stonith config
+  Resource: xvmfence (class=stonith type=fence_xvm)
+    Attributes: xvmfence-instance_attributes
+      key_file=/etc/cluster/fence_xvm.key
+      pcmk_host_map="cluster1.sorenson.redhat.com:vm27 cluster2.sorenson.redhat.com:vm28"
+    Operations:
+      monitor: xvmfence-monitor-interval-60s
+        interval=60s
+
+
+
+
+
+
+install cluster software (all nodes)
+  # subscription-manager repos --enable=rhel-9-for-x86_64-highavailability-rpms
+  Repository 'rhel-9-for-x86_64-highavailability-rpms' is enabled for this system.
+
+  # dnf install pcs pacemaker fence-agents-all
+  (installs 77 packages or so)
+
+  enable and start pcsd
+  # systemctl enable pcsd.service
+  # systemctl start pcsd.service
+
+  screw firewalld
+  # firewall-cmd --permanent --add-service=high-availability
+  # firewall-cmd --reload
+
+  set password for 'hacluster' user
+  # passwd hacluster
+  Changing password for user hacluster.
+  New password: 
+  BAD PASSWORD: The password is shorter than 8 characters
+  Retype new password: 
+  passwd: all authentication tokens updated successfully.
+
+
+  authenticate user 'hacluster' for each node
+  # pcs host auth cluster1.sorenson.redhat.com
+  Username: hacluster
+  Password: 
+  cluster1.sorenson.redhat.com: Authorized
+
+
+set up cluster (one node)
+  # pcs cluster setup cluster --start cluster1.sorenson.redhat.com
+  No addresses specified for host 'cluster1.sorenson.redhat.com', using 'cluster1.sorenson.redhat.com'
+  Destroying cluster on hosts: 'cluster1.sorenson.redhat.com'...
+  cluster1.sorenson.redhat.com: Successfully destroyed cluster
+  Requesting remove 'pcsd settings' from 'cluster1.sorenson.redhat.com'
+  cluster1.sorenson.redhat.com: successful removal of the file 'pcsd settings'
+  Sending 'corosync authkey', 'pacemaker authkey' to 'cluster1.sorenson.redhat.com'
+  cluster1.sorenson.redhat.com: successful distribution of the file 'corosync authkey'
+  cluster1.sorenson.redhat.com: successful distribution of the file 'pacemaker authkey'
+  Sending 'corosync.conf' to 'cluster1.sorenson.redhat.com'
+  cluster1.sorenson.redhat.com: successful distribution of the file 'corosync.conf'
+  Cluster has been successfully set up.
+  Starting cluster on hosts: 'cluster1.sorenson.redhat.com'...
+
+
+add other nodes to cluster
+  (https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/8/html/configuring_and_managing_high_availability_clusters/assembly_clusternode-management-configuring-and-managing-high-availability-clusters)
+  (you've run the 'pcs host auth cluster2.example.com' already, right?)
+
+
+  on existing node:
+    auth user on the new cluster node
+    # pcs host auth cluster2.sorenson.redhat.com
+    Username: hacluster
+    Password: 
+    cluster2.sorenson.redhat.com: Authorized
+
+    # pcs cluster node add cluster2.sorenson.redhat.com
+    No addresses specified for host 'cluster2.sorenson.redhat.com', using 'cluster2.sorenson.redhat.com'
+    Disabling sbd...
+    cluster2.sorenson.redhat.com: sbd disabled
+    Sending 'corosync authkey', 'pacemaker authkey' to 'cluster2.sorenson.redhat.com'
+    cluster2.sorenson.redhat.com: successful distribution of the file 'corosync authkey'
+    cluster2.sorenson.redhat.com: successful distribution of the file 'pacemaker authkey'
+    Sending updated corosync.conf to nodes...
+    cluster1.sorenson.redhat.com: Succeeded
+    cluster2.sorenson.redhat.com: Succeeded
+    cluster1.sorenson.redhat.com: Corosync configuration reloaded
+
+  on new node:
+    start and enable cluster services
+    # pcs cluster enable
+    # pcs cluster start
+    Starting Cluster...
+
+check cluster status:
+  # pcs cluster status
+  Cluster Status:
+   Cluster Summary:
+     * Stack: corosync (Pacemaker is running)
+     * Current DC: cluster1.sorenson.redhat.com (version 2.1.6-10.1.el9_3-6fdc9deea29) - partition with quorum
+     * Last updated: Fri Apr 26 13:10:03 2024 on cluster2.sorenson.redhat.com
+     * Last change:  Fri Apr 26 13:09:09 2024 by hacluster via crmd on cluster1.sorenson.redhat.com
+     * 2 nodes configured
+     * 0 resource instances configured
+   Node List:
+     * Online: [ cluster1.sorenson.redhat.com cluster2.sorenson.redhat.com ]
+
+  PCSD Status:
+    cluster1.sorenson.redhat.com: Online
+    cluster2.sorenson.redhat.com: Online
+
+
+
+***** don't want to have to set up the floating IP by configuring apache, but that's how the docs are written
+LVM-activate resource my_lvm
+a Filesystem resource my_fs (/dev/my_vg/my_lv)
+IPaddr2 resource (floating IP) for the apachegroup resource group
+apache resource named Website that uses index.html and apache configuration
+
+lvm-activate resource
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+iscsi - https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/6/html/storage_administration_guide/iscsi-api
+https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/8/html/managing_storage_devices/configuring-an-iscsi-target_managing-storage-devices
+set up iscsi target (iscsi server)
+set up iscsi initiator (iscsi client)
+https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/8/html/managing_storage_devices/configuring-an-iscsi-initiator_managing-storage-devices
+  # dnf install iscsi-initiator-utils
+
+  # iscsiadm -m discovery -t sendtargets -p 192.168.122.5
+  192.168.122.5:3260,1 iqn.2023-08.com.sorenson.redhat.bearskin:target1
+  # iscsiadm -m discovery -t st -p 192.168.122.5
+  192.168.122.5:3260,1 iqn.2023-08.com.sorenson.redhat.bearskin:target1
+
+
+  # iscsiadm -m node -T iqn.2023-08.com.sorenson.redhat.bearskin:target1 --login
+  Logging in to [iface: default, target: iqn.2023-08.com.sorenson.redhat.bearskin:target1, portal: 192.168.122.5,3260]
+  Login to [iface: default, target: iqn.2023-08.com.sorenson.redhat.bearskin:target1, portal: 192.168.122.5,3260] successful.
+
+  # dmesg | grep 'Attached SCSI disk'
+  [1979793.001161] sd 3:0:0:1: [sdb] Attached SCSI disk
+
+  (note the disk attached - sdb here)
+
+
+setup LVM - https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/8/html/configuring_and_managing_high_availability_clusters/assembly_configuring-active-passive-nfs-server-in-a-cluster-configuring-and-managing-high-availability-clusters
+  all nodes:
+    edit /etc/lvm/lvm.conf
+	system_id_source = "uname"
+	issue_discards = 1
+    # lvm systemid
+      system ID: vm23.sorenson.redhat.com
+
+  one node - set up LVM config
+    # pvcreate /dev/sdb
+
+    ** device did NOT automatically get added by lvm, for some reason, so...
+    find already-active PVs:
+      # pvscan --cache
+      pvscan[1138158] PV /dev/vda2 online.
+    add the new PV to the cache
+      # pvscan --cache --devices /dev/sdb,/dev/vda2
+        pvscan[1138169] PV /dev/vda2 online.
+        pvscan[1138169] PV /dev/sdb online.
+
+    create the new VG
+      # vgcreate --setautoactivation n cluster_vg /dev/sdb
+      Volume group "cluster_vg" successfully created with system ID vm23.sorenson.redhat.com
+
+    ** now we can see the device and VG
+    # pvs
+      PV         VG         Fmt  Attr PSize    PFree
+      /dev/sdb   cluster_vg lvm2 a--  <500.00g <500.00g
+      /dev/vda2  rhel       lvm2 a--   <97.00g       0
+
+    verify that the new VG has the systemid of this node (for some reason)
+    # vgs -o+systemid
+      VG         #PV #LV #SN Attr   VSize    VFree System ID
+      cluster_vg   1   1   0 wz--n- <500.00g    0  vm23.sorenson.redhat.com
+      rhel         1   2   0 wz--n-  <97.00g    0
+
+    create LV
+      # lvcreate -l100%FREE -n cluster_lv cluster_vg
+        Logical volume "cluster_lv" created.
+
+    create filesystem on the LV
+    # mkfs.xfs /dev/cluster_vg/cluster_lv
+    meta-data=/dev/cluster_vg/cluster_lv isize=512    agcount=4, agsize=32767744 blks
+             =                       sectsz=512   attr=2, projid32bit=1
+             =                       crc=1        finobt=1, sparse=1, rmapbt=0
+             =                       reflink=1
+    data     =                       bsize=4096   blocks=131070976, imaxpct=25
+             =                       sunit=0      swidth=0 blks
+    naming   =version 2              bsize=4096   ascii-ci=0, ftype=1
+    log      =internal log           bsize=4096   blocks=63999, version=2
+             =                       sectsz=512   sunit=0 blks, lazy-count=1
+    realtime =none                   extsz=4096   blocks=0, rtextents=0
+
+
+  ** LVM setup not seen on other nodes
+
+
+
+  on both nodes:
+    # mkdir /cluster_nfs
+
+  on one node;
+    # lvchange -ay cluster_vg/cluster_lv
+    # mount /dev/cluster_vg/cluster_lv /cluster_nfs/
+    # mkdir -p /cluster_nfs/exports/export{1,2}
+    # touch /cluster_nfs/exports/export1/file_in_export1
+    # touch /cluster_nfs/exports/export2/file_in_export2
+    # umount /cluster_nfs
+    # vgchange -an cluster_vg
+
+    # pcs resource create nfs_lvm ocf:heartbeat:LVM-activate vgname=cluster_vg vg_access_mode=system_id --group nfsgroup
+    # pcs resource create nfs_fs Filesystem device="/dev/cluster_vg/cluster_lv" directory="/cluster_nfs" fstype="xfs" --group nfsgroup
+    Assumed agent name 'ocf:heartbeat:Filesystem' (deduced from 'Filesystem')
+
+    # pcs resource create VirtualIP IPaddr2 ip=192.168.122.95 cidr_netmask=24 --group nfsgroup
+    Assumed agent name 'ocf:heartbeat:IPaddr2' (deduced from 'IPaddr2')
+
+  set up nfs server resource (one node)
+
+  # pcs resource create nfs-daemon nfsserver nfs_shared_infodir=/cluster_nfs/nfsinfo nfs_no_notify=true nfs_server_scope=192.168.122.95 --group nfsgroup
+  Assumed agent name 'ocf:heartbeat:nfsserver' (deduced from 'nfsserver')
+
+    ** to understand reason for 'nfs_server_scope' option, note resource config item for nfsserver:
+    # pcs resource describe nfsserver
+    ...
+      nfs_server_scope
+        Description: RFC8881, 8.4.2.1 State Reclaim:  If the server scope is
+            different, the client should not attempt to reclaim locks. In this
+            situation, no lock reclaim is possible. Any attempt to re-obtain the
+            locks with non-reclaim operations is problematic since there is no
+            guarantee that the existing filehandles will be recognized by the new
+            server, or that if recognized, they denote the same objects. It is best
+            to treat the locks as having been revoked by the reconfiguration event.
+            For lock reclaim to even be attempted, we have to define and set the
+            same server scope for NFSD on all cluster nodes in the NFS failover
+            cluster.  This agent won't "guess" a suitable server scope name for you,
+            you need to explicitly specify this. But without it, NFSv4 lock reclaim
+            after failover won't work properly.  Suggested value: the failover
+            "service IP".
+        Type: string
+    if created without the option, it can be added later with:
+    # pcs resource update nfs-daemon nfs_server_scope=192.168.122.95
+
+
+
+  add exports (exportfs resource) (one node)
+  *** default configuration of exports does not work with any sec= other than sys, so if krb5 is to be used, add sec= options:
+  # pcs resource create nfs-root exportfs clientspec=192.168.122.0/255.255.255.0 options=rw,sync,no_root_squash,sec=sys:krb5:krb5i:krb5p directory=/cluster_nfs/exports fsid=0 --group nfsgroup
+  Assumed agent name 'ocf:heartbeat:exportfs' (deduced from 'exportfs')
+
+  # pcs resource create nfs-export1 exportfs clientspec=192.168.122.0/255.255.255.0 options=rw,sync,no_root_squash,sec=sys:krb5:krb5i:krb5p directory=/cluster_nfs/exports/export1 fsid=1 --group nfsgroup
+  Assumed agent name 'ocf:heartbeat:exportfs' (deduced from 'exportfs')
+
+  # pcs resource create nfs-export2 exportfs clientspec=192.168.122.0/255.255.255.0 options=rw,sync,no_root_squash,sec=sys:krb5:krb5i:krb5p directory=/cluster_nfs/exports/export2 fsid=2 --group nfsgroup
+  Assumed agent name 'ocf:heartbeat:exportfs' (deduced from 'exportfs')
+
+
+  add 'fsnotify' resource for nfs v3 reboot notifications
+  # pcs resource create nfs-notify nfsnotify source_host=192.168.122.95 --group nfsgroup
+  Assumed agent name 'ocf:heartbeat:nfsnotify' (deduced from 'nfsnotify')
+
+  screw firewalld on each node
+  # firewall-cmd --permanent --add-service=nfs
+  # firewall-cmd --permanent --add-service=mountd
+  # firewall-cmd --permanent --add-service=rpc-bind
+  # firewall-cmd --reload
+
+
+  kerberize the host:
+    each host:
+      host/$short.$lcdomain@$UCDOMAIN  (unique to each host)
+      nfs/$short.$lcdomain@$UCDOMAIN   (unique to each host)
+    nfs/clustername.$lcdomain@$UCDOMAIN  (common to all hosts in cluster)
+
+  note: nfs/clustername.$lcdomain@$UCDOMAIN MUST have the same kvno on all cluster nodes
+    export just once from, then use ktutil to add the cluster's keys to each host's keytab
+    for example:
+	kadmin.local:  ktadd -k /tmp/ktvm27.keytab host/vm27.sorenson.redhat.com
+	kadmin.local:  ktadd -k /tmp/ktvm27.keytab nfs/vm27.sorenson.redhat.com
+
+	kadmin.local:  ktadd -k /tmp/ktvm28.keytab host/vm28.sorenson.redhat.com
+	kadmin.local:  ktadd -k /tmp/ktvm28.keytab nfs/vm28.sorenson.redhat.com
+
+	kadmin.local:  ktadd -k /tmp/cluster.keytab nfs/cluster.sorenson.redhat.com
+
+	ktutil:  rkt /tmp/ktvm27.keytab
+	ktutil:  rkt /tmp/cluster.keytab
+	ktutil:  wkt /tmp/ktvm27-new.keytab
+
+	ktutil:  clear
+	ktutil:  rkt /tmp/ktvm28.keytab
+	ktutil:  rkt /tmp/cluster.keytab
+	ktutil:  wkt /tmp/ktvm28-new.keytab
+
+	distribute /tmp/ktvm27-new.keytab and /tmp/ktvm28-new.keytab:
+	# scp /tmp/ktvm27-new.keytab root@vm27:/etc/krb5.keytab
+	# scp /tmp/ktvm28-new.keytab root@vm28:/etc/krb5.keytab
+
+    edit /etc/gssproxy/24-nfs-server.conf and specify the new principal:
+    [service/nfs-server]
+      mechs = krb5
+      socket = /run/gssproxy.sock
+      cred_store = keytab:/etc/krb5.keytab
+      trusted = yes
+      kernel_nfsd = yes
+      euid = 0
+
+      krb5_principal = nfs/cluster.sorenson.redhat.com@SORENSON.REDHAT.COM
+
+
+
+
+
+
+
+
+
+
+
