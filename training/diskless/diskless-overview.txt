@@ -1,0 +1,55 @@
+How diskless works (approximately):
+
+It all depends on a sequence of steps that uses various tools.
+
+    client system performs initial boot
+    client uses built-in 'PXE boot' support from bios
+        client makes dhcp/bootp request for IP address, and also requests several additional variables from the dhcp server with DHCP REQUEST
+        dhcp server provides IP address and additional variable values in DHCP OFFER
+            'your ip': 192.168.122.84
+            'your subnet mask': 255.255.255.0
+            'your router': 192.168.122.5
+            'DNS IPs': 192.168.122.5, 75.75.76.76
+            'your domain name': sorenson.redhat.com
+            'next server ip address': 192.168.122.4
+            'boot file name: pxelinux/pxelinux.0
+    client uses dhcp response to contact 'next server ip address' using TFTP to request the file 'pxelinux/pxelinux.0'
+        (this is a binary that is used to present a menu or load a file, or...)
+    TFTP server returns contents of 'pxelinux/pxelinux.0'
+    client begins executing 'pxelinux.0'
+        (in this case, pxelinux.0 also loads some other binary modules, starting with 'pxelinux/ldlinux.c32'
+    'ldlinux.c32' requests a config file using TFTP in the following order (stopping when one is found):
+        'pxelinux/pxelinux.cfg/<uuid>' for the system
+        'pxelinux/pxelinux.cfg/aa-bb-cc-dd-ee-ff-gg' (hex digits from somewhere)
+        'pxelinux/pxelinux.cfg/aabbccddeeff' (MAC address of the client)
+        'pxelinux/pxelinux.cfg/aabbccddeef' (MAC address of the client, minus a digit)
+        'pxelinux/pxelinux.cfg/aabbccddee' (MAC address of the client, minus another digit)
+        ...
+        'pxelinux/pxelinux.cfg/a' (MAC address of the client, minus another digit)
+        'pxelinux/pxelinux.cfg/default' (a default config file)
+    the config file found is then parsed by ldlinux.c32.  example config file:
+
+        default menu.c32
+        prompt 0
+        timeout 300
+        
+        MENU TITLE PXE Menu
+        
+        LABEL rhel8.9-nfs-3
+          kernel bootfiles/vmlinuz-4.18.0-513.24.1.el8_9.x86_64
+          append initrd=bootfiles/initramfs-4.18.0-513.24.1.el8_9.x86_64.img root=nfs:192.168.122.73:/vm24_root-RHEL89:vers=3,rw rw ipv6.disable=1 console=tty0 console=ttyS0,115200n8 rd.debug log_buf_len=10M
+        LABEL rhel8.9-nfs-4.2
+          kernel bootfiles/vmlinuz-4.18.0-513.24.1.el8_9.x86_64
+          append initrd=bootfiles/initramfs-4.18.0-513.24.1.el8_9.x86_64.img root=nfs:192.168.122.73:/vm24_root-RHEL89:vers=4.2,rw rw ipv6.disable=1 console=tty0 console=ttyS0,115200n8
+ 
+    here, ldlinux.c32 loads a menu module (another binary) and presents a menu on the client's console
+    when a menu option is chosen (or the 300 centisecond timer expires):
+ 
+    client requests selected 'kernel' file over TFTP (say 'bootfiles/vmlinuz-4.18.0-513.24.1.el8_9.x86_64'); that's just the normal vmlinuz usually found in /boot
+    client boots the kernel using the 'append' command line
+    'initrd' file is obtained by client using TFTP
+ 
+    client uses the init files in initramfs to proceed
+    init script/program in initramfs causes client to use nfs support built into kernel and initramfs to mount the 'root' filesystem at /system/ (or whatever path) over NFS
+    init program uses 'pivot_root' to remount /system/ at / and execute the init (systemd) found on the nfs filesystem
+    all binaries, libraries, config files are in their normal places, only obtained over nfs
