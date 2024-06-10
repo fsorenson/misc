@@ -1,0 +1,142 @@
+#!/bin/bash
+
+already_running_pids=$(pidof tcpdump trace_gssd rpc.gssd logger)
+[[ -n $already_running_pids ]] && {
+	echo "tracing-related processes are already running"
+	ps -c $already_running_pids
+	echo "interrupt within 10 seconds to investigate further"
+	sleep 10
+	echo "continuing with potentially interfering processes"
+}
+
+outputdir=/tmp/$(hostname -s)_$(date +"%Y-%m-%d_%H.%M.%S")
+logfile=$outputdir/log
+
+logger_pid=""
+tcpdump_pid=""
+traced_pid=""
+
+mkdir -p $outputdir
+>$logfile
+out_pipe=$outputdir/out.pipe.$$
+mkfifo -m 0666 $out_pipe
+
+exec 3>&1 4>&2 # save stdout/stderr
+real_stdout=$(readlink -f /proc/$$/fd/1)
+log() {
+	echo "$(date +'%F %T.%N') - $*" | tee -a $logfile >$real_stdout
+}
+
+gather_data() {
+	local pre_post=$1
+
+	date >$outputdir/date.$pre_post
+	date -u >$outputdir/date_-u.$pre_post
+
+	if [[ $pre_post == "pre" ]] ; then
+		uname -a >$outputdir/uname
+		uptime >$outputdir/uptime
+
+		ip addr >$outputdir/ip_addr
+		ip link >$outputdir/ip_link
+		ip route >$outputdir/ip_route
+	fi
+	free >$outputdir/free.$pre_post
+
+	for f in slabinfo meminfo self/mountinfo self/mountstats; do
+		cat /proc/$f >$outputdir/$(basename $f).$pre_post
+	done
+
+	cp /var/log/messages $outputdir/messages.$pre_post
+
+	netstat -ap >$outputdir/netstat_-ap.$pre_post
+
+	# list the krb5 cred caches
+	for f in /tmp/krb5cc_* /run/user/*/krb5cc* ; do
+		[[ -f $f ]] && klist -edfc $f 2>&1 && echo
+	done >$outputdir/klist_cc.$pre_post 2>&1
+
+#	lslocks >$outputdir/lslocks.$pre_post 2>&1
+#	ps axf >$outputdir/ps_axf.$pre_post
+#	ps auxwww >$outputdir/ps_aux.$pre_post
+#	ps awwwxo flags,state,uid,pid,ppid,pgid,sid,cls,pri,addr,sz,wchan:15,lstart,tty,time,cmd >$outputdir/ps_awwwxo_.$pre_post
+#	lsns -u >$outputdir/lsns_-u.$pre_post 2>&1
+#	lsof >$outputdir/lsof.$pre_post 2>&1
+}
+
+exit_cleanup() {
+	trap - SIGTERM SIGINT EXIT
+	log "cleaning up and exiting"
+
+	# disable rpcdebug if any
+#	rpcdebug -m nfs -c all
+	rpcdebug -m rpc -c all
+
+	[[ -n $traced_pid ]] && [[ -d /proc/$traced_pid ]] && kill $traced_pid && wait $traced_pid
+	[[ -n $tcpdump_pid ]] && [[ -d /proc/$tcpdump_pid ]] && kill $tcpdump_pid && wait $tcpdump_pid
+
+	gather_data post
+
+	exec 1>&3 3>&- 2>&4 4>&-
+	sleep 0.25
+
+	log "compressing logged data"
+	[[ -n $logger_pid && -d /proc/$logger_pid ]] && kill $logger_pid && wait $logger_pid
+	rm -f $out_pipe
+
+	cd $(dirname $outputdir)
+	tar cJf $outputdir.tar.xz $(basename $outputdir)
+	cd - >/dev/null
+	log "data collected in $outputdir.tar.xz"
+
+	exit
+}
+trap exit_cleanup EXIT
+interrupt() {
+	log "interrupted"
+	exit_cleanup
+}
+trap interrupt SIGTERM SIGINT
+
+
+gather_data pre
+
+
+logger -t rpc.gssd < $out_pipe &
+logger_pid=$!
+log "logger pid: $logger_pid"
+exec 1<>$out_pipe 2<>$out_pipe
+sleep 0.25
+
+[[ -d /proc/$logger_pid ]] || {
+	exec 1>&3 3>&- 2>&4 4>&-
+        log "Logger did not start:"
+        log "$(cat $outputdir/logger.out)"
+        logger_pid=""
+
+        exit 1
+}
+log "started logger as pid $logger_pid"
+
+capture_filter="(tcp port 2049 or tcp port 111 or tcp port 88 or udp port 111 or udp port 88)"
+tcpdump -w $outputdir/trace.pcap -C 500 -W 5 -i any "$capture_filter" >$outputdir/tcpdump.out 2>&1 &
+tcpdump_pid=$!
+log "started tcpdump as pid $tcpdump_pid"
+
+
+KRB5_TRACE=$out_pipe /usr/sbin/rpc.gssd -f >$out_pipe 2>&1 &
+traced_pid=$!
+log "started rpc.gssd as pid $traced_pid"
+
+#rpcdebug -m nfs -s all
+rpcdebug -m rpc -s auth
+
+while [[ 42 ]] ; do
+	# did our traced process die?
+	[[ -d /proc/$traced_pid ]] || {
+		log "traced process exited... canceling tracing"
+		interrupt
+	}
+	sleep 1
+done
+exit 1 # will we ever get here?
