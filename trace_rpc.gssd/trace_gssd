@@ -124,7 +124,7 @@ tcpdump_pid=$!
 log "started tcpdump as pid $tcpdump_pid"
 
 
-KRB5_TRACE=$out_pipe /usr/sbin/rpc.gssd -f >$out_pipe 2>&1 &
+KRB5_TRACE=$out_pipe /usr/sbin/rpc.gssd -f -vvvv -rrrr >$out_pipe 2>&1 &
 traced_pid=$!
 log "started rpc.gssd as pid $traced_pid"
 
