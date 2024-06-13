@@ -106,3 +106,12 @@ debugging nfs over rpc+tls
   However, note that wireshark is unable to decode rpc inside of tls.  The list of 'decode tls as' protocols is limited, and RPC is not on the list.
 
   wireshark enhancement request submitted - https://gitlab.com/wireshark/wireshark/-/issues/19876
+
+
+
+additional useful links
+  https://github.com/oracle/ktls-utils.git
+  https://wiki.archlinux.org/title/NFS#TLS_encryption
+  https://wiki.archlinux.org/title/OpenSSL#Generate_a_self-signed_certificate_with_private_key_in_a_single_command
+  https://wiki.archlinux.org/title/Transport_Layer_Security#Trust_management
+  https://www.rfc-editor.org/rfc/rfc9289.pdf
