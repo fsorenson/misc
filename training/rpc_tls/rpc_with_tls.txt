@@ -1,6 +1,6 @@
 nfs with a tls-encoded rpc transport:
 
-  requires sufficiently up-to-date kernel (RHEL 9.4, upstream 6.something), ktls-utils
+  requires sufficiently up-to-date kernel (RHEL 9.4, upstream 6.4+), ktls-utils
 
 overview:
   create client and server certificates and private keys
@@ -103,10 +103,8 @@ debugging nfs over rpc+tls
   now, (t|wire)shark can decrypt the TLS v1.3 records.
 
 
-  However, note that wireshark is unable to decode rpc inside of tls.  The list of 'decode tls as' protocols is limited, and RPC is not on the list.
-
-  wireshark enhancement request submitted - https://gitlab.com/wireshark/wireshark/-/issues/19876
-
+  However, released versions of wireshark are unable to decode rpc inside of tls (the list of 'decode tls as' protocols is limited, and rpc is not on the list).
+  I opened an enhancement request for wireshark (https://gitlab.com/wireshark/wireshark/-/issues/19876), and it turns out that the very latest release candidate (4.3.0-rc1) DOES decode rpc inside of TLS.  So it's just a matter of time before released versions will include the feature as well.
 
 
 additional useful links
