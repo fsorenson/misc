@@ -1,0 +1,108 @@
+nfs with a tls-encoded rpc transport:
+
+  requires sufficiently up-to-date kernel (RHEL 9.4, upstream 6.something), ktls-utils
+
+overview:
+  create client and server certificates and private keys
+  configure client to trust server certificate
+  install ktls-utils
+  configure /etc/tlshd.conf
+  start tlshd.service
+  mount by dns name
+
+
+create client and server certificates and private keys:
+
+  on server (dns name: vm25.sorenson.redhat.com):
+    # openssl req -nodes -x509 -newkey rsa:4096 -new -days 3650 -keyout /etc/nfsd-vm25.sorenson.redhat.com-key.pem -out /etc/nfsd-vm25.sorenson.redhat.com-cert.pem
+	for 'Common Name (eg, your name or your server's hostname) []:' use the dns hostname
+	the other fields don't seem to be important
+
+  on client (dns name: vm8.sorenson.redhat.com):
+    # openssl req -nodes -x509 -newkey rsa:4096 -new -days 3650 -keyout /etc/nfs-vm8.sorenson.redhat.com-key.pem -out /etc/nfs-vm8.sorenson.redhat.com-cert.pem
+	for 'Common Name (eg, your name or your server's hostname) []:' use the dns hostname
+	the other fields don't seem to be important
+
+    (-nodes required to prevent encryption of the private key)
+
+configure client to trust server certificate (server's key should stay on the server)
+  copy server's /etc/nfsd-vm25.sorenson.redhat.com-cert.pem to client:/tmp
+    # trust anchor /tmp/nfsd-vm25.sorenson.redhat.com-cert.pem
+  remove the cert file:
+    # rm -f /tmp/nfsd-vm25.sorenson.redhat.com-cert.pem
+
+  see the certificate in the trust store:
+  # trust list
+  pkcs11:id=%FE%27%38%3D%5E%5D%3C%04%87%70%C7%68%CD%72%A8%75%AF%86%CD%00;type=cert
+    type: certificate
+    label: vm25.sorenson.redhat.com
+    trust: anchor
+    category: authority
+
+  (if you need to remove the certificate from the trust store:
+  # trust anchor --remove 'pkcs11:id=%FE%27%38%3D%5E%5D%3C%04%87%70%C7%68%CD%72%A8%75%AF%86%CD%00;type=cert'
+
+install ktls-utils
+  git tree https://github.com/oracle/ktls-utils.git
+  EPEL has rpms, although not necessarily recent
+  for fun:
+    download and install the EPEL .src.rpm
+    clone the git tree and rename the directory to some version number similar to, but higher than, the EPEL rpm (for example, if ktls-utils srpm is version 0.10-1, name the directory ktls-utils-0.10b)
+    tar the git tree (for example: ktls-utils-0.10b.tar.xz) and put tarball in /root/rpmbuild/SOURCES
+    modify the version number in /root/rpmbuild/SPECS/ktls-utils.spec, add a changelog entry
+    rebuild the rpms:
+      # rpmbuild -ba /root/rpmbuild/SPECS/ktls-utils.spec
+    install the rpm
+
+configure /etc/tlshd.conf on both client and server:
+  on client:
+	[authenticate.client]
+	#x509.truststore= <pathname>
+	x509.certificate= /etc/nfs-vm8.sorenson.redhat.com-cert.pem
+	x509.private_key= /etc/nfs-vm8.sorenson.redhat.com-key.pem
+  on server:
+	[authenticate.server]
+	#x509.truststore= <pathname>
+	x509.certificate=/etc/nfsd-vm25.sorenson.redhat.com-cert.pem
+	x509.private_key=/etc/nfsd-vm25.sorenson.redhat.com-key.pem
+
+start tlshd on both client and server
+  # systemctl start tlshd.service
+
+on the client, mount the server by dns name (must match the 'Common Name' of the cert & key), and specify the xprtsec option:
+  # mount vm25.sorenson.redhat.com:/ /mnt/vm25 -overs=4,sec=sys,xprtsec=tls
+
+verify the mount has succeeded with 'xprtsec=tls':
+  # grep tls /proc/self/mountinfo
+  452 65 0:49 / /mnt/vm25 rw,relatime shared:235 - nfs4 vm25.sorenson.redhat.com:/ rw,vers=4.2,rsize=524288,wsize=524288,namlen=255,hard,proto=tcp,timeo=600,retrans=2,sec=sys,xprtsec=tls,clientaddr=192.168.122.98,local_lock=none,addr=192.168.122.50
+
+
+debugging tls
+  verbosity/debug level for tlshd, tls, and netlink can be adjusted in /etc/tlshd.conf
+  what they do is to be determined
+
+debugging nfs over rpc+tls
+  with TLS versions up to v1.2, it would be possible to load both private keys into wireshark for decoding the TLS payloads.  However RPC-with-TLS uses TLS v1.3, which prevents decoding even with private keys.
+  Decryption of TLS v1.3 can be done, but requires the session keys, rather than the private keys.
+
+  The session keys can be logged by 'tlshd' for this purpose.
+
+  stop tlshd:
+    # killall tlshd
+  start tlshd with SSLKEYLOGFILE environment variable set to dump session keys:
+    # SSLKEYLOGFILE=/tmp/sslkeylog /usr/sbin/tlshd
+  perform mount (keys will only be appended to the keylog during initial negotiation, so filesystem must be unmounted to begin with)
+
+  take packet capture, including initial negotiations
+
+  stop packet capture
+
+  inject the sslkeylog into the pcap:
+    # editcap --inject-secrets tls,/tmp/sslkeylog trace.pcap trace+keys.pcap
+
+  now, (t|wire)shark can decrypt the TLS v1.3 records.
+
+
+  However, note that wireshark is unable to decode rpc inside of tls.  The list of 'decode tls as' protocols is limited, and RPC is not on the list.
+
+  wireshark enhancement request submitted - https://gitlab.com/wireshark/wireshark/-/issues/19876
