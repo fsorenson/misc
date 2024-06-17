@@ -37,6 +37,13 @@ my %cap_defs = (
 	22 => "NFS_CAP_LAYOUTSTATS",
 	23 => "NFS_CAP_CLONE",
 	24 => "NFS_CAP_COPY",
+	25 => "NFS_CAP_OFFLOAD_CANCEL",
+	26 => "NFS_CAP_LAYOUTERROR",
+	27 => "NFS_CAP_COPY_NOTIFY",
+	28 => "NFS_CAP_XATTR",
+	29 => "NFS_CAP_READ_PLUS",
+	30 => "NFS_CAP_FS_LOCATIONS",
+	31 => "NFS_CAP_MOVEABLE",
 );
 
 # TODO: convert the script to perl
@@ -101,6 +108,8 @@ my %nfs4_cap_word1 = (
 	21 => "TIME_MODIFY",
 	22 => "TIME_MODIFY_SET",
 	23 => "MOUNTED_ON_FILEID",
+	26 => "DACL",
+	27 => "SACL",
 	30 => "FS_LAYOUT_TYPES",
 );
 my %nfs4_cap_word2 = (
@@ -109,8 +118,10 @@ my %nfs4_cap_word2 = (
 	4 => "MDSTHRESHOLD",
 	11 => "SUPPATTR_EXCLCREAT",
 	13 => "CLONE_BLKSIZE",
-	16 => "SECURITY_LABEL",
+	15 => "CHANGE_ATTR_TYPE",
+	16 => "SEC_LABEL",
 	17 => "MODE_UMASK",
+	22 => "XATTR_SUPPORT",
 );
 
 sub get_caps {
