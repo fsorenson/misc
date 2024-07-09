@@ -1,0 +1,109 @@
+function sa_addr_str:string(sa:long) {
+	if (@cast(sa, "sockaddr")->sa_family == @const("AF_INET")) {
+		sin = &@cast(sa, "sockaddr_in")
+		return sprintf("%s:%d",
+			format_ipaddr(sin->sin_addr->s_addr, @const("AF_INET")), ntohs(sin->sin_port))
+	} else if (@cast(sa, "sockaddr")->sa_family == @const("AF_INET6")) {
+		sin6 = &@cast(sa, "sockaddr_in6")
+		return sprintf("%s:%d",
+			format_ipaddr(sin6, @const("AF_INET6")), ntohs(sin6->sin6_port))
+	}
+	return "???:??"
+}
+
+function type_str:string(type:long) {
+	if (type == @const("S_IFDIR"))
+		return "DIR"
+	return "not DIR"
+}
+
+function reportable_path(path) {
+	if (isinstr(path, "WATCHED_PATH"))
+		return 1
+	return 0
+}
+function tstamp:string(epochns:long) %{ /* pure */
+	u64 nsec = STAP_ARG_epochns;
+	time_t epochsec = nsec / 1000000000;
+	struct tm gmt;
+
+	nsec = nsec % 1000000000;
+	time_to_tm(epochsec, -tz_gmtoff, &gmt);
+	snprintf(STAP_RETVALUE, MAXSTRINGLEN, "%04ld-%02d-%02d %02d:%02d:%02d.%09llu",
+		gmt.tm_year + 1900, gmt.tm_mon + 1, gmt.tm_mday,
+		gmt.tm_hour, gmt.tm_min, gmt.tm_sec, nsec);
+%}
+function tstamp_now:string() {
+	return tstamp(gettimeofday_ns())
+}
+
+# nfsd_proc_rmdir - calls nfsd_unlink
+# nfsd3_proc_rmdir - calls nfsd_unlink
+probe module("nfsd").function("nfsd_unlink") { # $rqstp:struct svc_rqst* $fhp:struct svc_fh* $type:int $fname:char* $flen:int $err:__be32
+	fpath = reverse_path_walk($fhp->fh_dentry)
+	if (reportable_path(fpath)) {
+		fname = kernel_string_n($fname, $flen)
+		rq_addr = sa_addr_str(&$rqstp->rq_addr)
+#		rq_daddr = sa_addr_str(&$rqstp->rq_daddr)
+#		type_str = type_str($type)
+		printf("%s: nfsd unlink/remove (%s/%s) by %s\n", tstamp_now(), fpath, fname, rq_addr)
+	}
+}
+
+# nfsd4_rename - calls nfsd_rename
+# nfsd_proc_rename - calls nfsd_rename
+# nfsd3_proc_rename - calls nfsd_rename
+probe module("nfsd").function("nfsd_rename") {
+# $rqstp:struct svc_rqst* $ffhp:struct svc_fh* $fname:char* $flen:int $tfhp:struct svc_fh* $tname:char* $tlen:int
+	fpath = reverse_path_walk($ffhp->fh_dentry)
+	if (reportable_path(fpath)) {
+		tpath = reverse_path_walk($tfhp->fh_dentry)
+		fname = kernel_string_n($fname, $flen)
+		tname = kernel_string_n($tname, $tlen)
+
+		rq_addr = sa_addr_str(&$rqstp->rq_addr)
+#		rq_daddr = sa_addr_str(&$rqstp->rq_daddr)
+		printf("%s: nfsd rename (%s/%s => %s/%s) by %s\n", tstamp_now(), fpath, fname, tpath, tname, rq_addr)
+	}
+}
+
+# $old_dir:struct inode* $old_dentry:struct dentry* $new_dir:struct inode* $new_dentry:struct dentry* $delegated_inode:struct inode** $flags:unsigned int $old_name:struct name_snapshot
+probe kernel.function("vfs_rename") {
+	op = reverse_path_walk($old_dentry)
+	if (reportable_path(op)) {
+		np = reverse_path_walk($new_dentry)
+
+		if (execname() == "nfsd")
+			src = "via nfsd"
+		else
+			src = sprintf(" by %s(%d) - %s", execname(), tid(), task_ancestry(task_current(), 0))
+		printf("%s: vfs_rename(%s, %s) %s\n",
+			tstamp_now(), op, np, src)
+	}
+}
+probe kernel.function("vfs_rmdir") {
+# $dir:struct inode* $dentry:struct dentry*
+	p = reverse_path_walk($dentry)
+	if (reportable_path(p)) {
+		if (execname() == "nfsd")
+			src = "via nfsd"
+		else
+			src = sprintf("by %s(%d) - %s",
+				execname(), tid(), task_ancestry(task_current(), 0))
+		printf("%s: vfs_rmdir(%s) %s\n",
+			tstamp_now(), p, src)
+	}
+}
+probe kernel.function("vfs_unlink") {
+# $dir:struct inode* $dentry:struct dentry* $delegated_inode:struct inode**
+	p = reverse_path_walk($dentry)
+	if (reportable_path(p)) {
+		if (execname() == "nfsd")
+			src = "via nfsd"
+		else
+			src = sprintf("by %s(%d) - %s",
+				execname(), tid(), task_ancestry(task_current(), 0))
+		printf("%s: vfs_unlink(%s) %s\n",
+			tstamp_now(), p, src)
+	}
+}
