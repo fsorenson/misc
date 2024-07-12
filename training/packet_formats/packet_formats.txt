@@ -1,0 +1,408 @@
+Frame-level wireshark/tshark fields:
+      Frame interface id (field: frame.interface_id)
+      Frame interface name (any, eth0, lo, etc.) (field: frame.interface_name)
+      Frame number (field: frame.number)
+      Frame absolute time (field: frame.time)
+      Frame absolute time in Epoch time (field: frame.time_epoch)
+      Frame absolute time in UTC (field: frame.time_utc)
+      Time since previous captured frame (field: frame.time_delta)
+      Time since previous displayed frame (field: frame.time_delta_displayed)
+      Time since first frame (or referance time) (field: frame.time_relative)
+      Frame length (field: frame.len)
+      Frame length captured (field: frame.cap_len)
+      Protocols in this frame (field: frame.protocols)
+
+
+=====================================================================
+Ethernet II (captures with a specified network interface)
+
++-----------------+-----------------+-----------------+-----------------+
+| 0 0 0 0 0 0 0 0 | 0 0 1 1 1 1 1 1 | 1 1 1 1 2 2 2 2 | 2 2 2 2 2 2 3 3 |
+| 0 1 2 3 4 5 6 7 | 8 9 0 1 2 3 4 5 | 6 7 8 9 0 1 2 3 | 4 5 6 7 8 9 0 1 |
++-----------------------------------------------------------------------+
+|                        Destination HW Address                         |
++-----------------------------------+-----------------------------------+
+|   Destination Address (contd.)    |         Source HW Address         |
++-----------------------------------------------------------------------+
+|                        Source HW Address (contd.)                     |
++-----------------------------------+-----------------------------------+
+|             Eth. Type             |
++-----------------------------------+
+
+   len
+   bits
+         Frame contains ethernet (field: eth)
+   48    Destination hardware address (fields: eth.addr eth.dst)
+   48    Source hardware address (fields: eth.addr eth.src)
+   16    Ethernet type (IPv4=0x0800) (field: eth.type)
+         Ethernet stream index (field: eth.stream)
+
+=====================================================================
+
+
+
+=====================================================================
+Linux Cooked capture v1 (captures where interface is specified as 'any')
+
+
+
+
+
+=====================================================================
+
+
+IPv4/IPv6
+
++-----------------+-----------------+-----------------+-----------------+
+| 0 0 0 0 0 0 0 0 | 0 0 1 1 1 1 1 1 | 1 1 1 1 2 2 2 2 | 2 2 2 2 2 2 3 3 |
+| 0 1 2 3 4 5 6 7 | 8 9 0 1 2 3 4 5 | 6 7 8 9 0 1 2 3 | 4 5 6 7 8 9 0 1 |
++--------+--------+------------+----+-----------------+-----------------+
+|   IPv  |  HLEN  |   Diffserv |ECN |             IP length             |
++--------+--------+------------+----+------+----------------------------+
+|           IP ID                   |Flags |     Fragment offset        |
++-----------------+-----------------+-----------------------------------+
+|       TTL       |     Protocol    |         Header checksum           |
++-----------------------------------+-----------------------------------+
+|                               Source IP                               |
+| ..................................................................... |
++-----------------------------------------------------------------------+
+|                            Destination IP                             |
+| ..................................................................... |
++-----------------------------------------------------------------------+
+|                               Options                                 |
+| ..................................................................... |
++-----------------------------------------------------------------------+
+|                              Data/Payload                             |
+| ..................................................................... |
++-----------------------------------------------------------------------+
+
+
+   len
+   bits
+         Frame contains IP (field: ip)
+    4    IP version (4/6) ((field: ip.version)
+    4    Header length in 32-bit words (field: ip.hdr_len)
+    8    Differentiated Services field (field: ip.dsfield)
+       6   Differentiated Services codepoint (field: ip.dsfield.dscp)
+       2   Explicit Congestion Notification/ECN (field: ip.dsfield.ecn)
+   16    IP length (total length in bytes) (field: ip.len)
+   16    IP Identification (RFC 2507 6a, 7.13a) (field: ip.id)
+   16    Flags/Fragment offset
+       3   Flags
+         1 Reserved (field: ip.flags.rb)
+	 1 Don't fragment (field: ip.flags.df)
+	 1 More fragments (field: ip.flags.mf)
+      13   Fragment offset (field: ip.frag_offset)
+    8    Time-to-live (field: ip.ttl)
+    8    Protocol (see /etc/protocols - 6=TCP, 17=UDP) (field: ip.proto)
+           Packet has TCP (field: tcp)
+           Packet has UDP (field: udp)
+   16    Header checksum (field: ip.checksum)
+           Calculated IP header checksum (field: ip.checksum_calculated)
+           Header checksum status (good/bad) (field: ip.checksum.status)
+   32    IPv4 source address (fields: ip.addr ip.src)
+           Source host (fields: ip.host ip.src_host)
+   32    IPv4 destination address (fields: ip.addr ip.dst)
+           Destination host (fields: ip.host ip.dst_host)
+         IP stream (field: ip.stream)
+   0+    IP options (variable length) (fields: ip.options.*)
+
+
+=====================================================================
+
+TCP
+
++-----------------+-----------------+-----------------+-----------------+
+| 0 0 0 0 0 0 0 0 | 0 0 1 1 1 1 1 1 | 1 1 1 1 2 2 2 2 | 2 2 2 2 2 2 3 3 |
+| 0 1 2 3 4 5 6 7 | 8 9 0 1 2 3 4 5 | 6 7 8 9 0 1 2 3 | 4 5 6 7 8 9 0 1 |
++-----------------------------------+-----------------+-----------------+
+|            Source Port            |         Destination Port          |
++-----------------------------------------------------------------------+
+|                            Sequence Number                            |
++-----------------------------------------------------------------------+
+|                        Acknowledgement Number                         |
++--------+-----+--------------------+-----------------------------------+
+| Offset |Resvd|       Flags        |              Window               |
++-----------------------------------+-----------------------------------+
+|             Checksum              |          Urgent Pointer           |
++-----------------------------------------------------------------------+
+|                                Options                                |
+| ..................................................................... |
++-----------------------------------------------------------------------+
+|                              Data/Payload                             |
+| ..................................................................... |
++-----------------------------------------------------------------------+
+
+   len
+   bits
+         Frame contains TCP (field: tcp)
+   16    Source port (fields: tcp.port tcp.srcport)
+   16    Destination port (fields: tcp.port tcp.dstport)
+         TCP stream index (field: tcp.stream)
+	 TCP stream relative packet number (field: tcp.stream.pnum)
+         Conversation completeness (complete/incomplete) (fields: tcp.completeness tcp.completeness.str tcp.completeness.*)
+         TCP segment length (field: tcp.len)
+   32    Raw TCP sequence number (field: tcp.seq_raw)
+           Relative TCP sequence number (field: tcp.seq)
+	   Next sequence number (field: tcp.nxtseq)
+   32    Raw TCP acknowledgement number (field: tcp.ack_raw)
+           Relative TCP acknowledgement number (field: tcp.ack)
+    4    Offset/TCP header length (field: tcp.hdr_len)
+   12    TCP flags (field: tcp.flags tcp.flags.str)
+      3    Reserved (must be 0) (field: tcp.flags.res)
+      1    Accurate ECN (field: tcp.flags.res)
+      1    Congestion window reduced (field: tcp.flags.cwr)
+      1    ECN echo (field: tcp.flags.ece)
+      1    Urgent (field: tcp.flags.urg)
+      1    Acknowledgement (field: tcp.flags.ack)
+      1    Push (field: tcp.flags.push)
+      1    Reset (field: tcp.flags.reset)
+      1    SYN (field: tcp.flags.syn)
+      1    FIN (field: tcp.flags.fin)
+   16    TCP window size (number of bytes that the receiver is currently willing to receive) (field: tcp.window_size_value)
+           Scaled window size (if scaling is used) (field: tcp.window_size)
+	   Window size scaling factor (-1=unknown, -2=no scaling, >=0) (field: tcp.window_size_scalefactor)
+   16    TCP checksum (field: tcp.checksum)
+           TCP checksum status (whether verified) (field: tcp.checksum.status)
+   16    TCP urgent pointer (field: tcp.urgent_pointer)
+   0-320 TCP options (variable length) (fields: tcp.options tcp.options.*)
+           TCP option kind (field: tcp.option_kind - may be multiple values)
+	     0=No-operation (nop) (field: tcp.options.nop)
+	     2=Maximum segment size (MSS) (4 bytes) (fields: tcp.options.mss tcp.options.mss_val tcp.options.mss.absent tcp.options.mss.present)
+	     3=TCP window scale (3 bytes) (fields: tcp.options.wscale tcp.options.wscale.shift tcp.options.wscale.multiplier tcp.options.wscale.shift.invalid)
+	     8=TCP timestamps (10 bytes) (fields: tcp.options.timestamp tcp.options.timestamp.*)
+	     ...
+	   TCP option length (field: tcp.option_len - may be multiple values)
+	 Time since first frame in this TCP stream (field: tcp.time_relative)
+	 Time since previous frame in this TCP stream (fields: tcp.time_delta)
+	 Frame has some TCP analysis (fields: tcp.analysis tcp.analysis.*)
+	   Number of bytes in-flight for this connection (tcp.analysis.bytes_in_flight)
+	   Number of bytes since last PSH flag (field: tcp.analysis.push_bytes_sent)`
+         TCP payload as hex string (field: tcp.payload)
+
+=====================================================================
+
+UDP
+
++-----------------+-----------------+-----------------+-----------------+
+| 0 0 0 0 0 0 0 0 | 0 0 1 1 1 1 1 1 | 1 1 1 1 2 2 2 2 | 2 2 2 2 2 2 3 3 |
+| 0 1 2 3 4 5 6 7 | 8 9 0 1 2 3 4 5 | 6 7 8 9 0 1 2 3 | 4 5 6 7 8 9 0 1 |
++-----------------------------------+-----------------+-----------------+
+|            Source Port            |         Destination Port          |
++-----------------------------------+-----------------------------------+
+|              Length               |             Checksum              |
++-----------------------------------------------------------------------+
+|                              Data/Payload                             |
+| ..................................................................... |
++-----------------------------------------------------------------------+
+
+   len
+   bits
+         Frame contains UDP (field: udp)
+   16    Source port (fields: udp.port udp.srcport
+   16    Destination port (fields: udp.port udp.dstport)
+   16    Length (field: udp.length)
+   16    Checksum
+         Calculated UDP checksum (field: udp.checksum_calculated)
+         UDP checksum status (whether verified) (field: udp.checksum.status)
+         UDP stream index (field: udp.stream)
+	 Relative packet in this UDP stream (field:udp.stream.pnum)
+	 Time since first frame of this UDP stream (field: udp.time_relative)
+	 Time since previous fram in this UDP stream (field: udp.time_delta)
+	 UDP payload as hex string (field: udp.payload)
+
+
+=====================================================================
+
+
+RPC Generic format
++-----------------+-----------------+-----------------+-----------------+
+| 0 0 0 0 0 0 0 0 | 0 0 1 1 1 1 1 1 | 1 1 1 1 2 2 2 2 | 2 2 2 2 2 2 3 3 |
+| 0 1 2 3 4 5 6 7 | 8 9 0 1 2 3 4 5 | 6 7 8 9 0 1 2 3 | 4 5 6 7 8 9 0 1 |
++-----------------------------------+-----------------------------------+
+|                        SUNRPC Fragment Header                         |
++-----------------------------------------------------------------------+
+|                         Transaction ID (xid)                          |
++-----------------------------------------------------------------------+
+|                             Message Type                              |
++-----------------------------------------------------------------------+
+|                                Message                                |
+| ..................................................................... |
++-----------------------------------------------------------------------+
+
+        Frame contains RPC (field: rpc)
+
+
+RPC Call
++-----------------+-----------------+-----------------+-----------------+
+| 0 0 0 0 0 0 0 0 | 0 0 1 1 1 1 1 1 | 1 1 1 1 2 2 2 2 | 2 2 2 2 2 2 3 3 |
+| 0 1 2 3 4 5 6 7 | 8 9 0 1 2 3 4 5 | 6 7 8 9 0 1 2 3 | 4 5 6 7 8 9 0 1 |
++-----------------------------------+-----------------------------------+
+|                        SUNRPC Fragment Header                         |
++-----------------------------------------------------------------------+
+|                         Transaction ID (xid)                          |
++-----------------------------------------------------------------------+
+|                        Message Type = 0 (CALL)                        |
++-----------------------------------------------------------------------+
+|                              RPC Version                              |
++-----------------------------------------------------------------------+
+|                              RPC Program                              |
++-----------------------------------------------------------------------+
+|                            Program Version                            |
++-----------------------------------------------------------------------+
+|                               Procedure                               |
++-----------------------------------------------------------------------+
+|                              Credentials                              |
+| ..................................................................... |
++-----------------------------------------------------------------------+
+|                               Verifier                                |
+| ..................................................................... |
++-----------------------------------------------------------------------+
+|                                Message                                |
+| ..................................................................... |
++-----------------------------------------------------------------------+
+
+   len
+   bits
+   32    Fragment header
+      1    This is the last fragment of the RPC message (field: rpc.lastfrag)
+     31    RPC fragment length (field: rpc.fraglen)
+   32    Transaction ID (xid) (field: rpc.xid)
+   32    Message type (0=Call, 1=Reply) (field: rpc.msgtyp)
+   32    RPC version (field: rpc.version)
+   32    RPC program (see /etc/rpc) (field: rpc.program)
+           100000=portmap, 100003=NFS, 100005=mountd, etc.
+   32    Program version (nfsv3, nfsv4, etc.) (field: rpc.programversion)
+   32    Procedure number (field: rpc.procedure)
+           NULL, MOUNT, READDIR, COMPOUND, etc.
+         The reply to this request is in frame ## (for calls) (field: rpc.reqframe)
+  64+    Credentials (variable size, depending on type and contents)
+     32    Auth flavor (field: rpc.auth.flavor - multiple values)
+     32    Auth length (field: rpc.auth.length - multiple values)
+           AUTH_NULL=0
+           AUTH_UNIX (AUTH_SYS)=1
+	   RPCSEC_GSS=6
+	   RPCSEC_GSSAPI=300001
+	     ...
+  64+    Verifier (variable size)
+     32    Auth flavor (field: rpc.auth.flavor)
+     32    Auth length (field: rpc.auth.length)
+
+(for Credentials/Verifiers, see separate table)
+
+
+RPC Reply
++-----------------+-----------------+-----------------+-----------------+
+| 0 0 0 0 0 0 0 0 | 0 0 1 1 1 1 1 1 | 1 1 1 1 2 2 2 2 | 2 2 2 2 2 2 3 3 |
+| 0 1 2 3 4 5 6 7 | 8 9 0 1 2 3 4 5 | 6 7 8 9 0 1 2 3 | 4 5 6 7 8 9 0 1 |
++-----------------------------------+-----------------------------------+
+|                        SUNRPC Fragment Header                         |
++-----------------------------------------------------------------------+
+|                         Transaction ID (xid)                          |
++-----------------------------------------------------------------------+
+|                       Message Type = 1 (REPLY)                        |
++-----------------------------------------------------------------------+
+|                                Status                                 |
++-----------------------------------------------------------------------+
+|                               Verifier                                |
+| ..................................................................... |
++-----------------------------------------------------------------------+
+|                                Message                                |
+| ..................................................................... |
++-----------------------------------------------------------------------+
+
+   len
+   bits
+   32    Fragment header
+      1    This is the last fragment of the RPC message (field: rpc.lastfrag)
+     31    RPC fragment length (field: rpc.fraglen)
+   32    Transaction ID (xid) (field: rpc.xid)
+   32    Message type (0=Call, 1=Reply) (field: rpc.msgtyp)
+   32    Reply status (field: rpc.replystat)
+         RPC program (from the call) (field: rpc.program)
+	 RPC program version (from the call) (field: rpc.programversion)
+	 RPC Procedure (from the call) (field: rpc.procedure)
+   64+   Verifier (variable size)
+     32    Auth flavor (field: rpc.auth.flavor)
+     32    Auth length (field: rpc.auth.length)
+
+	 This is a reply to the request in frame ## (field: rpc.repframe)
+         Time between request and reply frames (field: rpc.time)
+
+
+
+=====================================================================
+
+RPC Credentials/Verifiers:
+
+AUTH_NULL:
++-----------------+-----------------+-----------------+-----------------+
+| 0 0 0 0 0 0 0 0 | 0 0 1 1 1 1 1 1 | 1 1 1 1 2 2 2 2 | 2 2 2 2 2 2 3 3 |
+| 0 1 2 3 4 5 6 7 | 8 9 0 1 2 3 4 5 | 6 7 8 9 0 1 2 3 | 4 5 6 7 8 9 0 1 |
++-----------------------------------------------------------------------+
+|                      Auth Flavor AUTH_NULL (0)                        |
++-----------------------------------------------------------------------+
+|                             Auth Length (0)                           |
++-----------------------------------------------------------------------+
+
+   len
+   bits
+   32     Auth flavor (0)
+   32     Auth length (0)
+
+
+AUTH_UNIX:
++-----------------+-----------------+-----------------+-----------------+
+| 0 0 0 0 0 0 0 0 | 0 0 1 1 1 1 1 1 | 1 1 1 1 2 2 2 2 | 2 2 2 2 2 2 3 3 |
+| 0 1 2 3 4 5 6 7 | 8 9 0 1 2 3 4 5 | 6 7 8 9 0 1 2 3 | 4 5 6 7 8 9 0 1 |
++-----------------------------------------------------------------------+
+|                      Auth Flavor AUTH_UNIX (1)                        |
++-----------------------------------------------------------------------+
+|                             Auth Length (24+)                         |
++-----------------------------------------------------------------------+
+|                                 Stamp                                 |
++-----------------------------------------------------------------------+
+|                          Machine Name Length                          |
++-----------------------------------------------------------------------+
+|                        Machine Name + Padding                         |
+| ..................................................................... |
++-----------------------------------------------------------------------+
+|                                  UID                                  |
++-----------------------------------------------------------------------+
+|                                  GID                                  |
++-----------------------------------------------------------------------+
+|                               GID Count                               |
++-----------------------------------------------------------------------+
+|                                  GID                                  |
+| ..................................................................... |
++-----------------------------------------------------------------------+
+
+   len
+   bits
+   32    Auth flavor (1) (field: rpc.auth.flavor)
+   32    Auth length (field: rpc.auth.length)
+   32    Stamp (rpc.auth.stamp)
+   32+   Machine name
+      32   length (field: rpc.opaque_length)
+      0+   Machine name (field: rpc.auth.machinename)
+      0+   fill bytes (padding machine name to 4-byte multiple) (field: rpc.fill_bytes)
+   32    UID (field: rpc.auth.uid)
+   32    GID (field: rpc.auth.gid)
+   64+   Auxiliary GIDs
+      32   Auxiliary GID count
+      32+  Auxiliary GIDs (4 bytes * count) (field: rpc.auth.gid)
+
+
+
+AUTH_RPCSEC_GSS:
+   len
+   bits
+   32    Auth flavor (6) (field: rpc.auth.flavor)
+   32    Auth length (field: rpc.auth.length)
+   32    GSS version (field: rpc.authgss.version)
+   32    GSS procedure (field: rpc.authgss.procedure)
+   32    GSS sequence number (field: rpc.authgss.seqnum)
+   32    GSS service (field: rpc.authgss.service)
+   32+   GSS context (variable length)
+      32   GSS context length (field: rpc.authgss.context.length)
+      0+   GSS context (field: rpc.authgss.context)
