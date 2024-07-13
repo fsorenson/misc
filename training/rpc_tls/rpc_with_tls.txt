@@ -13,29 +13,29 @@ overview:
 
 create client and server certificates and private keys:
 
-  on server (dns name: vm25.sorenson.redhat.com):
-    # openssl req -nodes -x509 -newkey rsa:4096 -new -days 3650 -keyout /etc/nfsd-vm25.sorenson.redhat.com-key.pem -out /etc/nfsd-vm25.sorenson.redhat.com-cert.pem
+  on server (dns name: server1.example.com):
+    # openssl req -nodes -x509 -newkey rsa:4096 -new -days 3650 -keyout /etc/nfsd-server1.example.com-key.pem -out /etc/nfsd-server1.example.com-cert.pem
 	for 'Common Name (eg, your name or your server's hostname) []:' use the dns hostname
 	the other fields don't seem to be important
 
-  on client (dns name: vm8.sorenson.redhat.com):
-    # openssl req -nodes -x509 -newkey rsa:4096 -new -days 3650 -keyout /etc/nfs-vm8.sorenson.redhat.com-key.pem -out /etc/nfs-vm8.sorenson.redhat.com-cert.pem
+  on client (dns name: client1.example.com):
+    # openssl req -nodes -x509 -newkey rsa:4096 -new -days 3650 -keyout /etc/nfs-client1.example.com-key.pem -out /etc/nfs-client1.example.com-cert.pem
 	for 'Common Name (eg, your name or your server's hostname) []:' use the dns hostname
 	the other fields don't seem to be important
 
     (-nodes required to prevent encryption of the private key)
 
 configure client to trust server certificate (server's key should stay on the server)
-  copy server's /etc/nfsd-vm25.sorenson.redhat.com-cert.pem to client:/tmp
-    # trust anchor /tmp/nfsd-vm25.sorenson.redhat.com-cert.pem
+  copy server's /etc/nfsd-server1.example.com-cert.pem to client:/tmp
+    # trust anchor /tmp/nfsd-server1.example.com-cert.pem
   remove the cert file:
-    # rm -f /tmp/nfsd-vm25.sorenson.redhat.com-cert.pem
+    # rm -f /tmp/nfsd-server1.example.com-cert.pem
 
   see the certificate in the trust store:
   # trust list
   pkcs11:id=%FE%27%38%3D%5E%5D%3C%04%87%70%C7%68%CD%72%A8%75%AF%86%CD%00;type=cert
     type: certificate
-    label: vm25.sorenson.redhat.com
+    label: server1.example.com
     trust: anchor
     category: authority
 
@@ -58,23 +58,23 @@ configure /etc/tlshd.conf on both client and server:
   on client:
 	[authenticate.client]
 	#x509.truststore= <pathname>
-	x509.certificate= /etc/nfs-vm8.sorenson.redhat.com-cert.pem
-	x509.private_key= /etc/nfs-vm8.sorenson.redhat.com-key.pem
+	x509.certificate= /etc/nfs-client1.example.com-cert.pem
+	x509.private_key= /etc/nfs-client1.example.com-key.pem
   on server:
 	[authenticate.server]
 	#x509.truststore= <pathname>
-	x509.certificate=/etc/nfsd-vm25.sorenson.redhat.com-cert.pem
-	x509.private_key=/etc/nfsd-vm25.sorenson.redhat.com-key.pem
+	x509.certificate=/etc/nfsd-server1.example.com-cert.pem
+	x509.private_key=/etc/nfsd-server1.example.com-key.pem
 
 start tlshd on both client and server
   # systemctl start tlshd.service
 
 on the client, mount the server by dns name (must match the 'Common Name' of the cert & key), and specify the xprtsec option:
-  # mount vm25.sorenson.redhat.com:/ /mnt/vm25 -overs=4,sec=sys,xprtsec=tls
+  # mount server1.example.com:/ /mnt/server1 -overs=4,sec=sys,xprtsec=tls
 
 verify the mount has succeeded with 'xprtsec=tls':
   # grep tls /proc/self/mountinfo
-  452 65 0:49 / /mnt/vm25 rw,relatime shared:235 - nfs4 vm25.sorenson.redhat.com:/ rw,vers=4.2,rsize=524288,wsize=524288,namlen=255,hard,proto=tcp,timeo=600,retrans=2,sec=sys,xprtsec=tls,clientaddr=192.168.122.98,local_lock=none,addr=192.168.122.50
+  452 65 0:49 / /mnt/server1 rw,relatime shared:235 - nfs4 server1.example.com:/ rw,vers=4.2,rsize=524288,wsize=524288,namlen=255,hard,proto=tcp,timeo=600,retrans=2,sec=sys,xprtsec=tls,clientaddr=192.168.122.98,local_lock=none,addr=192.168.122.50
 
 
 debugging tls
