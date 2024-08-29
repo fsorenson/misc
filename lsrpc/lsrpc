@@ -21,16 +21,19 @@ my %rpc_xprt_states = (
 my %rpc_task_flags = (
 	0x0001 => "RPC_TASK_ASYNC",
 	0x0002 => "RPC_TASK_SWAPPER",
+	0x0004 => "RPC_TASK_MOVEABLE",
+	0x0010 => "RPC_TASK_NULLCREDS",
 	0x0020 => "RPC_CALL_MAJORSEEN",
 	0x0040 => "RPC_TASK_ROOTCREDS",
 	0x0080 => "RPC_TASK_DYNAMIC",
-	0x0100 => "RPC_TASK_KILLED",
+	0x0100 => "RPC_TASK_NO_ROUND_ROBIN/KILLED(RHEL7)",
 	0x0200 => "RPC_TASK_SOFT",
 	0x0400 => "RPC_TASK_SOFTCONN",
 	0x0800 => "RPC_TASK_SENT",
 	0x1000 => "RPC_TASK_TIMEOUT",
 	0x2000 => "RPC_TASK_NOCONNECT",
 	0x4000 => "RPC_TASK_NO_RETRANS_TIMEOUT",
+	0x8000 => "RPC_TASK_CRED_NOREF",
 );
 sub indent_str {
 	return "  " x shift;
@@ -90,8 +93,13 @@ sub dump_rpcs {
 		next if ($xprt eq "." || $xprt eq "..");
 		my $info_file = $rpc_xprt_dir . "/" . $xprt . "/info";
 		my $xprt_num = hex($xprt);
+		my $fh;
 
-		open(my $fh, $info_file) or return barf("unable to open $info_file");
+		open($fh, $info_file) or do {
+			printf "unable to open $info_file\n";
+			next;
+#			return barf("unable to open $info_file");
+		};
 		while (<$fh>) {
 			chomp;
 			if ($_ =~ /^(state|netid|addr|port):\s+(.+)/) {
@@ -114,7 +122,11 @@ sub dump_rpcs {
 		my $clnt_num = hex($clnt);
 
 		my $tasks_file = $rpc_clnt_dir . "/" . $clnt . "/tasks";
-		open (my $fh, $tasks_file) or return barf("unable to open $tasks_file");
+		open (my $fh, $tasks_file) or do {
+			printf "unable to open $tasks_file\n";
+			next;
+#			return barf("unable to open $tasks_file");
+		};
 		my $task_count = 0;
 
 		my $rpc_clnt_xprt_dir = $rpc_clnt_dir . "/" . $clnt . "/xprt";
@@ -143,13 +155,19 @@ sub dump_rpcs {
 		printf("\n") if ($xprt_count++ != 0);
 		printf("%s: ", $rpc_xprt_num);
 
-		if ($rpc_xprt{'netid'} eq "local") {
-			printf("%s - ", $rpc_xprt{'addr'});
-		} else {
-			printf("%s %s:%d - ", $rpc_xprt{'netid'},
-				$rpc_xprt{'addr'}, $rpc_xprt{'port'});
+		if (defined($rpc_xprt{'netid'})) {
+			if ($rpc_xprt{'netid'} eq "local") {
+				printf("%s - ", $rpc_xprt{'addr'});
+			} else {
+				printf("%s %s:%d - ", $rpc_xprt{'netid'},
+					$rpc_xprt{'addr'}, $rpc_xprt{'port'});
+			}
 		}
-		printf("%s\n", xprt_states_str($rpc_xprt{'state'}));
+		if (defined($rpc_xprt{'state'})) {
+			printf("%s\n", xprt_states_str($rpc_xprt{'state'}));
+		} else {
+			printf("\n");
+		}
 
 		my $task_count = 0;
 		foreach my $task ( @{ $rpc_xprt{'tasks'} } ) {
