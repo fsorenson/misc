@@ -1,4 +1,4 @@
-all: trace_opens.bpf.o attach_tp
+all: trace_opens.bpf.o trace_opens
 
 
 
@@ -18,6 +18,9 @@ ztrace_opens.bpf.o: trace_opens.bpf.c vmlinux.h
 		-Wno-tautological-compare -Wno-unknown-warning-option \
 		-target bpf -Wall -g -c trace_opens.bpf.c -o trace_opens.bpf.o
 
+trace_opens:	trace_opens.c
+	gcc -Wall trace_opens.c -o trace_opens -lbcc -lbpf
+
 trace_opens.bpf.o: trace_opens.bpf.c vmlinux.h
 	clang -D__x86_64__ -D__KERNEL__ -D__BPF_TRACING__ \
 		-D__TARGET_ARCH_x86_64 \
@@ -29,8 +32,6 @@ trace_opens.bpf.o: trace_opens.bpf.c vmlinux.h
 
 
 
-attach_tp:	attach_tp.c
-	gcc -Wall attach_tp.c -o attach_tp -lbcc -lbpf
 
 clean:
 	rm -rf /sys/fs/bpf/trace_opens/* ; rmdir /sys/fs/bpf/trace_opens
