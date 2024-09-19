@@ -1,0 +1,77 @@
+To compare the rpc times between simultaneous client and server packet captures, and see whether there's a slowdown in the network or on the nfs server side:
+
+* requires simultaneous pcap from both client & server, each containing just one nfs stream (trim the files if necessary)
+
+
+
+make a list of the rpc.xids and rpc.times from the client pcap:
+$ tshark -Tfields -E header=n -e rpc.xid -e rpc.time -n -r client-tcpdump.pcap rpc.time | awk '{split($1,xids,",") ; split($2,times,",") ; count=length(xids) ; for (i = 1 ; i <= count ; i++) {print xids[i]" "times[i]}}' | sort -n >client.times
+
+(the 'awk' command is to expand frames where more than rpc.xid/rpc.time are present, and separated by ',')
+
+makes a list like
+$ head -n5 client.times
+0x004bfc17 0.067882000
+0x004cfc17 0.067934000
+0x004dfc17 0.067985000
+0x004efc17 0.067872000
+0x004ffc17 0.067896000
+
+
+create the same list for the the server pcap:
+$ tshark -Tfields -E header=n -e rpc.xid -e rpc.time -n -r server-tcpdump.pcap rpc.time | awk '{split($1,xids,",") ; split($2,times,",") ; count=length(xids) ; for (i = 1 ; i <= count ; i++) {print xids[i]" "times[i]}}' | sort -n >server.times
+
+
+use 'join' to merge the two files by matching the first field (the rpc.xid) of each line:
+(the result will be 3 columns:  rpc.xid client-rpc.time server-rpc.time)
+
+$ join client.times server.times | head -n5
+0x004bfc17 0.067882000 0.000168000
+0x004cfc17 0.067934000 0.000218000
+0x004dfc17 0.067985000 0.000199000
+0x004efc17 0.067872000 0.000129000
+0x004ffc17 0.067896000 0.000072000
+
+(this is just example output to show what we're doing... not keeping the contents)
+
+
+now, join the files, calculate the time on the network (client_rpc.time - server_rpc.time), add up all the total times, and output at the end:
+
+$ join client.times server.times | awk '{total_client += $2 ; total_server += $3 ; net_time=$2-$3 ; total_net += net_time ; print $1,$2,$3,net_time}  END{print "total server time: "total_server ; print "total client time: "total_client ; print "total network time: "total_net}'
+0x004bfc17 0.067882000 0.000168000 0.067714
+0x004cfc17 0.067934000 0.000218000 0.067716
+0x004dfc17 0.067985000 0.000199000 0.067786
+...
+0xff67fc17 0.067864000 0.000126000 0.067738
+0xffc9f332 0.071270000 0.000269000 0.071001
+total server time: 1.30548
+total client time: 540.22
+total network time: 538.914
+
+In this particular case, nearly all of the service time is spent in the network; the server is responding quickly, but the network time is 413x the server's time.
+
+
+
+the above process can be cut down to the following shell script (as long as the packet captures are not very large...  extremely large packet captures may require significant time, memory, and cpu, since this is essentially a big one-liner):
+
+#!/bin/bash
+[[ $# -ne 2 ]] && {
+        echo "usage: $0 <client.pcap> <server.pcap>"
+        exit 1
+}
+clnt=$1
+srvr=$2
+[[ ! -f $clnt ]] && echo "client file $clnt not found" && exit 1
+[[ ! -f $srvr ]] && echo "server file $srvr not found" && exit 1
+
+join \
+        <(tshark -Tfields -E header=n -e rpc.xid -e rpc.time -n -r $clnt rpc.time | awk '{split($1,xids,",") ; split($2,times,",") ; count=length(xids) ; for (i = 1 ; i <= count ; i++) {print xids[i]" "times[i]}}' | sort -n) \
+        <(tshark -Tfields -E header=n -e rpc.xid -e rpc.time -n -r $srvr rpc.time | awk '{split($1,xids,",") ; split($2,times,",") ; count=length(xids) ; for (i = 1 ; i <= count ; i++) {print xids[i]" "times[i]}}' | sort -n) | \
+        awk '{total_client += $2 ; total_server += $3 ; total_net += $2 - $3 }  END{print "total server time: "total_server ; print "total client time: "total_client ; print "total network time: "total_net}'
+
+
+$ ./pcap_calc_rpc_times client.pcap server.pcap
+total server time: 1.30548
+total client time: 540.22
+total network time: 538.914
+
