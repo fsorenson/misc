@@ -86,6 +86,38 @@ struct credential {
 	struct data second_ticket;
 };
 
+struct ticket_flags_types {
+	uint32_t flag;
+	char ch;
+	char *str;
+};
+static struct ticket_flags_types[] = {
+	{ TKT_FLG_FORWARDABLE, 'F', "Forwardable" },
+	{ TKT_FLG_FORWARDED, 'f', "Forwarded" },
+	{ TKT_FLG_PROXIABLE, 'P', "Proxiable" },
+	{ TKT_FLG_PROXY, 'p', "Proxy" },
+	{ TKT_FLG_MAY_POSTDATE, 'D', "May Postdate" },
+	{ TKT_FLG_POSTDATED, 'd', "Postdated" },
+	{ TKT_FLG_INVALID, 'i', "Invalid" },
+	{ TKT_FLG_RENEWABLE, 'R', "Renewable" },
+	{ TKT_FLG_INITIAL, 'I', "Initial" },
+	{ TKT_FLG_HW_AUTH, 'H', "HW Auth" },
+	{ TKT_FLG_PRE_AUTH, 'A', "PreAuth" },
+	{ TKT_FLG_TRANSIT_POLICY_CHECKED, 'T', "Transit Policy Checked" },
+	{ TKT_FLG_OK_AS_DELEGATE, 'O', "Okay as Delegate" },
+	{ TKT_FLG_ANONYMOUS, 'a', "Anonymous" },
+};
+static char *flags_string(uint32_t flags) {
+	static char buf[32], *p = buf;
+	int i = 0;
+
+	for (i = 0 ; i < sizeof(ticket_flag_types)/sizeof(ticket_flag_types[0]) ; i++) {
+		if (flags & ticket_flags_types[i].flag)
+			*p++ = ticket_flags_types[i].ch;
+	}
+	*p = '\0';
+}
+
 const char *krb5_princ_type_str(int type) {
 	static char unk_str[16];
 	switch (type) {
@@ -202,9 +234,6 @@ void print_hexdump(const char *pre, const uint8_t *addr, size_t len) {
 		printf(" |%s|\n", buf);
 		offset += this_count;
         }
-}
-void print_flags(uint32_t flags) {
-
 }
 off_t file_pos(int fd) {
 	return lseek(fd, 0, SEEK_CUR);
@@ -427,9 +456,10 @@ void show_credential(struct credential *credential) {
 		printf("    starttime: %u", credential->starttime);
 		printf("    endtime: %u", credential->endtime);
 		printf("    renew_till: %u", credential->renew_till);
+		printf("\n");
 
 		printf("    skey: %d", credential->is_skey);
-		printf(", ticket flags: %04x\n", credential->ticket_flags);
+		printf(", ticket flags: %04x (%s)\n", credential->ticket_flags, flags_string(credential->ticket_flags));
 
 		show_addresses(credential->addresses);
 		show_authdatas(credential->authdata);
