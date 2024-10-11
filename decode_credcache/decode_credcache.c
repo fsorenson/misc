@@ -8,6 +8,7 @@
 #include <string.h>
 #include <ctype.h>
 #include <sys/stat.h>
+#include <krb5/krb5.h> // to pull in #defines
 
 #define min(a,b) ({ \
 	typeof(a) _a = (a); \
@@ -91,7 +92,7 @@ struct ticket_flags_types {
 	char ch;
 	char *str;
 };
-static struct ticket_flags_types[] = {
+static struct ticket_flags_types ticket_flags[] = {
 	{ TKT_FLG_FORWARDABLE, 'F', "Forwardable" },
 	{ TKT_FLG_FORWARDED, 'f', "Forwarded" },
 	{ TKT_FLG_PROXIABLE, 'P', "Proxiable" },
@@ -111,11 +112,12 @@ static char *flags_string(uint32_t flags) {
 	static char buf[32], *p = buf;
 	int i = 0;
 
-	for (i = 0 ; i < sizeof(ticket_flag_types)/sizeof(ticket_flag_types[0]) ; i++) {
-		if (flags & ticket_flags_types[i].flag)
-			*p++ = ticket_flags_types[i].ch;
+	for (i = 0 ; i < sizeof(ticket_flags)/sizeof(ticket_flags[0]) ; i++) {
+		if (flags & ticket_flags[i].flag)
+			*p++ = ticket_flags[i].ch;
 	}
 	*p = '\0';
+	return buf;
 }
 
 const char *krb5_princ_type_str(int type) {
@@ -472,13 +474,14 @@ void show_credential(struct credential *credential) {
 }
 bool read_check_header(int fd, struct buf_config *buf) {
 	// two-byte version indicator
-	read_buf(fd, buf, 2, buf_size);
-	if (buf[0] != 5) {
-		printf("bad format... expected version 5, but got 0x%02x\n", buf[0]);
-		return false
+	read_buf2(fd, buf, 2);
+
+	if (buf->buf[0] != 5) {
+		printf("bad format... expected version 5, but got 0x%02x\n", buf->buf[0]);
+		return false;
 	}
-	if (buf[1] != 4) {
-		printf("bad format... expected file format 4, but got 0x%02x\n", buf[1]);
+	if (buf->buf[1] != 4) {
+		printf("bad format... expected file format 4, but got 0x%02x\n", buf->buf[1]);
 		return false;
 	}
 	return true;
@@ -488,12 +491,10 @@ int load_file(int fd) {
 	struct buf_config buf;
 	int ret = EXIT_FAILURE;
 
-	struct v4_hdr v4_hdr;
-
 	buf.size = 0;
 	buf.buf = NULL;
 
-	if (!read_check_header(fd, buf))
+	if (!read_check_header(fd, &buf))
 		goto out;
 
 	read_show_header(fd, &buf);
@@ -505,11 +506,9 @@ int load_file(int fd) {
 	while (!is_eof(fd)) {
 		struct credential *credential;
 		printf("\n");
-//		printf("credential (file pos: %ld):\n", file_pos(fd));
 		credential = load_credential(fd, &buf);
 		show_credential(credential);
 	}
-
 
 	ret = EXIT_SUCCESS;
 
@@ -519,12 +518,8 @@ out:
 
 
 int main(int argc, char *argv[]) {
-	char *filename = argv[1];
-	uint8_t *buf;
-	int buf_size = 256;
 	int fd = -1, ret = EXIT_FAILURE;
-	struct v4_hdr v4_hdr;
-	int len;
+	char *filename = argv[1];
 
 	if (argc != 2) {
 		printf("usage: %s <filename>\n", argv[0]);
@@ -538,7 +533,6 @@ int main(int argc, char *argv[]) {
 	load_file(fd);
 
 	ret = EXIT_SUCCESS;
-out:
 	if (fd >= 0)
 		close(fd);
 	return ret;
