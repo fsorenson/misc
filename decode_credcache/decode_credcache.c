@@ -149,7 +149,7 @@ const char *enctype_str(int type) {
 	return unk_str;
 }
 
-			#define KRB5_NT_UNKNOWN        0 /**<  Name type not known */
+#define KRB5_NT_UNKNOWN        0 /**<  Name type not known */
 #define KRB5_NT_PRINCIPAL      1 /**< Just the name of the principal
                                       as in DCE, or for users */
 #define KRB5_NT_SRV_INST       2 /**< Service and other unique instance (krbtgt) */
