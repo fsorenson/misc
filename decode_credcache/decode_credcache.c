@@ -522,7 +522,7 @@ int main(int argc, char *argv[]) {
 	char *filename = argv[1];
 	uint8_t *buf;
 	int buf_size = 256;
-	int fd, ret = EXIT_FAILURE;
+	int fd = -1, ret = EXIT_FAILURE;
 	struct v4_hdr v4_hdr;
 	int len;
 
@@ -539,7 +539,8 @@ int main(int argc, char *argv[]) {
 
 	ret = EXIT_SUCCESS;
 out:
-	close(fd);
+	if (fd >= 0)
+		close(fd);
 	return ret;
 }
 
