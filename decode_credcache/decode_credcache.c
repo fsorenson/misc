@@ -531,68 +531,7 @@ int main(int argc, char *argv[]) {
 		return EXIT_FAILURE;
 	}
 
-
 	load_file(fd);
-
-	return EXIT_SUCCESS;
-
-	buf = malloc(buf_size);
-
-	read_buf(fd, buf, 2, buf_size);
-	if (buf[0] != 5) {
-		printf("bad format... expected version 5, but got 0x%02x\n", buf[0]);
-		goto out;
-	}
-	if (buf[1] != 4) {
-		printf("bad format... expected file format 4, but got 0x%02x\n", buf[1]);
-		goto out;
-	}
-	printf("size of 'struct v4_hdr': %lu\n", sizeof(struct v4_hdr));
-	read_buf(fd, buf, sizeof(struct v4_hdr), buf_size);
-	memcpy(&v4_hdr, buf, sizeof(struct v4_hdr));
-	v4_hdr.len = be16toh(v4_hdr.len);
-	printf("v4 header size: %d\n", v4_hdr.len);
-
-	int remaining_len = v4_hdr.len - sizeof(struct v4_hdr);
-	while (remaining_len > 0) {
-		struct hdr4_field hdr4_field;
-		len = read_buf(fd, buf, sizeof(struct hdr4_field), buf_size);
-
-
-		memcpy(&hdr4_field, buf, sizeof(struct hdr4_field));
-		hdr4_field.tag = be16toh(hdr4_field.tag);
-
-		hdr4_field.len = be16toh(hdr4_field.len);
-		printf("field - tag: 0x%02x, length: %d\n", hdr4_field.tag, hdr4_field.len);
-
-		remaining_len -= 4; // size of field header
-		printf("will read %d bytes\n", len);
-
-		len = read_buf(fd, buf, hdr4_field.len, buf_size);
-
-		if (hdr4_field.tag == 1) {
-			uint32_t timestamps[2];
-			memcpy(timestamps, buf, sizeof(timestamps));
-			timestamps[0] = be32toh(timestamps[0]);
-			timestamps[1] = be32toh(timestamps[1]);
-			printf("kdc time offset: %u.%06u\n", timestamps[0], timestamps[1]);
-
-		}
-
-		remaining_len -= len;
-	}
-
-
-
-
-
-/*
-	while (!is_eof(fd)) {
-		printf("\n");
-		printf("credential (file pos: %ld):\n", file_pos(fd));
-		parse_credential(fd, buf, buf_size);
-	}
-*/
 
 	ret = EXIT_SUCCESS;
 out:
