@@ -470,6 +470,19 @@ void show_credential(struct credential *credential) {
 		show_ticket(&credential->second_ticket);
 	}
 }
+bool read_check_header(int fd, struct buf_config *buf) {
+	// two-byte version indicator
+	read_buf(fd, buf, 2, buf_size);
+	if (buf[0] != 5) {
+		printf("bad format... expected version 5, but got 0x%02x\n", buf[0]);
+		return false
+	}
+	if (buf[1] != 4) {
+		printf("bad format... expected file format 4, but got 0x%02x\n", buf[1]);
+		return false;
+	}
+	return true;
+}
 
 int load_file(int fd) {
 	struct buf_config buf;
@@ -480,23 +493,14 @@ int load_file(int fd) {
 	buf.size = 0;
 	buf.buf = NULL;
 
-	// two-byte version indicator
-	read_buf2(fd, &buf, 2);
-	if (buf.buf[0] != 5) {
-		printf("bad format... expected version 5, but got 0x%02x\n", buf.buf[0]);
+	if (!read_check_header(fd, buf))
 		goto out;
-	}
-	if (buf.buf[1] != 4) {
-		printf("bad format... expected file format 4, but got 0x%02x\n", buf.buf[1]);
-		goto out;
-	}
 
 	read_show_header(fd, &buf);
 
 	printf("default principal: ");
 	struct principal *principal = load_principal(fd, &buf);
 	show_principal(principal);
-
 
 	while (!is_eof(fd)) {
 		struct credential *credential;
