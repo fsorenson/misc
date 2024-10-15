@@ -47,7 +47,8 @@ my $ultradebug = 0;
 #40 24 7:9 /usr/share /usr/share ro,relatime shared:25 - squashfs /dev/loop9 ro
 #50 43 0:21 / /cAppCom/init.d rw,relatime shared:38 - nfs [2a00:da9:2:1270::105]:/dcsvsssh0105_cxp/sh_swhdo01n_cxp/lnx/rhel/cAppCom#init.d rw,vers=3,rsize=262144,wsize=262144,namlen=255,hard,nolock,proto=tcp6,timeo=600,retrans=2,sec=sys,mountaddr=2a00:da9:2:1270::105,mountvers=3,mountport=1234,mountproto=tcp6,local_lock=all,addr=2a00:da9:2:1270::105
 sub parse_mountinfo {
-	open(my $fh, "proc/self/mountinfo") or die("Could not open proc/self/mountinfo");
+	my $base_dir = shift;
+	open(my $fh, $base_dir . "/" . "proc/self/mountinfo") or die("Could not open $base_dir/proc/self/mountinfo");
 	while (<$fh>) {
 		chomp;
 		my $line = $_;
@@ -95,7 +96,8 @@ sub parse_mountinfo {
 #11: OFDLCK ADVISORY  WRITE -1 ca:50:33554693 0 EOF
 
 sub parse_locks {
-	open(my $fh, "proc/locks") or die("Could not open proc/locks");
+	my $base_dir = shift;
+	open(my $fh, $base_dir . "/" . "proc/locks") or die("Could not open $base_dir/proc/locks");
 	my $i = 0;
 
 	while (<$fh>) {
@@ -182,7 +184,8 @@ my $keep_file_types = "REG|DIR|CHR|FIFO|BLK|a_inode|netlink";
 my $file_types = "$keep_file_types|$ignore_file_types";
 
 sub parse_lsof {
-	open(my $fh, "lsof") or die("Could not open lsof");
+	my $base_dir = shift;
+	open(my $fh, $base_dir . "/" . "lsof") or die("Could not open $base_dir/lsof");
 
 	my $hdr = <$fh>;
 
@@ -352,10 +355,21 @@ sub parse_lsof {
 
 }
 
-parse_mountinfo();
-#printf("dumping...\n");
-#print Dumper \%mountinfo;
-parse_lsof();
-parse_locks();
+# if no directories are given on command-line, use the current directory
+push(@ARGV, ".") if (scalar(@ARGV) == 0);
 
-#print Dumper \%dev_inode_info;
+foreach my $dir (@ARGV) {
+	# empty out our hashes for each new root directory
+	%mountinfo = ();
+	%pid_info = ();
+	@lk_list = ();
+	%dev_inode_info = ();
+
+	parse_mountinfo($dir);
+	#printf("dumping...\n");
+	#print Dumper \%mountinfo;
+	parse_lsof($dir);
+	parse_locks($dir);
+
+	#print Dumper \%dev_inode_info;
+}
