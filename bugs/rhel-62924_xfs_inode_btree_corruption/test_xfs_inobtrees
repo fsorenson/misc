@@ -14,18 +14,45 @@ MINAGSIZE=$((64 * bsize)) # minimum size before a new AG gets created
 start_size=$(( 300 * MiB ))
 image_size=$(( start_size + MINAGSIZE + (7 * bsize) ))
 
+yesno() {
+	local prompt=$1 response
+	while [[ 42 ]] ; do
+		read -p "$prompt " -N1 response
+		echo >&2
+		case $response in
+			y|Y) echo "yes" ; break ;;
+			n|N) echo "no" ; break ;;
+		esac
+	done
+}
+dl_build_fs_mark() {
+	[[ ! -d fs_mark ]] && {
+		echo "fs_mark (https://github.com/josefbacik/fs_mark) is required" >&2
+		local dl_build=$(yesno "Download and compile fs_mark? (y/n)")
+		[[ $dl_build == "no" ]] && exit
+
+		git clone https://github.com/josefbacik/fs_mark.git 2>&1 ||
+			{ echo "failed to clone fs_mark git tree" >&2 ; exit 1 ;}
+	}
+	( cd fs_mark && make 2>&1 || { echo "failed to compile fs_mark" >&2 ; exit 1 ; } )
+}
+install_fs_mark() {
+	local install=$(yesno "Install fs_mark to /usr/local/bin? (y/n)")
+	[[ $install == "no" ]] && echo "$(pwd)/fs_mark/fs_mark" && return
+
+	cp fs_mark/fs_mark /usr/local/bin || { echo "failed to copy fs_mark to /usr/local/bin" >&2 ; exit 1 ; }
+	echo "/usr/local/bin/fs_mark"
+}
+
 if [[ -z $FS_MARK ]] || [[ ! -x $FS_MARK ]] ; then
-	FS_MARK=$(which fs_mark)
-	[[ ! -x $FS_MARK ]] && {
-		echo "unable to find 'fs_mark'"
-		echo "please install fs_mark (https://github.com/josefbacik/fs_mark)"
-		echo "  and either add fs_mark to one of the system paths,"
-		echo "  or use FS_MARK=<PATH> to specify its location"
-		exit 1
+	FS_MARK=$(which fs_mark 2>&1) || FS_MARK=""
+	[[ -z $FS_MARK ]] && {
+		[[ ! -x fs_mark/fs_mark ]] && dl_build_fs_mark
+		FS_MARK=$(install_fs_mark)
 	}
 fi
 
-while true ; do
+while [[ 42 ]] ; do
 	out=$(umount -f $mp 2>&1)
 	[[ $out =~ "not mounted" ]] && break
 	[[ $out =~ "no mount point specified." ]] && break
@@ -54,11 +81,10 @@ trap interrupted SIGINT SIGTERM EXIT
 paths=$(for i in $(seq 0 $((dirs1 - 1))) ; do echo -n " -d $mp/d$i" ; done)
 
 dmesg -c >/dev/null
-touch /tmp/.run
 rm -rf $fs_mark_logdir
 mkdir -p $fs_mark_logdir
 start_time=$SECONDS
-while [[ -e /tmp/.run ]] ; do
+while [[ 42 ]] ; do
 	$FS_MARK -k -F -S 0 -D $dirs2 -N 1000 -s 0 -p 16 -l $fs_mark_logdir/fs_log.txt $paths
 	dmesg | grep corrupt -A1 && break
 
