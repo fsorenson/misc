@@ -1,0 +1,44 @@
+#!/bin/bash
+
+if [[ $# -eq 0 ]] ; then
+	mountpoints=$(awk '$9=="xfs" {print $5}' /proc/self/mountinfo)
+else
+	mountpoints=$@
+fi
+
+check_path() {
+	local mountpoint=$1
+	local out
+	out=$(xfs_info $mountpoint 2>&1) || {
+		echo -e "error checking $mountpoint:"
+		echo "$out" | sed 's/^/\t/g'
+		return
+	}
+echo "$out" | awk -vmountpoint="$mountpoint" '
+/^meta-data/ {
+	isize=substr($2,7) + 0
+	agcount=substr($3,9,length($3)-9) + 0
+	agsize=substr($4,8) + 0
+}
+/sparse=/ { sparse=substr($4,8,1) + 0 }
+/^data.+blocks=/ {
+	bsize=substr($3,7) + 0
+	blocks=substr($4,8,length($4)-8) + 0
+}
+END {
+	affected = 0
+	required = (isize * 64) / bsize # 8 for 512-byte inodes and 4K blocks
+	if (sparse == 1) {
+		last_ag_blocks = blocks - ((agcount - 1) * agsize)
+		remaining_blocks = last_ag_blocks % required
+
+		if ((last_ag_blocks < agsize) && (remaining_blocks != 0)) { affected = 1 }
+	}
+	if (affected) { printf "%s is affected\n", mountpoint }
+	else { printf "%s is not affected\n", mountpoint }
+}'
+}
+
+for mountpoint in $mountpoints ; do
+	check_path $mountpoint
+done
