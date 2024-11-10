@@ -34,7 +34,8 @@ dl_build_fs_mark() {
 		git clone https://github.com/josefbacik/fs_mark.git 2>&1 ||
 			{ echo "failed to clone fs_mark git tree" >&2 ; exit 1 ;}
 	}
-	( cd fs_mark && make 2>&1 || { echo "failed to compile fs_mark" >&2 ; exit 1 ; } )
+	( cd fs_mark && make 2>&1 || { echo "failed to compile fs_mark" >&2 ; exit 1 ; } ) || exit 1
+	[[ -x fs_mark/fs_mark ]] || exit 1
 }
 install_fs_mark() {
 	local install=$(yesno "Install fs_mark to /usr/local/bin? (y/n)")
@@ -48,7 +49,7 @@ if [[ -z $FS_MARK ]] || [[ ! -x $FS_MARK ]] ; then
 	FS_MARK=$(which fs_mark 2>&1) || FS_MARK=""
 	[[ -z $FS_MARK ]] && {
 		[[ ! -x fs_mark/fs_mark ]] && dl_build_fs_mark
-		FS_MARK=$(install_fs_mark)
+		FS_MARK=$(install_fs_mark) || exit 1
 	}
 fi
 
