@@ -69,6 +69,10 @@ mount $img $mp
 xfs_io -xc 'resblks 0' $mp	# no reserved blocks
 xfs_growfs -d -m 100 $mp	# inode % to 100, and grow the fs if possible
 
+echo "new filesystem geometry:"
+xfs_info $mp
+
+
 interrupted() {
 	trap - SIGINT SIGTERM EXIT
 	rm -f /tmp/.run
