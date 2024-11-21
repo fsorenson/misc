@@ -32,7 +32,7 @@ dl_build_fs_mark() {
 		[[ $dl_build == "no" ]] && exit
 
 		git clone https://github.com/josefbacik/fs_mark.git 2>&1 ||
-			{ echo "failed to clone fs_mark git tree" >&2 ; exit 1 ;}
+			{ echo "failed to clone fs_mark git tree" >&2 ; exit 1 ; }
 	}
 	( cd fs_mark && make 2>&1 || { echo "failed to compile fs_mark" >&2 ; exit 1 ; } ) || exit 1
 	[[ -x fs_mark/fs_mark ]] || exit 1
@@ -75,9 +75,9 @@ xfs_info $mp
 
 interrupted() {
 	trap - SIGINT SIGTERM EXIT
-	rm -f /tmp/.run
 	run_time=$(($SECONDS - start_time))
 	dmesg | grep -q corrupt && echo "reproduced in $((SECONDS - start_time)) seconds"
+	rm -rf $fs_mark_logdir # clean up fs_mark remnants
 	exit
 }
 trap interrupted SIGINT SIGTERM EXIT
@@ -98,6 +98,5 @@ while [[ 42 ]] ; do
 	dir2=$(cd $mp/$dir1 && ls -1fd * | sort -R | head -n1)
 
 	echo "run time $((SECONDS - start_time)) seconds - deleting $mp/$dir1/$dir2"
-#	rm -rf $mp/$dir1/$dir2
-	find $mp/$dir1/$dir2 -type f -delete
+	rm -rf $mp/$dir1/$dir2
 done
