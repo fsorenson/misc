@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# Frank Sorenson <sorenson@redhat.com>, 2024
+# initial reproducer by Brian Foster <bfoster@redhat.com>
+
 mp=/mnt/tmp
 img=/var/tmp/test.img
 fs_mark_logdir=/var/tmp/fs_log.out
