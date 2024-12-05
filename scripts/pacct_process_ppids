@@ -1,0 +1,20 @@
+#!/bin/bash
+
+# Frank Sorenson <sorenson@redhat.com>, 2024
+
+pacct=$1
+pid=$2
+
+[[ -z $pacct || -z $pid ]] && {
+	echo "usage: $0 <pacct_file_path> <start_pid>"
+	exit 1
+}
+
+while [[ 42 ]] ; do
+	read ppid rest < <(lastcomm -f $pacct --pid | awk -vpid=$pid '$(NF-1)==pid {print $NF,$0}')
+	echo "$rest"
+
+	[[ $ppid == 1 || -z $ppid || $ppid -eq $pid ]] && break
+
+	pid=$ppid
+done
