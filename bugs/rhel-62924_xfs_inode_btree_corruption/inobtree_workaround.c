@@ -172,56 +172,40 @@ char *make_tempname(void) {
 })
 
 int call_real_creat(const char *pathname, mode_t mode) {
-//	get_real(creat);
-//	return real_creat(pathname, mode);
-	get_real(openat);
-	return real_openat(AT_FDCWD, pathname, O_CREAT|O_WRONLY|O_TRUNC, mode);
+	return call_real(openat, AT_FDCWD, pathname, O_CREAT|O_WRONLY|O_TRUNC, mode);
 }
 int call_real_open(const char *pathname, int flags, mode_t mode) {
-	get_real(openat);
-	return real_openat(AT_FDCWD, pathname, flags, mode);
+	return call_real(openat, AT_FDCWD, pathname, flags, mode);
 }
 int call_real_openat(int dfd, const char *pathname, int flags, mode_t mode) {
-	get_real(openat);
-	return real_openat(dfd, pathname, flags, mode);
+	return call_real(openat, dfd, pathname, flags, mode);
 }
 int call_real_mkdir(const char *pathname, mode_t mode) {
-	get_real(mkdirat);
-	return real_mkdirat(AT_FDCWD, pathname, mode);
+	return call_real(mkdirat, AT_FDCWD, pathname, mode);
 }
 int call_real_mkdirat(int dfd, const char *pathname, mode_t mode) {
-	get_real(mkdirat);
-	return real_mkdirat(dfd, pathname, mode);
+	return call_real(mkdirat, dfd, pathname, mode);
 }
 FILE *call_real_fopen(const char *pathname, const char *mode) {
-	get_real(fopen)
-	return real_fopen(pathname, mode);
+	return call_real(fopen, pathname, mode);
 }
 int call_real_symlink(const char *path1, const char *path2) {
-	get_real(symlinkat);
-	return real_symlinkat(path1, AT_FDCWD, path2);
+	return call_real(symlinkat, path1, AT_FDCWD, path2);
 }
 int call_real_symlinkat(const char *path1, int dfd, const char *path2) {
-	get_real(symlinkat);
-	return real_symlinkat(path1, dfd, path2);
+	return call_real(symlinkat, path1, dfd, path2);
 }
 int call_real_mknod(const char *path, mode_t mode, dev_t dev) {
-	get_real(mknodat);
-	return real_mknodat(AT_FDCWD, path, mode, dev);
+	return call_real(mknodat, AT_FDCWD, path, mode, dev);
 }
 int call_real_mknodat(int fd, const char *path, mode_t mode, dev_t dev) {
-	get_real(mknodat);
-	return real_mknodat(fd, path, mode, dev);
+	return call_real(mknodat, fd, path, mode, dev);
 }
 int call_real_mkfifo(const char *pathname, mode_t mode) {
-//	get_real(mknodat);
-//	return real_mknodat(AT_FDCWD, pathname, S_IFIFO|mode);
-	return call_real_mknodat(AT_FDCWD, pathname, S_IFIFO|mode, 0);
+	return call_real(mknodat, AT_FDCWD, pathname, S_IFIFO|mode, 0);
 }
 int call_real_mkfifoat(int dfd, const char *pathname, mode_t mode) {
-//	get_real(mknodat)
-//	return real_mknodat(dfd, pathname, mode);
-	return call_real_mknodat(dfd, pathname, S_IFIFO|mode, 0);
+	return call_real(mknodat, dfd, pathname, S_IFIFO|mode, 0);
 }
 
 int mkdirat_workaround(int dfd, const char *path, int mode) {
