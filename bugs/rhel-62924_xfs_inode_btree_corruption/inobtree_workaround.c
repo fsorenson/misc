@@ -208,7 +208,7 @@ int call_real_mkfifoat(int dfd, const char *pathname, mode_t mode) {
 	return call_real_mknodat(dfd, pathname, S_IFIFO|mode, 0);
 }
 
-int try_mkdirat(int dfd, const char *path, int mode) {
+int mkdirat_workaround(int dfd, const char *path, int mode) {
 	int ret, try;
 
 	for (try = 0 ; try < 2 ; try++) {
@@ -278,7 +278,7 @@ new_name:
 	if (errno != ENOENT)
 		goto out;
 
-	if ((ret = try_mkdirat(dfd, temp_target_dir, 0755)) < 0)
+	if ((ret = mkdirat_workaround(dfd, temp_target_dir, 0755)) < 0)
 		goto out;
 
 	asprintf(&temp_target_filename, "%s/%s", temp_target_dir, target_filename);
@@ -459,10 +459,10 @@ out:
 }
 
 int mkdir(const char *path, mode_t mode) {
-	return try_mkdirat(AT_FDCWD, path, mode);
+	return mkdirat_workaround(AT_FDCWD, path, mode);
 }
 int mkdirat(int dfd, const char *path, mode_t mode) {
-	return try_mkdirat(dfd, path, mode);
+	return mkdirat_workaround(dfd, path, mode);
 }
 
 
@@ -491,7 +491,7 @@ new_name:
 	if (errno != ENOENT)
 		goto out;
 
-	if ((ret = try_mkdirat(dfd, temp_link_dir, 0755)) < 0)
+	if ((ret = mkdirat_workaround(dfd, temp_link_dir, 0755)) < 0)
 		goto out;
 
 	asprintf(&temp_linkname, "%s/%s", temp_link_dir, linkname);
@@ -568,7 +568,7 @@ new_name:
 	if (errno != ENOENT)
 		goto out;
 
-	if ((ret = try_mkdirat(dfd, temp_special_dir, 0755)) < 0)
+	if ((ret = mkdirat_workaround(dfd, temp_special_dir, 0755)) < 0)
 		goto out;
 
 	asprintf(&temp_special_name, "%s/%s", temp_special_dir, special_name);
