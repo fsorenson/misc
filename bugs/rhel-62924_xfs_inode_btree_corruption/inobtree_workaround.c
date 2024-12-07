@@ -416,13 +416,14 @@ int mkdirat(int dfd, const char *path, mode_t mode) {
 	return mkdirat_workaround(dfd, path, mode);
 }
 
-
 int create_symlink_workaround(const char *path1, int dfd, const char *path2) {
 	char *link_dir = NULL, *temp_link_dir = NULL;
 	char *linkname = NULL, *temp_linkname = NULL;
 	int ret = -1;
 
-	get_real(symlinkat);
+        // successful symlink, or a different error occurred
+	if (((ret = call_real(symlinkat, path1, dfd, path2)) >= 0) || errno != EUCLEAN)
+		return ret;
 
 	link_dir = dirname2(path2);
 	linkname = basename2(path2);
@@ -457,21 +458,9 @@ out:
 	return ret;
 }
 int symlink(const char *path1, const char *path2) {
-	int ret;
-
-        // successful symlink, or a different error occurred
-	if (((ret = call_real(symlink, path1, path2)) >= 0) || errno != EUCLEAN)
-		return ret;
-
 	return create_symlink_workaround(path1, AT_FDCWD, path2);
 }
 int symlinkat(const char *path1, int dfd, const char *path2) {
-	int ret;
-
-        // successful symlink, or a different error occurred
-	if (((ret = call_real(symlink, path1, path2)) >= 0) || errno != EUCLEAN)
-		return ret;
-
 	return create_symlink_workaround(path1, dfd, path2);
 }
 
@@ -479,6 +468,10 @@ int create_special_workaround(int dfd, const char *path, mode_t mode, dev_t dev)
 	char *special_dir = NULL, *temp_special_dir = NULL;
 	char *special_name = NULL, *temp_special_name = NULL;
 	int ret = -1;
+
+	errno = 0;
+	if (((ret = call_real(mknodat, dfd, path, mode, dev)) >= 0) || errno != EUCLEAN)
+		goto out;
 
 	special_dir = dirname2(path);
 	special_name = basename2(path);
@@ -513,34 +506,14 @@ out:
 	return ret;
 }
 int mknod(const char *path, mode_t mode, dev_t dev) {
-	int ret;
-
-	if (((ret = call_real(mknodat, AT_FDCWD, path, mode, dev)) >= 0) || errno != EUCLEAN)
-		return ret;
-
 	return create_special_workaround(AT_FDCWD, path, mode, dev);
 }
 int mknodat(int dfd, const char *path, mode_t mode, dev_t dev) {
-	int ret;
-
-	if (((ret = call_real(mknodat, dfd, path, mode, dev)) >= 0) || errno != EUCLEAN)
-		return ret;
-
 	return create_special_workaround(dfd, path, mode, dev);
 }
 int mkfifo(const char *path, mode_t mode) {
-	int ret;
-
-	if (((ret = call_real(mkfifo, path, mode)) >= 0) || errno != EUCLEAN)
-		return ret;
-
 	return create_special_workaround(AT_FDCWD, path, S_IFIFO|mode, 0);
 }
 int mkfifoat(int dfd, const char *path, mode_t mode) {
-	int ret;
-
-	if (((ret = call_real(mkfifoat, dfd, path, mode)) >= 0) || errno != EUCLEAN)
-		return ret;
-
 	return create_special_workaround(dfd, path, S_IFIFO|mode, 0);
 }
