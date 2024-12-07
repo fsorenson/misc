@@ -171,7 +171,7 @@ char *make_tempname(void) {
 	real_##_func(args); \
 })
 
-int mkdirat_workaround(int dfd, const char *path, int mode) {
+int mkdirat_workaround(int dfd, const char *path, mode_t mode) {
 	int ret, try;
 
 	for (try = 0 ; try < 2 ; try++) {
@@ -216,40 +216,51 @@ char *basename2(const char *path) {
 	return temp2;
 }
 
-int create_file_workaround(int dfd, const char *path, int flags, mode_t mode) {
-	char *target_dir = NULL, *temp_target_dir = NULL, *temp_dirname = NULL;
-	char *target_filename = NULL, *temp_target_filename = NULL;
+// return 0 if success, else -1
+int create_tempdir(int dfd, const char *path, char **temp_target_dir) {
+	char *temp_dir_name = NULL;
 	struct stat st;
-	int ret = -1;
+	int ret;
 
-	get_real(openat);
+new_name:
+	temp_dir_name = make_tempname();
+	asprintf(temp_target_dir, "%s/%s", path, temp_dir_name);
+	// check for the (unlikely) possibility that we've already got a dir entry by that obscure name
+	if ((ret = fstatat(dfd, *temp_target_dir, &st, AT_SYMLINK_NOFOLLOW)) == 0) {
+		free_mem(temp_dir_name);
+		free_mem(*temp_target_dir);
+		goto new_name;
+	}
+	// make sure we failed because it doesn't exist, not for some other reason
+	if (errno != ENOENT)
+		goto out;
+	errno = 0;
+
+	if ((ret = mkdirat_workaround(dfd, *temp_target_dir, 0755)) < 0)
+		goto out;
+
+out:
+	free_mem(temp_dir_name);
+	if (ret)
+		free_mem(*temp_target_dir);
+	return errno ? -1 : 0;
+}
+
+int create_file_workaround(int dfd, const char *path, int flags, mode_t mode) {
+	char *target_dir = NULL, *temp_target_dir = NULL;
+	char *target_filename = NULL, *temp_target_filename = NULL;
+	int ret = -1;
 
 	target_dir = dirname2(path);
 	target_filename = basename2(path);
 
-new_name:
-	temp_dirname = make_tempname();
-
-	asprintf(&temp_target_dir, "%s/%s", target_dir, temp_dirname);
-	// check for the (unlikely) possibility we've got a dir entry by that obscure name
-	if ((ret = fstatat(dfd, temp_target_dir, &st, AT_SYMLINK_NOFOLLOW)) == 0) {
-		free_mem(temp_dirname);
-		free_mem(temp_target_dir);
-		goto new_name;
-	}
-	// make sure we failed because it didn't exist, not for some other reason
-	if (errno != ENOENT)
-		goto out;
-
-	if ((ret = mkdirat_workaround(dfd, temp_target_dir, 0755)) < 0)
+	if ((ret = create_tempdir(dfd, target_dir, &temp_target_dir)))
 		goto out;
 
 	asprintf(&temp_target_filename, "%s/%s", temp_target_dir, target_filename);
 
 	if ((ret = call_real(openat, dfd, temp_target_filename, flags, mode)) >= 0) {
 		if ((renameat(dfd, temp_target_filename, dfd, path))) {
-//			output("error renaming '%s' to '%s': %m\n",
-//				tempfilename, path);
 			close(ret);
 			unlinkat(dfd, temp_target_filename, 0);
 			unlinkat(dfd, temp_target_dir, AT_REMOVEDIR);
@@ -277,7 +288,6 @@ out:
 	free_mem(temp_target_dir);
 	free_mem(target_filename);
 	free_mem(temp_target_filename);
-	free_mem(temp_dirname);
 
 	return ret;
 }
@@ -287,7 +297,7 @@ int creat(const char *path, mode_t mode) {
 	int ret;
 
 	// successful open, or a different error occurred
-	if (((ret = call_real(creat, path, mode)) >= 0) || errno != EUCLEAN)
+	if (((ret = call_real(openat, AT_FDCWD, path, O_CREAT|O_WRONLY|O_TRUNC, mode)) >= 0) || errno != EUCLEAN)
 		return ret;
 
 	return create_file_workaround(AT_FDCWD, path, O_CREAT|O_WRONLY|O_TRUNC, mode);
@@ -424,9 +434,8 @@ int mkdirat(int dfd, const char *path, mode_t mode) {
 
 
 int create_symlink_workaround(const char *path1, int dfd, const char *path2) {
-	char *link_dir = NULL, *temp_link_dir = NULL, *temp_dirname = NULL;
+	char *link_dir = NULL, *temp_link_dir = NULL;
 	char *linkname = NULL, *temp_linkname = NULL;
-	struct stat st;
 	int ret = -1;
 
 	get_real(symlinkat);
@@ -434,21 +443,7 @@ int create_symlink_workaround(const char *path1, int dfd, const char *path2) {
 	link_dir = dirname2(path2);
 	linkname = basename2(path2);
 
-new_name:
-	temp_dirname = make_tempname();
-
-	asprintf(&temp_link_dir, "%s/%s", link_dir, temp_dirname);
-	// check for the (unlikely) possibility we've got a dir entry by that obscure name
-	if ((ret = fstatat(dfd, temp_link_dir, &st, AT_SYMLINK_NOFOLLOW)) == 0) {
-		free_mem(temp_dirname);
-		free_mem(temp_link_dir);
-		goto new_name;
-	}
-	// make sure we failed because it didn't exist, not for some other reason
-	if (errno != ENOENT)
-		goto out;
-
-	if ((ret = mkdirat_workaround(dfd, temp_link_dir, 0755)) < 0)
+	if ((ret = create_tempdir(dfd, link_dir, &temp_link_dir)))
 		goto out;
 
 	asprintf(&temp_linkname, "%s/%s", temp_link_dir, linkname);
@@ -477,7 +472,6 @@ new_name:
 out:
 	free_mem(link_dir);
 	free_mem(temp_link_dir);
-	free_mem(temp_dirname);
 	free_mem(linkname);
 	free_mem(temp_linkname);
 
@@ -503,29 +497,14 @@ int symlinkat(const char *path1, int dfd, const char *path2) {
 }
 
 int create_special_workaround(int dfd, const char *path, mode_t mode, dev_t dev) {
-	char *special_dir = NULL, *temp_special_dir = NULL, *temp_dirname = NULL;
+	char *special_dir = NULL, *temp_special_dir = NULL;
 	char *special_name = NULL, *temp_special_name = NULL;
-	struct stat st;
 	int ret = -1;
 
 	special_dir = dirname2(path);
 	special_name = basename2(path);
 
-new_name:
-	temp_dirname = make_tempname();
-
-	asprintf(&temp_special_dir, "%s/%s", special_dir, temp_dirname);
-	// check for the (unlikely) possibility we've got a dir entry by that obscure name
-	if ((ret = fstatat(dfd, temp_special_dir, &st, AT_SYMLINK_NOFOLLOW)) == 0) {
-		free_mem(temp_dirname);
-		free_mem(temp_special_dir);
-		goto new_name;
-	}
-	// make sure we failed because it didn't exist, not for some other reason
-	if (errno != ENOENT)
-		goto out;
-
-	if ((ret = mkdirat_workaround(dfd, temp_special_dir, 0755)) < 0)
+	if ((ret = create_tempdir(dfd, special_dir, &temp_special_dir)))
 		goto out;
 
 	asprintf(&temp_special_name, "%s/%s", temp_special_dir, special_name);
@@ -554,7 +533,6 @@ new_name:
 out:
 	free_mem(special_dir);
 	free_mem(temp_special_dir);
-	free_mem(temp_dirname);
 	free_mem(special_name);
 	free_mem(temp_special_name);
 
