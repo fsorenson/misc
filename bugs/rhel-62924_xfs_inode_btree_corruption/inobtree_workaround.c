@@ -171,48 +171,18 @@ char *make_tempname(void) {
 	real_##_func(args); \
 })
 
-int call_real_creat(const char *pathname, mode_t mode) {
-	return call_real(openat, AT_FDCWD, pathname, O_CREAT|O_WRONLY|O_TRUNC, mode);
-}
 int call_real_open(const char *pathname, int flags, mode_t mode) {
 	return call_real(openat, AT_FDCWD, pathname, flags, mode);
 }
 int call_real_openat(int dfd, const char *pathname, int flags, mode_t mode) {
 	return call_real(openat, dfd, pathname, flags, mode);
 }
-int call_real_mkdir(const char *pathname, mode_t mode) {
-	return call_real(mkdirat, AT_FDCWD, pathname, mode);
-}
-int call_real_mkdirat(int dfd, const char *pathname, mode_t mode) {
-	return call_real(mkdirat, dfd, pathname, mode);
-}
-FILE *call_real_fopen(const char *pathname, const char *mode) {
-	return call_real(fopen, pathname, mode);
-}
-int call_real_symlink(const char *path1, const char *path2) {
-	return call_real(symlinkat, path1, AT_FDCWD, path2);
-}
-int call_real_symlinkat(const char *path1, int dfd, const char *path2) {
-	return call_real(symlinkat, path1, dfd, path2);
-}
-int call_real_mknod(const char *path, mode_t mode, dev_t dev) {
-	return call_real(mknodat, AT_FDCWD, path, mode, dev);
-}
-int call_real_mknodat(int fd, const char *path, mode_t mode, dev_t dev) {
-	return call_real(mknodat, fd, path, mode, dev);
-}
-int call_real_mkfifo(const char *pathname, mode_t mode) {
-	return call_real(mknodat, AT_FDCWD, pathname, S_IFIFO|mode, 0);
-}
-int call_real_mkfifoat(int dfd, const char *pathname, mode_t mode) {
-	return call_real(mknodat, dfd, pathname, S_IFIFO|mode, 0);
-}
 
 int mkdirat_workaround(int dfd, const char *path, int mode) {
 	int ret, try;
 
 	for (try = 0 ; try < 2 ; try++) {
-		if (((ret = call_real_mkdirat(dfd, path, mode)) == 0) ||
+		if (((ret = call_real(mkdirat, dfd, path, mode)) == 0) ||
 			(errno != EUCLEAN))
 #if DEBUG
 			{
@@ -283,7 +253,7 @@ new_name:
 
 	asprintf(&temp_target_filename, "%s/%s", temp_target_dir, target_filename);
 
-	if ((ret = call_real_openat(dfd, temp_target_filename, flags, mode)) >= 0) {
+	if ((ret = call_real(openat, dfd, temp_target_filename, flags, mode)) >= 0) {
 		if ((renameat(dfd, temp_target_filename, dfd, path))) {
 //			output("error renaming '%s' to '%s': %m\n",
 //				tempfilename, path);
@@ -324,7 +294,7 @@ int creat(const char *path, mode_t mode) {
 	int ret;
 
 	// successful open, or a different error occurred
-	if (((ret = call_real_creat(path, mode)) >= 0) || errno != EUCLEAN)
+	if (((ret = call_real(creat, path, mode)) >= 0) || errno != EUCLEAN)
 		return ret;
 
 	return create_file_workaround(AT_FDCWD, path, O_CREAT|O_WRONLY|O_TRUNC, mode);
@@ -446,7 +416,7 @@ FILE *fopen(const char *path, const char *mode) {
 	int fd;
 
 	// successfully opened, or a different error occurred
-	if ((ret = call_real_fopen(path, mode)) || errno != EUCLEAN)
+	if ((ret = call_real(fopen, path, mode)) || errno != EUCLEAN)
 		goto out;
 
 	if ((fd = create_file_workaround(AT_FDCWD, path, fopen_mode_to_flags(mode), 0644)) >= 0) {
@@ -496,7 +466,7 @@ new_name:
 
 	asprintf(&temp_linkname, "%s/%s", temp_link_dir, linkname);
 
-	if ((ret = call_real_symlinkat(path1, dfd, temp_linkname)) >= 0) {
+	if ((ret = call_real(symlinkat, path1, dfd, temp_linkname)) >= 0) {
 		if ((renameat(dfd, temp_linkname, dfd, path2))) {
 			unlinkat(dfd, temp_linkname, 0);
 			unlinkat(dfd, temp_link_dir, AT_REMOVEDIR);
@@ -530,7 +500,7 @@ int symlink(const char *path1, const char *path2) {
 	int ret;
 
         // successful symlink, or a different error occurred
-	if (((ret = call_real_symlink(path1, path2)) >= 0) || errno != EUCLEAN)
+	if (((ret = call_real(symlink, path1, path2)) >= 0) || errno != EUCLEAN)
 		return ret;
 
 	return create_symlink_workaround(path1, AT_FDCWD, path2);
@@ -539,7 +509,7 @@ int symlinkat(const char *path1, int dfd, const char *path2) {
 	int ret;
 
         // successful symlink, or a different error occurred
-	if (((ret = call_real_symlink(path1, path2)) >= 0) || errno != EUCLEAN)
+	if (((ret = call_real(symlink, path1, path2)) >= 0) || errno != EUCLEAN)
 		return ret;
 
 	return create_symlink_workaround(path1, dfd, path2);
@@ -573,7 +543,7 @@ new_name:
 
 	asprintf(&temp_special_name, "%s/%s", temp_special_dir, special_name);
 
-	if ((ret = call_real_mknodat(dfd, path, mode, dev)) >= 0) {
+	if ((ret = call_real(mknodat, dfd, path, mode, dev)) >= 0) {
 		if ((renameat(dfd, temp_special_name, dfd, path))) {
 			unlinkat(dfd, temp_special_name, 0);
 			unlinkat(dfd, temp_special_dir, AT_REMOVEDIR);
@@ -606,7 +576,7 @@ out:
 int mknod(const char *path, mode_t mode, dev_t dev) {
 	int ret;
 
-	if (((ret = call_real_mknodat(AT_FDCWD, path, mode, dev)) >= 0) || errno != EUCLEAN)
+	if (((ret = call_real(mknodat, AT_FDCWD, path, mode, dev)) >= 0) || errno != EUCLEAN)
 		return ret;
 
 	return create_special_workaround(AT_FDCWD, path, mode, dev);
@@ -614,7 +584,7 @@ int mknod(const char *path, mode_t mode, dev_t dev) {
 int mknodat(int dfd, const char *path, mode_t mode, dev_t dev) {
 	int ret;
 
-	if (((ret = call_real_mknodat(dfd, path, mode, dev)) >= 0) || errno != EUCLEAN)
+	if (((ret = call_real(mknodat, dfd, path, mode, dev)) >= 0) || errno != EUCLEAN)
 		return ret;
 
 	return create_special_workaround(dfd, path, mode, dev);
@@ -622,7 +592,7 @@ int mknodat(int dfd, const char *path, mode_t mode, dev_t dev) {
 int mkfifo(const char *path, mode_t mode) {
 	int ret;
 
-	if (((ret = call_real_mkfifo(path, mode)) >= 0) || errno != EUCLEAN)
+	if (((ret = call_real(mkfifo, path, mode)) >= 0) || errno != EUCLEAN)
 		return ret;
 
 	return create_special_workaround(AT_FDCWD, path, S_IFIFO|mode, 0);
@@ -630,7 +600,7 @@ int mkfifo(const char *path, mode_t mode) {
 int mkfifoat(int dfd, const char *path, mode_t mode) {
 	int ret;
 
-	if (((ret = call_real_mkfifoat(dfd, path, mode)) >= 0) || errno != EUCLEAN)
+	if (((ret = call_real(mkfifoat, dfd, path, mode)) >= 0) || errno != EUCLEAN)
 		return ret;
 
 	return create_special_workaround(dfd, path, S_IFIFO|mode, 0);
