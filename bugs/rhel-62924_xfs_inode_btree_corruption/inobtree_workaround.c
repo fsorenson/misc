@@ -115,16 +115,6 @@ mkfifoat_t real_mkfifoat = NULL;
 	fprintf(stderr, args); \
 } while (0)
 
-#define get_real(_func) if (! real_##_func) { \
-	char *error; \
-	dlerror(); \
-	real_##_func = dlsym(RTLD_NEXT, #_func); \
-	if ((error = dlerror()) != NULL) { \
-		output("%s getting address for %s\n", error, #_func); \
-		exit(EXIT_FAILURE); \
-	} \
-}
-
 const char valid_chars[] = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ-_";
 #define TEMP_NAME_LEN 64
 char *make_tempname(void) {
@@ -153,6 +143,20 @@ char *make_tempname(void) {
 	mode = va_arg(arg_ptr, int); \
 	va_end(arg_ptr); \
 	mode; \
+})
+
+#define get_real(_func) if (! real_##_func) { \
+	char *error; \
+	dlerror(); \
+	real_##_func = dlsym(RTLD_NEXT, #_func); \
+	if ((error = dlerror()) != NULL) { \
+		output("%s getting address for %s\n", error, #_func); \
+		exit(EXIT_FAILURE); \
+	} \
+}
+#define call_real(_func, args...) ({ \
+	get_real(_func); \
+	real_##_func(args); \
 })
 
 int call_real_creat(const char *pathname, mode_t mode) {
