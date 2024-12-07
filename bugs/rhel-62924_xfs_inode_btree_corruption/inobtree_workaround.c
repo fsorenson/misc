@@ -81,7 +81,7 @@
 
 typedef int (*creat_t)(const char *pathname, mode_t mode);
 typedef int (*open_t)(const char *pathname, int flags, ...);
-typedef int (*openat_t)(int dirfd, const char *pathname, int flags, mode_t mode);
+typedef int (*openat_t)(int dirfd, const char *pathname, int flags, ...);
 typedef int (*mkdir_t)(const char *pathname, mode_t mode);
 typedef int (*mkdirat_t)(int dirfd, const char *pathname, mode_t mode);
 typedef FILE *(*fopen_t)(const char *pathname, const char *mode);
