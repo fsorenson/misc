@@ -320,72 +320,32 @@ int openat(int dfd, const char *path, int flags, ...) {
 // conversion just so we can reuse the create_file_workaround()...  laziness++
 // conversions derived from testing
 int fopen_mode_to_flags(const char *mode) {
-// openat(AT_FDCWD, "testfile_fopen_r", O_RDONLY) = -1 ENOENT (No such file or directory) <0.000041>
-// openat(AT_FDCWD, "testfile_fopen_rb", O_RDONLY) = -1 ENOENT (No such file or directory) <0.000036>
-// openat(AT_FDCWD, "testfile_fopen_rt", O_RDONLY) = -1 ENOENT (No such file or directory) <0.000038>
 	if (!strcmp(mode, "r") || !strcmp(mode, "rb") || !strcmp(mode, "rt"))
 		return O_RDONLY;
-
-// openat(AT_FDCWD, "testfile_fopen_r+", O_RDWR) = -1 ENOENT (No such file or directory) <0.000039>
-// openat(AT_FDCWD, "testfile_fopen_rb+", O_RDWR) = -1 ENOENT (No such file or directory) <0.000037>
-// openat(AT_FDCWD, "testfile_fopen_r+b", O_RDWR) = -1 ENOENT (No such file or directory) <0.000051>
-// openat(AT_FDCWD, "testfile_fopen_rt+", O_RDWR) = -1 ENOENT (No such file or directory) <0.000037>
-// openat(AT_FDCWD, "testfile_fopen_r+t", O_RDWR) = -1 ENOENT (No such file or directory) <0.000036>
 	if (!strcmp(mode, "r+") || !strcmp(mode, "rb+") || !strcmp(mode, "r+b") ||
 		!strcmp(mode, "rt+") || !strcmp(mode, "r+t"))
 		return O_RDWR;
-
-// these don't make sense, but whatever
-// openat(AT_FDCWD, "testfile_fopen_rx", O_RDONLY|O_EXCL) = -1 ENOENT (No such file or directory) <0.000090>
-// openat(AT_FDCWD, "testfile_fopen_rx+", O_RDWR|O_EXCL) = -1 ENOENT (No such file or directory) <0.000049>
 	if (!strcmp(mode, "rx"))
 		return O_RDONLY|O_EXCL;
 	if (!strcmp(mode, "rx+"))
 		return O_RDWR|O_EXCL;
-
-// openat(AT_FDCWD, "testfile_fopen_w", O_WRONLY|O_CREAT|O_TRUNC, 0666) = 3
-// openat(AT_FDCWD, "testfile_fopen_wb", O_WRONLY|O_CREAT|O_TRUNC, 0666) = 3
-// openat(AT_FDCWD, "testfile_fopen_wt", O_WRONLY|O_CREAT|O_TRUNC, 0666) = 3
 	if (!strcmp(mode, "w") || !strcmp(mode, "wb") || !strcmp(mode, "wt"))
 		return O_WRONLY|O_CREAT|O_TRUNC;
 
-// openat(AT_FDCWD, "testfile_fopen_w+", O_RDWR|O_CREAT|O_TRUNC, 0666) = 3
-// openat(AT_FDCWD, "testfile_fopen_wb+", O_RDWR|O_CREAT|O_TRUNC, 0666) = 3
-// openat(AT_FDCWD, "testfile_fopen_w+b", O_RDWR|O_CREAT|O_TRUNC, 0666) = 3
-// openat(AT_FDCWD, "testfile_fopen_wt+", O_RDWR|O_CREAT|O_TRUNC, 0666) = 3
-// openat(AT_FDCWD, "testfile_fopen_w+t", O_RDWR|O_CREAT|O_TRUNC, 0666) = 3
 	if (!strcmp(mode, "w+") || !strcmp(mode, "wb+") || !strcmp(mode, "w+b") ||
 		!strcmp(mode, "wt+") || !strcmp(mode, "w+t"))
 		return O_RDWR|O_CREAT|O_TRUNC;
-
-// openat(AT_FDCWD, "testfile_fopen_wx", O_WRONLY|O_CREAT|O_EXCL|O_TRUNC, 0666) = 3
 	if (!strcmp(mode, "wx"))
 		return O_WRONLY|O_CREAT|O_EXCL|O_TRUNC;
-
-// openat(AT_FDCWD, "testfile_fopen_wx+", O_RDWR|O_CREAT|O_EXCL|O_TRUNC, 0666) = 3
 	if (!strcmp(mode, "wx+"))
 		return O_RDWR|O_CREAT|O_EXCL|O_TRUNC;
-
-// openat(AT_FDCWD, "testfile_fopen_a", O_WRONLY|O_CREAT|O_APPEND, 0666) = 3
-// openat(AT_FDCWD, "testfile_fopen_ab", O_WRONLY|O_CREAT|O_APPEND, 0666) = 3
-// openat(AT_FDCWD, "testfile_fopen_at", O_WRONLY|O_CREAT|O_APPEND, 0666) = 3
 	if (!strcmp(mode, "a") || !strcmp(mode, "ab") || !strcmp(mode, "at"))
 		return O_WRONLY|O_APPEND|O_CREAT;
-
-// openat(AT_FDCWD, "testfile_fopen_a+", O_RDWR|O_CREAT|O_APPEND, 0666) = 3
-// openat(AT_FDCWD, "testfile_fopen_ab+", O_RDWR|O_CREAT|O_APPEND, 0666) = 3
-// openat(AT_FDCWD, "testfile_fopen_a+b", O_RDWR|O_CREAT|O_APPEND, 0666) = 3
-// openat(AT_FDCWD, "testfile_fopen_at+", O_RDWR|O_CREAT|O_APPEND, 0666) = 3
-// openat(AT_FDCWD, "testfile_fopen_a+t", O_RDWR|O_CREAT|O_APPEND, 0666) = 3
 	if (!strcmp(mode, "a+") || !strcmp(mode, "ab+") || !strcmp(mode, "a+b") ||
 		!strcmp(mode, "at+") || !strcmp(mode, "a+t"))
 		return O_RDWR|O_APPEND|O_CREAT;
-
-// openat(AT_FDCWD, "testfile_fopen_ax", O_WRONLY|O_CREAT|O_EXCL|O_APPEND, 0666) = 3
 	if (!strcmp(mode, "ax"))
 		return O_WRONLY|O_CREAT|O_EXCL|O_APPEND;
-
-// openat(AT_FDCWD, "testfile_fopen_ax+", O_RDWR|O_CREAT|O_EXCL|O_APPEND, 0666) = 3
 	if (!strcmp(mode, "ax+"))
 		return O_RDWR|O_CREAT|O_EXCL|O_APPEND;
 
