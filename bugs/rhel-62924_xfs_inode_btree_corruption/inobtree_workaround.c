@@ -149,7 +149,7 @@ char *make_tempname(void) {
 }
 
 #define open_get_mode_param() ({ \
-	int mode; \
+	mode_t mode; \
 	va_list arg_ptr; \
 	va_start(arg_ptr, flags); \
 	mode = va_arg(arg_ptr, int); \
@@ -170,13 +170,6 @@ char *make_tempname(void) {
 	get_real(_func); \
 	real_##_func(args); \
 })
-
-int call_real_open(const char *pathname, int flags, mode_t mode) {
-	return call_real(openat, AT_FDCWD, pathname, flags, mode);
-}
-int call_real_openat(int dfd, const char *pathname, int flags, mode_t mode) {
-	return call_real(openat, dfd, pathname, flags, mode);
-}
 
 int mkdirat_workaround(int dfd, const char *path, int mode) {
 	int ret, try;
@@ -300,40 +293,34 @@ int creat(const char *path, mode_t mode) {
 	return create_file_workaround(AT_FDCWD, path, O_CREAT|O_WRONLY|O_TRUNC, mode);
 }
 int open(const char *path, int flags, ...) {
-	void *args, *ret;
+	mode_t mode;
+	int ret;
 
-	args = __builtin_apply_args();
-	ret = __builtin_apply((void (*)())call_real_open, args, 4096);
+	if (!(flags & O_CREAT))
+		return call_real(openat, AT_FDCWD, path, flags);
 
-	// successfully opened, or a different error occurred
-	if (((*(int *)ret) >= 0) || errno != EUCLEAN || !(flags & O_CREAT))
-		goto out;
+	mode = open_get_mode_param();
 
-	// if we get here, we must have failed with EUCLEAN while creating
-	// and we must have the mode arg
-	*(int *)ret = create_file_workaround(AT_FDCWD, path, flags, open_get_mode_param());
+	if (((ret = call_real(openat, AT_FDCWD, path, flags, mode)) >= 0) || errno != EUCLEAN)
+		return ret;
 
-out:
-	__builtin_return(ret);
+	return create_file_workaround(AT_FDCWD, path, flags, mode);
 }
 //int openat(int dirfd, const char *path, int flags);
 //int openat(int dirfd, const char *path, int flags, mode_t mode);
-int openat(int dirfd, const char *path, int flags, ...) {
-	void *args, *ret;
+int openat(int dfd, const char *path, int flags, ...) {
+	mode_t mode;
+	int ret;
 
-	args = __builtin_apply_args();
-	ret = __builtin_apply((void (*)())call_real_openat, args, 4096);
+	if (!(flags & O_CREAT))
+		return call_real(openat, dfd, path, flags);
 
-	// successfully opened, or a different error occurred: no workaround
-	if (((*(int *)ret) >= 0) || errno != EUCLEAN || !(flags & O_CREAT))
-		goto out;
+	mode = open_get_mode_param();
 
-	// if we get here, we must have failed with EUCLEAN while creating
-	// we must have the mode arg
-	*(int *)ret = create_file_workaround(dirfd, path, flags, open_get_mode_param());
+	if (((ret = call_real(openat, dfd, path, flags, mode)) >= 0) || errno != EUCLEAN)
+		return ret;
 
-out:
-	__builtin_return(ret);
+	return create_file_workaround(dfd, path, flags, mode);
 }
 
 // conversion just so we can reuse the create_file_workaround()...  laziness++
