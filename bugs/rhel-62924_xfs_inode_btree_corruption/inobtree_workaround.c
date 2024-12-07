@@ -175,24 +175,15 @@ int mkdirat_workaround(int dfd, const char *path, mode_t mode) {
 	int ret, try;
 
 	for (try = 0 ; try < 2 ; try++) {
+		errno = 0;
 		if (((ret = call_real(mkdirat, dfd, path, mode)) == 0) ||
-			(errno != EUCLEAN))
-#if DEBUG
-			{
-				if (ret == 0 && try > 0) {
-					char dfd_str[10] = "AT_FDCWD";
-					if (dfd != AT_FDCWD)
-						snprintf(dfd_str, sizeof(dfd_str) - 1, "%d", dfd);
-					output("worked around directory creation for %s:'%s' on mkdir call %d\n",
-						dfd_str, path, try + 1);
-				}
-				return ret;
+			(errno != EUCLEAN)) {
+			if (ret == 0 && try > 0) {
+				errno = 0;
+				debug_workaround_success("directory", dfd, path, "mkdir/mkdirat");
 			}
-#else
 			return ret;
-#endif
-
-
+		}
 	}
 
 	return ret;
@@ -269,14 +260,7 @@ int create_file_workaround(int dfd, const char *path, int flags, mode_t mode) {
 		}
 		unlinkat(dfd, temp_target_dir, AT_REMOVEDIR);
 		errno = 0;
-
-#if DEBUG
-		char dfd_str[10] = "AT_FDCWD";
-		if (dfd != AT_FDCWD)
-			snprintf(dfd_str, sizeof(dfd_str) - 1, "%d", dfd);
-		output("worked around file creation for %s:'%s'\n",
-			dfd_str, path);
-#endif
+		debug_workaround_success("file", dfd, path, "creat/open/openat/fopen");
 		goto out;
 	} else {
 		ret = -1;
@@ -456,13 +440,8 @@ int create_symlink_workaround(const char *path1, int dfd, const char *path2) {
 			goto out;
 		}
 		unlinkat(dfd, temp_link_dir, AT_REMOVEDIR);
-#if DEBUG
-		char dfd_str[10] = "AT_FDCWD";
-		if (dfd != AT_FDCWD)
-			snprintf(dfd_str, sizeof(dfd_str) - 1, "%d", dfd);
-		output("worked around symlink creation for %s:'%s'\n",
-			dfd_str, path2);
-#endif
+		errno = 0;
+		debug_workaround_success("symlink", dfd, path2, "symlink/symlinkat");
 		goto out;
 	} else {
 		ret = -1;
@@ -517,13 +496,8 @@ int create_special_workaround(int dfd, const char *path, mode_t mode, dev_t dev)
 			goto out;
 		}
 		unlinkat(dfd, temp_special_dir, AT_REMOVEDIR);
-#if DEBUG
-		char dfd_str[10] = "AT_FDCWD";
-		if (dfd != AT_FDCWD)
-			snprintf(dfd_str, sizeof(dfd_str) - 1, "%d", dfd);
-		output("worked around mknod creation for %s:'%s'\n",
-			dfd_str, path);
-#endif
+		errno = 0;
+		debug_workaround_success("special file", dfd, path, "mknod/mknodat/mkfifo/mkfifoat");
 		goto out;
 	} else {
 		ret = -1;
