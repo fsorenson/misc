@@ -115,6 +115,18 @@ mkfifoat_t real_mkfifoat = NULL;
 	fprintf(stderr, args); \
 } while (0)
 
+#if DEBUG
+#define debug_workaround_success(_type, _dfd, _path, _func) do { \
+	char dfd_str[10] = "AT_FDCWD"; \
+	if (_dfd != AT_FDCWD) \
+		snprintf(dfd_str, sizeof(dfd_str) - 1, "%d", _dfd); \
+	output("worked around %s creation for %s:%s on %s call\n", \
+		_type, dfd_str, _path, _func); \
+} while (0)
+#else
+#define debug_workaround_success(args) do { } while (0)
+#endif
+
 const char valid_chars[] = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ-_";
 #define TEMP_NAME_LEN 64
 char *make_tempname(void) {
