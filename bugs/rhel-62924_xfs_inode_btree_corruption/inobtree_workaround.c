@@ -124,7 +124,7 @@ mkfifoat_t real_mkfifoat = NULL;
 		_type, dfd_str, _path, _func); \
 } while (0)
 #else
-#define debug_workaround_success(args) do { } while (0)
+#define debug_workaround_success(args...) do { } while (0)
 #endif
 
 const char valid_chars[] = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ-_";
