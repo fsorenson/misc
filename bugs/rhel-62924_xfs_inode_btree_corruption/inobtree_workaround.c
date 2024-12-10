@@ -32,9 +32,9 @@
 	    temporary directory
 
 	interposed functions include the following:
-	  creat, open, openat
+	  creat, open, open64, openat, openat64
 	  mkdir, mkdirat
-	  fopen
+	  fopen, fopen64, freopen, freopen64
 	  symlink, symlinkat
 	  mknod, mknodat
 	  mkfifo, mkfifoat
@@ -84,8 +84,6 @@ typedef int (*open_t)(const char *pathname, int flags, ...);
 typedef int (*openat_t)(int dirfd, const char *pathname, int flags, ...);
 typedef int (*mkdir_t)(const char *pathname, mode_t mode);
 typedef int (*mkdirat_t)(int dirfd, const char *pathname, mode_t mode);
-typedef FILE *(*fopen_t)(const char *pathname, const char *mode);
-typedef FILE *(*freopen_t)(const char *pathname, const char *mode, FILE *stream);
 
 // hardlinks don't allocate new inodes, so these probably don't need to be implemented
 //typedef int (*link_t)(const char *path1, const char *path2);
@@ -102,8 +100,6 @@ open_t real_open = NULL;
 openat_t real_openat = NULL;
 mkdir_t real_mkdir = NULL;
 mkdirat_t real_mkdirat = NULL;
-fopen_t real_fopen = NULL;
-freopen_t real_freopen = NULL;
 //link_t real_link = NULL;
 //linkat_t real_linkat = NULL;
 symlink_t real_symlink = NULL;
@@ -284,13 +280,22 @@ out:
 int creat(const char *path, mode_t mode) {
 	return create_file_workaround(AT_FDCWD, path, O_CREAT|O_WRONLY|O_TRUNC, mode);
 }
+int creat64(const char *path, mode_t mode) {
+	return create_file_workaround(AT_FDCWD, path, O_CREAT|O_WRONLY|O_TRUNC|O_LARGEFILE, mode);
+}
 int open(const char *path, int flags, ...) {
 	return create_file_workaround(AT_FDCWD, path, flags, open_get_mode_param());
+}
+int open64(const char *path, int flags, ...) {
+	return create_file_workaround(AT_FDCWD, path, flags|O_LARGEFILE, open_get_mode_param());
 }
 //int openat(int dirfd, const char *path, int flags);
 //int openat(int dirfd, const char *path, int flags, mode_t mode);
 int openat(int dfd, const char *path, int flags, ...) {
 	return create_file_workaround(dfd, path, flags, open_get_mode_param());
+}
+int openat64(int dfd, const char *path, int flags, ...) {
+	return create_file_workaround(dfd, path, flags|O_LARGEFILE, open_get_mode_param());
 }
 
 // conversion just so we can reuse the create_file_workaround()...  laziness++
@@ -340,11 +345,34 @@ FILE *fopen(const char *path, const char *mode) {
 
 	return ret;
 }
+FILE *fopen64(const char *path, const char *mode) {
+	FILE *ret = NULL;
+	int fd;
+
+	if ((fd = create_file_workaround(AT_FDCWD, path, fopen_mode_to_flags(mode)|O_LARGEFILE, 0644)) >= 0) {
+		ret = fdopen(fd, mode);
+		errno = 0;
+	}
+
+	return ret;
+}
 FILE *freopen(const char *path, const char *mode, FILE *stream) {
 	FILE *ret = NULL;
 	int fd;
 
 	if ((fd = create_file_workaround(AT_FDCWD, path, fopen_mode_to_flags(mode), 0644)) >= 0) {
+		fclose(stream);
+		ret = fdopen(fd, mode);
+		errno = 0;
+	}
+
+	return ret;
+}
+FILE *freopen64(const char *path, const char *mode, FILE *stream) {
+	FILE *ret = NULL;
+	int fd;
+
+	if ((fd = create_file_workaround(AT_FDCWD, path, fopen_mode_to_flags(mode)|O_LARGEFILE, 0644)) >= 0) {
 		fclose(stream);
 		ret = fdopen(fd, mode);
 		errno = 0;
