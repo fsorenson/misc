@@ -149,7 +149,7 @@ char *make_tempname(void) {
 }
 
 #define open_get_mode_param() ({ \
-	mode_t mode; \
+	mode_t mode = 0; \
 	va_list arg_ptr; \
 	va_start(arg_ptr, flags); \
 	mode = va_arg(arg_ptr, int); \
@@ -242,6 +242,9 @@ int create_file_workaround(int dfd, const char *path, int flags, mode_t mode) {
 	char *target_filename = NULL, *temp_target_filename = NULL;
 	int ret = -1;
 
+	if (((ret = call_real(openat, dfd, path, flags, mode)) >= 0) || errno != EUCLEAN)
+		return ret;
+
 	target_dir = dirname2(path);
 	target_filename = basename2(path);
 
@@ -276,45 +279,16 @@ out:
 	return ret;
 }
 
-
 int creat(const char *path, mode_t mode) {
-	int ret;
-
-	// successful open, or a different error occurred
-	if (((ret = call_real(openat, AT_FDCWD, path, O_CREAT|O_WRONLY|O_TRUNC, mode)) >= 0) || errno != EUCLEAN)
-		return ret;
-
 	return create_file_workaround(AT_FDCWD, path, O_CREAT|O_WRONLY|O_TRUNC, mode);
 }
 int open(const char *path, int flags, ...) {
-	mode_t mode;
-	int ret;
-
-	if (!(flags & O_CREAT))
-		return call_real(openat, AT_FDCWD, path, flags);
-
-	mode = open_get_mode_param();
-
-	if (((ret = call_real(openat, AT_FDCWD, path, flags, mode)) >= 0) || errno != EUCLEAN)
-		return ret;
-
-	return create_file_workaround(AT_FDCWD, path, flags, mode);
+	return create_file_workaround(AT_FDCWD, path, flags, open_get_mode_param());
 }
 //int openat(int dirfd, const char *path, int flags);
 //int openat(int dirfd, const char *path, int flags, mode_t mode);
 int openat(int dfd, const char *path, int flags, ...) {
-	mode_t mode;
-	int ret;
-
-	if (!(flags & O_CREAT))
-		return call_real(openat, dfd, path, flags);
-
-	mode = open_get_mode_param();
-
-	if (((ret = call_real(openat, dfd, path, flags, mode)) >= 0) || errno != EUCLEAN)
-		return ret;
-
-	return create_file_workaround(dfd, path, flags, mode);
+	return create_file_workaround(dfd, path, flags, open_get_mode_param());
 }
 
 // conversion just so we can reuse the create_file_workaround()...  laziness++
@@ -356,16 +330,11 @@ FILE *fopen(const char *path, const char *mode) {
 	FILE *ret = NULL;
 	int fd;
 
-	// successfully opened, or a different error occurred
-	if ((ret = call_real(fopen, path, mode)) || errno != EUCLEAN)
-		goto out;
-
 	if ((fd = create_file_workaround(AT_FDCWD, path, fopen_mode_to_flags(mode), 0644)) >= 0) {
 		ret = fdopen(fd, mode);
 		errno = 0;
 	}
 
-out:
 	return ret;
 }
 
