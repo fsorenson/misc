@@ -85,6 +85,7 @@ typedef int (*openat_t)(int dirfd, const char *pathname, int flags, ...);
 typedef int (*mkdir_t)(const char *pathname, mode_t mode);
 typedef int (*mkdirat_t)(int dirfd, const char *pathname, mode_t mode);
 typedef FILE *(*fopen_t)(const char *pathname, const char *mode);
+typedef FILE *(*freopen_t)(const char *pathname, const char *mode, FILE *stream);
 
 // hardlinks don't allocate new inodes, so these probably don't need to be implemented
 //typedef int (*link_t)(const char *path1, const char *path2);
@@ -102,6 +103,7 @@ openat_t real_openat = NULL;
 mkdir_t real_mkdir = NULL;
 mkdirat_t real_mkdirat = NULL;
 fopen_t real_fopen = NULL;
+freopen_t real_freopen = NULL;
 //link_t real_link = NULL;
 //linkat_t real_linkat = NULL;
 symlink_t real_symlink = NULL;
@@ -332,6 +334,18 @@ FILE *fopen(const char *path, const char *mode) {
 	int fd;
 
 	if ((fd = create_file_workaround(AT_FDCWD, path, fopen_mode_to_flags(mode), 0644)) >= 0) {
+		ret = fdopen(fd, mode);
+		errno = 0;
+	}
+
+	return ret;
+}
+FILE *freopen(const char *path, const char *mode, FILE *stream) {
+	FILE *ret = NULL;
+	int fd;
+
+	if ((fd = create_file_workaround(AT_FDCWD, path, fopen_mode_to_flags(mode), 0644)) >= 0) {
+		fclose(stream);
 		ret = fdopen(fd, mode);
 		errno = 0;
 	}
