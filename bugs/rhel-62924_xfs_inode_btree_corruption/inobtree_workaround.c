@@ -39,9 +39,9 @@
 	  mknod, mknodat
 	  mkfifo, mkfifoat
 
-	some functions are intentionally not implemented (such as bind used to create
-	  a named socket) to discourage long-term use of this loadable library; this
-	  library is intended for use only long enough to install a new kernel in
+	some functions are intentionally not implemented (such as mkstemp or bind used
+	  to create a named socket) to discourage long-term use of this loadable library;
+	  this library is intended for use only long enough to install a new kernel in
 	  order to resolve the bug
 
 	compile:
@@ -201,7 +201,6 @@ char *basename2(const char *path) {
 	temp = strdup(path);
 	temp2 = strdup(basename(temp));
 	free_mem(temp);
-
 	return temp2;
 }
 
@@ -289,8 +288,6 @@ int open(const char *path, int flags, ...) {
 int open64(const char *path, int flags, ...) {
 	return create_file_workaround(AT_FDCWD, path, flags|O_LARGEFILE, open_get_mode_param());
 }
-//int openat(int dirfd, const char *path, int flags);
-//int openat(int dirfd, const char *path, int flags, mode_t mode);
 int openat(int dfd, const char *path, int flags, ...) {
 	return create_file_workaround(dfd, path, flags, open_get_mode_param());
 }
