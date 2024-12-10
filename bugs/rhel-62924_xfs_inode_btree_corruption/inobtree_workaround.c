@@ -293,37 +293,38 @@ int openat(int dfd, const char *path, int flags, ...) {
 
 // conversion just so we can reuse the create_file_workaround()...  laziness++
 // conversions derived from testing
-int fopen_mode_to_flags(const char *mode) {
-	if (!strcmp(mode, "r") || !strcmp(mode, "rb") || !strcmp(mode, "rt"))
+int fopen_mode_to_flags(const char *mode_str) {
+	bool plus = false;
+	char rwa = mode_str[0];
+	mode_t mode = 0;
+	int i;
+
+	if (rwa == '\0')
 		return O_RDONLY;
-	if (!strcmp(mode, "r+") || !strcmp(mode, "rb+") || !strcmp(mode, "r+b") ||
-		!strcmp(mode, "rt+") || !strcmp(mode, "r+t"))
-		return O_RDWR;
-	if (!strcmp(mode, "rx"))
-		return O_RDONLY|O_EXCL;
-	if (!strcmp(mode, "rx+"))
-		return O_RDWR|O_EXCL;
-	if (!strcmp(mode, "w") || !strcmp(mode, "wb") || !strcmp(mode, "wt"))
-		return O_WRONLY|O_CREAT|O_TRUNC;
+	for (i = 1 ; mode_str[i] != '\0' ; i++) {
+		if (mode_str[i] == 'b' || mode_str[i] == 't')
+			continue;
+		if (mode_str[i] == '+')
+			plus = true;
+		else if (mode_str[i] == 'x')
+			mode |= O_EXCL;
+		else if (mode_str[i] == 'e')
+			mode |= O_CLOEXEC;
+		else if (mode_str[i] == ',')
+			break;
+		else
+			output("unsupported fopen mode character '%c'\n", mode_str[i]);
+	}
 
-	if (!strcmp(mode, "w+") || !strcmp(mode, "wb+") || !strcmp(mode, "w+b") ||
-		!strcmp(mode, "wt+") || !strcmp(mode, "w+t"))
-		return O_RDWR|O_CREAT|O_TRUNC;
-	if (!strcmp(mode, "wx"))
-		return O_WRONLY|O_CREAT|O_EXCL|O_TRUNC;
-	if (!strcmp(mode, "wx+"))
-		return O_RDWR|O_CREAT|O_EXCL|O_TRUNC;
-	if (!strcmp(mode, "a") || !strcmp(mode, "ab") || !strcmp(mode, "at"))
-		return O_WRONLY|O_APPEND|O_CREAT;
-	if (!strcmp(mode, "a+") || !strcmp(mode, "ab+") || !strcmp(mode, "a+b") ||
-		!strcmp(mode, "at+") || !strcmp(mode, "a+t"))
-		return O_RDWR|O_APPEND|O_CREAT;
-	if (!strcmp(mode, "ax"))
-		return O_WRONLY|O_CREAT|O_EXCL|O_APPEND;
-	if (!strcmp(mode, "ax+"))
-		return O_RDWR|O_CREAT|O_EXCL|O_APPEND;
+	if (rwa == 'r')
+		return mode | (plus ? O_RDWR : O_RDONLY);
+	if (rwa == 'w')
+		return mode | O_CREAT|O_TRUNC | (plus ? O_RDWR : O_WRONLY);
+	if (rwa == 'a')
+		return mode | O_CREAT|O_APPEND | (plus ? O_RDWR : O_WRONLY);
 
-	return 0; // we'll just decide to fail
+	output("unsupported fopen mode character '%c'\n", rwa);
+	return O_RDONLY;
 }
 
 FILE *fopen(const char *path, const char *mode) {
