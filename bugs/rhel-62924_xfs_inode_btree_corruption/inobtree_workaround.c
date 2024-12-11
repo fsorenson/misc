@@ -316,6 +316,8 @@ int fopen_mode_to_flags(const char *mode_str) {
 			mode |= O_CLOEXEC;
 		else if (mode_str[i] == ',')
 			break;
+		else if (mode_str[i] == 'c')
+			continue;
 		else
 			output("unsupported fopen mode character '%c'\n", mode_str[i]);
 	}
