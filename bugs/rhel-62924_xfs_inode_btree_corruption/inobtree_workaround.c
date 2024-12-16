@@ -90,8 +90,6 @@ typedef int (*mkdirat_t)(int dirfd, const char *pathname, mode_t mode);
 //typedef int (*linkat_t)(int fd1, const char *path1, int fd2, const char *path2, int flag);
 typedef int (*symlink_t)(const char *path1, const char *path2);
 typedef int (*symlinkat_t)(const char *path1, int fd, const char *path2);
-typedef int (*mknod_t)(const char *path, mode_t mode, dev_t dev);
-typedef int (*mknodat_t)(int fd, const char *path, mode_t mode, dev_t dev);
 typedef int (*mkfifo_t)(const char *pathname, mode_t mode);
 typedef int (*mkfifoat_t)(int dfd, const char *pathname, mode_t mode);
 
@@ -104,8 +102,6 @@ mkdirat_t real_mkdirat = NULL;
 //linkat_t real_linkat = NULL;
 symlink_t real_symlink = NULL;
 symlinkat_t real_symlinkat = NULL;
-mknod_t real_mknod = NULL;
-mknodat_t real_mknodat = NULL;
 mkfifo_t real_mkfifo = NULL;
 mkfifoat_t real_mkfifoat = NULL;
 
@@ -443,6 +439,13 @@ int symlinkat(const char *path1, int dfd, const char *path2) {
 	return create_symlink_workaround(path1, dfd, path2);
 }
 
+int syscall_mknodat(int dfd, const char *path, mode_t mode, dev_t dev) {
+	int ret;
+
+	ret = syscall(SYS_mknodat, dfd, path, mode, dev);
+	return ret;
+}
+
 int create_special_workaround(int dfd, const char *path, mode_t mode, dev_t dev) {
 	char *special_dir = NULL, *temp_special_dir = NULL;
 	char *special_name = NULL, *temp_special_name = NULL;
@@ -450,7 +453,7 @@ int create_special_workaround(int dfd, const char *path, mode_t mode, dev_t dev)
 
 	errno = 0;
 	count_intercepted();
-	if (((ret = call_real(mknodat, dfd, path, mode, dev)) >= 0) || errno != EUCLEAN)
+	if (((ret = syscall_mknodat(dfd, path, mode, dev)) >= 0) || errno != EUCLEAN)
 		goto out;
 
 	special_dir = dirname2(path);
@@ -462,7 +465,7 @@ int create_special_workaround(int dfd, const char *path, mode_t mode, dev_t dev)
 	asprintf(&temp_special_name, "%s/%s", temp_special_dir, special_name);
 
 	errno = 0;
-	if ((ret = call_real(mknodat, dfd, path, mode, dev)) >= 0) {
+	if ((ret = syscall_mknodat(dfd, temp_special_name, mode, dev)) >= 0) {
 		if ((renameat(dfd, temp_special_name, dfd, path))) {
 			unlinkat(dfd, temp_special_name, 0);
 			unlinkat(dfd, temp_special_dir, AT_REMOVEDIR);
@@ -485,12 +488,13 @@ out:
 
 	return ret;
 }
-int mknod(const char *path, mode_t mode, dev_t dev) {
-	return create_special_workaround(AT_FDCWD, path, mode, dev);
+int __xmknod(int ver, const char *path, mode_t mode, dev_t *dev) {
+	return create_special_workaround(AT_FDCWD, path, mode, *dev);
 }
-int mknodat(int dfd, const char *path, mode_t mode, dev_t dev) {
-	return create_special_workaround(dfd, path, mode, dev);
+int __xmknodat(int ver, int dfd, const char *path, mode_t mode, dev_t *dev) {
+	return create_special_workaround(dfd, path, mode, *dev);
 }
+
 int mkfifo(const char *path, mode_t mode) {
 	return create_special_workaround(AT_FDCWD, path, S_IFIFO|mode, 0);
 }
