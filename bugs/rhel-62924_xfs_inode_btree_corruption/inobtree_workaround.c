@@ -114,15 +114,25 @@ mkfifoat_t real_mkfifoat = NULL;
 } while (0)
 
 #if DEBUG
-#define debug_workaround_success(_type, _dfd, _path, _func) do { \
+
+static int intercepted = 0;
+static int workaround_count = 0;
+
+#define count_intercepted() do { intercepted++; } while (0)
+#define workaround_success(_type, _dfd, _path) do { \
 	char dfd_str[10] = "AT_FDCWD"; \
 	if (_dfd != AT_FDCWD) \
 		snprintf(dfd_str, sizeof(dfd_str) - 1, "%d", _dfd); \
-	output("worked around %s creation for %s:%s on %s call\n", \
-		_type, dfd_str, _path, _func); \
+	output("worked around %s creation for %s:%s on\n", \
+		_type, dfd_str, _path); \
+	workaround_count++; \
+	errno = 0; \
 } while (0)
 #else
-#define debug_workaround_success(args...) do { } while (0)
+#define count_intercepted() do { } while (0)
+#define workaround_success(args...) do { \
+	errno = 0; \
+} while (0)
 #endif
 
 const char valid_chars[] = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ-_";
@@ -176,10 +186,8 @@ int mkdirat_workaround(int dfd, const char *path, mode_t mode) {
 		errno = 0;
 		if (((ret = call_real(mkdirat, dfd, path, mode)) == 0) ||
 			(errno != EUCLEAN)) {
-			if (ret == 0 && try > 0) {
-				errno = 0;
-				debug_workaround_success("directory", dfd, path, "mkdir/mkdirat");
-			}
+			if (ret == 0 && try > 0)
+				workaround_success("directory", dfd, path);
 			return ret;
 		}
 	}
@@ -239,6 +247,7 @@ int create_file_workaround(int dfd, const char *path, int flags, mode_t mode) {
 	char *target_filename = NULL, *temp_target_filename = NULL;
 	int ret = -1;
 
+	count_intercepted();
 	if (((ret = call_real(openat, dfd, path, flags, mode)) >= 0) || errno != EUCLEAN)
 		return ret;
 
@@ -259,8 +268,7 @@ int create_file_workaround(int dfd, const char *path, int flags, mode_t mode) {
 			goto out;
 		}
 		unlinkat(dfd, temp_target_dir, AT_REMOVEDIR);
-		errno = 0;
-		debug_workaround_success("file", dfd, path, "creat/open/openat/fopen");
+		workaround_success("file", dfd, path);
 		goto out;
 	} else {
 		ret = -1;
@@ -392,6 +400,7 @@ int create_symlink_workaround(const char *path1, int dfd, const char *path2) {
 	char *linkname = NULL, *temp_linkname = NULL;
 	int ret = -1;
 
+	count_intercepted();
         // successful symlink, or a different error occurred
 	if (((ret = call_real(symlinkat, path1, dfd, path2)) >= 0) || errno != EUCLEAN)
 		return ret;
@@ -412,8 +421,7 @@ int create_symlink_workaround(const char *path1, int dfd, const char *path2) {
 			goto out;
 		}
 		unlinkat(dfd, temp_link_dir, AT_REMOVEDIR);
-		errno = 0;
-		debug_workaround_success("symlink", dfd, path2, "symlink/symlinkat");
+		workaround_success("symlink", dfd, path2);
 		goto out;
 	} else {
 		ret = -1;
@@ -441,6 +449,7 @@ int create_special_workaround(int dfd, const char *path, mode_t mode, dev_t dev)
 	int ret = -1;
 
 	errno = 0;
+	count_intercepted();
 	if (((ret = call_real(mknodat, dfd, path, mode, dev)) >= 0) || errno != EUCLEAN)
 		goto out;
 
@@ -452,6 +461,7 @@ int create_special_workaround(int dfd, const char *path, mode_t mode, dev_t dev)
 
 	asprintf(&temp_special_name, "%s/%s", temp_special_dir, special_name);
 
+	errno = 0;
 	if ((ret = call_real(mknodat, dfd, path, mode, dev)) >= 0) {
 		if ((renameat(dfd, temp_special_name, dfd, path))) {
 			unlinkat(dfd, temp_special_name, 0);
@@ -460,8 +470,7 @@ int create_special_workaround(int dfd, const char *path, mode_t mode, dev_t dev)
 			goto out;
 		}
 		unlinkat(dfd, temp_special_dir, AT_REMOVEDIR);
-		errno = 0;
-		debug_workaround_success("special file", dfd, path, "mknod/mknodat/mkfifo/mkfifoat");
+		workaround_success("special file", dfd, path);
 		goto out;
 	} else {
 		ret = -1;
@@ -488,3 +497,9 @@ int mkfifo(const char *path, mode_t mode) {
 int mkfifoat(int dfd, const char *path, mode_t mode) {
 	return create_special_workaround(dfd, path, S_IFIFO|mode, 0);
 }
+#if DEBUG
+__attribute__((destructor)) void debug_exit() {
+	output("inode btree workaround intercepted %d library calls, worked around %d EUCLEAN failures\n",
+		intercepted, workaround_count);
+}
+#endif
