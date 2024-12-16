@@ -79,31 +79,13 @@
 	} \
 } while (0)
 
-typedef int (*creat_t)(const char *pathname, mode_t mode);
-typedef int (*open_t)(const char *pathname, int flags, ...);
 typedef int (*openat_t)(int dirfd, const char *pathname, int flags, ...);
-typedef int (*mkdir_t)(const char *pathname, mode_t mode);
 typedef int (*mkdirat_t)(int dirfd, const char *pathname, mode_t mode);
-
-// hardlinks don't allocate new inodes, so these probably don't need to be implemented
-//typedef int (*link_t)(const char *path1, const char *path2);
-//typedef int (*linkat_t)(int fd1, const char *path1, int fd2, const char *path2, int flag);
-typedef int (*symlink_t)(const char *path1, const char *path2);
 typedef int (*symlinkat_t)(const char *path1, int fd, const char *path2);
-typedef int (*mkfifo_t)(const char *pathname, mode_t mode);
-typedef int (*mkfifoat_t)(int dfd, const char *pathname, mode_t mode);
 
-creat_t real_creat = NULL;
-open_t real_open = NULL;
 openat_t real_openat = NULL;
-mkdir_t real_mkdir = NULL;
 mkdirat_t real_mkdirat = NULL;
-//link_t real_link = NULL;
-//linkat_t real_linkat = NULL;
-symlink_t real_symlink = NULL;
 symlinkat_t real_symlinkat = NULL;
-mkfifo_t real_mkfifo = NULL;
-mkfifoat_t real_mkfifoat = NULL;
 
 #define output(args...) do { \
 	fprintf(stderr, args); \
