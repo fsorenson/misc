@@ -1,0 +1,48 @@
+using 'tc' to introduce a network delay; some bash functions
+
+
+# use localhost, but not 127.0.0.1
+NFS_SERVER=127.0.2.1
+NETWORK_DELAY=2ms
+TC_DEV=
+
+
+function cleanup_network {
+        if [[ -n $NETWORK_DELAY && $NETWORK_DELAY != "0" && -n $TC_DEV ]] ; then
+                tc qdisc del dev $TC_DEV root >/dev/null 2>&1
+        fi
+}
+
+function slow_network {
+	if [[ -z $NETWORK_DELAY || $NETWORK_DELAY == "0" ]] ; then
+		return
+	fi
+
+	TC_DEV=$(ip route get to $NFS_SERVER 2>&1 | head -1 | awk '{for (i = 0 ; i <= NF ; i++) {if ($i=="dev" && i<NF) { print $(i+1) ; exit }}}')
+
+	# did we find a suitable interface?
+	[[ -n $TC_DEV ]] || return
+
+#	if we _want_ to make sure it's looback:
+#	# if it's not loopback, bail
+#	[[ $TC_DEV == "lo" ]] ||  {
+#		TC_DEV=""
+#		return
+#	}
+
+	# wipe everything clean:
+	tc qdisc del dev $TC_DEV root >/dev/null 2>&1
+
+	# add the root handle:
+	tc qdisc add dev $TC_DEV root handle 1: prio bands 10
+
+	# attach two queues, one fifo, and one netem with a delay:
+	tc qdisc add dev $TC_DEV parent 1:1 handle 11: pfifo limit 1000
+	tc qdisc add dev $TC_DEV parent 1:4 handle 14: netem limit 1000 delay $NETWORK_DELAY
+
+	# redirect outgoing traffic from the root queue to the 'slow' queue, if the IP matches:
+	tc filter add dev $TC_DEV parent 1:0 prio 1 protocol ip u32 match ip dst $NFS_SERVER/255.255.255.255 flowid 1:4
+
+	# redirect incoming traffic from the root queue to the 'slow' queue, if the IP matches:
+#	tc filter add dev $TC_DEV parent 1:0 prio 1 protocol ip u32 match ip src $NFS_SERVER/255.255.255.255 flowid 1:4
+}
