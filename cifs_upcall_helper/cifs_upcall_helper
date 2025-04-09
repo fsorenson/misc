@@ -117,7 +117,7 @@ sub get_key_description {
 #		printf "Error executing keyctl: $rdescribe\n";
 		exit -1;
 	};
-	
+
 	log_msg 2, "description for key $keyid: $rdescribe";
 	return $rdescribe;
 }
@@ -275,7 +275,7 @@ sub check_ip4_match {
 		$ret = ($key_ip4 >= $ip4_range_low and $key_ip4 <= $ip4_range_high) ? 1 : 0;
 		return $ret ^ $negate;
 	}
-	log_msg 0, "ip4 match didn't match any known format"; 
+	log_msg 0, "ip4 match didn't match any known format";
 
 	return 0;
 }
@@ -352,10 +352,10 @@ my %vars;
 
 $vars{'uid2'} = scalar POSIX::strtol($vars{'uid2'}, 16);
 $vars{'creduid'} = scalar POSIX::strtol($vars{'creduid'}, 16);
-log_msg 1, "description for key %d  uid: %d, gid: %d, perms: %d, hostname: %s, ipv: %s, ip: %s, sec: %s, uid2: %d, creduid: %d, username: %s",
+log_msg 1, sprintf("description for key %d  uid: %d, gid: %d, perms: %d, hostname: %s, ipv: %s, ip: %s, sec: %s, uid2: %d, creduid: %d, username: %s",
 	$keyid, $vars{'uid'}, $vars{'gid'}, $vars{'perms'},
 	$vars{'hostname'}, $vars{'ipv'}, $vars{'ip'},
-	$vars{'sec'}, $vars{'uid2'}, $vars{'creduid'}, $vars{'username'};
+	$vars{'sec'}, $vars{'uid2'}, $vars{'creduid'}, $vars{'username'});
 
 
 ## open and read criteria file /etc/cifs-upcall.conf
