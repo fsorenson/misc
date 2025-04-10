@@ -44,6 +44,7 @@ my $ip4_range_re = qr/($ip4_re)-($ip4_re)/;
 my $ip4_nm_re = qr/($ip4_re)\/($ip4_re)/;
 my $ip4_cidr_re = qr/($ip4_re)\/(\d+)/;
 my $ip4_comparison_re = qr/^ip4(=|==|!=)(\*|$ip4_re|$ip4_range_re|$ip4_nm_re|$ip4_cidr_re)$/;
+my $ip6_comparison_re = qr/^ip6=(=|==|!=|~|!~)(.+)/; # TODO: enhance ip6 comparator
 
 sub log_msg {
 	my $log_level = shift;
@@ -354,7 +355,8 @@ while (<CONF>) {
 			}
 		} elsif (($comparator, $match_pattern) = $criterion =~ $ip4_comparison_re) {
 			$match = 0 if (! check_ip4_match($vars{'ip'}, $comparator, $match_pattern));
-#		} elsif (($field, $comparator, $match_pattern) = $criterion =~ $ip6_comparison_re) { # TODO: ip6
+		} elsif (($field, $comparator, $match_pattern) = $criterion =~ $ip6_comparison_re) { #
+			$match = 0 if (! check_string_match($vars{'ip'}, $comparator, $match_pattern));
 		} else {
 			log_msg 0, "unrecognized match string: $criterion";
 			$match = 0;
