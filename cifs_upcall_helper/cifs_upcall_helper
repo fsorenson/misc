@@ -48,12 +48,11 @@ my $ip6_comparison_re = qr/^ip6=(=|==|!=|~|!~)(.+)/; # TODO: enhance ip6 compara
 
 sub log_msg {
 	my $log_level = shift;
-#	my @upcall_args = @_;
 	my $msg = shift;
 	my $syslog_level = 'info';
 
 	$syslog_level = 'err' if $log_level < 1; # promote
-printf "logging message: %s\n", $msg;
+
 	syslog($syslog_level, $msg) if ($debug_level >= $log_level);
 }
 sub get_key_description {
@@ -66,7 +65,6 @@ sub get_key_description {
 	close KEYCTL;
 	if ($?) {
 		log_msg 0, "Error executing keyctl: $rdescribe";
-#		printf "Error executing keyctl: $rdescribe\n";
 		exit -1;
 	};
 
@@ -75,8 +73,6 @@ sub get_key_description {
 }
 sub set_upcall_opts {
 	my $opts_str = shift;
-
-#	return if $opts_str eq '*';
 
 	my @opts = split /$split_char/, $opts_str;
 	foreach my $opt (@opts) {
@@ -255,7 +251,6 @@ my @ip4_tests = (
 
 	#invalid netmask?
 	'ip4=192.168.122.0/255.255.0.255',
-
 
 	'ip4=192.168.122.0/24',
 	'ip4!=192.168.122.0/24',
