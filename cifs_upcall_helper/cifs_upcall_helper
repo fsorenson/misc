@@ -1,8 +1,12 @@
 #!/usr/bin/perl -w
 
+# Frank Sorenson <sorenson@redhat.com>, 2025
 
+# helper script to be entered into /etc/request-key.d/cifs.spnego
+#   to enable complex matching of fields in the description field
+#   of the key when using krb5 for cifs mounts
 
-
+# see README file for further details
 
 use strict;
 use warnings;
@@ -23,59 +27,6 @@ my $keyid;
 
 my $split_char = '[,;]'; # separator for match and options fields
 
-#*|match_field=value_glob[;match_field=value_glob]	*|config_field=config_value[;config_field=config_value]
-#
-#<selection_criteria> <options>
-# selection criteria:
-#     *
-#     host<string_comparator><host_string>
-#     user<string_comparator><user_string>
-#     sec<string_comparator><sec_string>
-#       ('krb5' or 'mskrb5')
-
-#     ip=<ip_string>
-#     ip4<ip4_comparator>ip4_string>
-#     ip6=<ip6_string>  TODO
-
-#     uid<numeric_comparator><uid_string>
-#     creduid<numeric_comparator><uid_string>
-
-# selection comparators:
-#     string_comparators for host, user, and sec are the following: '=', '==', '!=', '~', or '!~'
-#       '=', '==', and '!=' compare as 'globs'
-#       '~' and '!~' compare as 'regexes'
-
-#     ip4_comparators are: '=', '==', '!='
-#     ip4_string accepts the following formats
-#       bare ip:
-#         www.xxx.yyy.zzz
-#       ip_low-ip_high range:
-#         aaa.bbb.ccc.ddd-www.xxx.yyy.zzz
-#       ip_network/netmask:
-#         www.xxx.yyy.zzz/aaa.bbb.ccc.ddd
-#     ip_network/prefix (cidr):
-#         www.xxx.yyy.zzz/nn
-
-#     invalid netmask/prefix results in 'not a match', regardless of comparator
-
-#     numeric_comparators for uid and creduid are the following: '<', '<=', '=', '==', '>=', '>', or '!='
-#     uid_string may be decimal or hex (when beginning with 0x)
-#
-# options:
-#     keytab=</path>
-#     krb5conf=</path>
-#     expire=<timeout>
-#     use-proxy|use_proxy
-#     no-env-probe|no_env_probe
-#     trust-dns|trust_dns
-#     legacy-uid|legacy_uid
-#
-# additional 'special case' selection value:
-#     default|defaults - does not match, but clears default values and sets them to the specified options
-#     (use option '*' or '-' to clear without setting any further options)
-#
-#     NOTE: default must be the only criteria
-#
 
 my $key_description_re = qr/cifs.spnego;([0-9]+);([0-9]+);([0-9a-f]+);ver=0x2;host=([^;]+);(ip4|ip6)=([^;]+);sec=(krb5|mskrb5);uid=(0x[0-9a-f]+);creduid=(0x[0-9a-f]+);user=([^;]+);pid=(0x[0-9a-f]+)/;
 # describe format:
