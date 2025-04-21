@@ -101,12 +101,47 @@ sub set_upcall_opts {
 		}
 	}
 }
+sub replace_macros {
+	my $str = shift;
+	my $result = '';
+	my $len = length $str;
+
+printf "replacing macros\n";
+	for (my $i = 0 ; $i < $len ; $i++) {
+		my $chars = substr $str, $i, 2;
+		if ($chars eq '%%') {
+			$result .= '%';
+			$i += 1;
+		} elsif ($chars eq '%h') {
+			$result .= $vars{'hostname'};
+			$i += 1;
+		} elsif ($chars eq '%i') {
+			$result .= $vars{'ip'};
+			$i += 1;
+		} elsif ($chars eq '%s') {
+			$result .= $vars{'sec'};
+			$i += 1;
+		} elsif ($chars eq '%u') {
+			$result .= $vars{'uid2'};
+			$i += 1;
+		} elsif ($chars eq '%c') {
+			$result .= $vars{'creduid'};
+			$i += 1;
+		} elsif ($chars eq '%U') {
+			$result .= $vars{'username'};;
+			$i += 1;
+		} else {
+			$result .= substr $chars, 0, 1;
+		}
+	}
+	return $result;
+}
 sub set_upcall_args {
 	foreach my $opt (keys %upcall_opts) {
 		if ($opt eq 'keytab') {
-			push @upcall_args, ('-K', $upcall_opts{$opt});
+			push @upcall_args, ('-K', replace_macros($upcall_opts{$opt}));
 		} elsif ($opt eq 'krb5conf') {
-			push @upcall_args, ('-k', $upcall_opts{$opt});
+			push @upcall_args, ('-k', replace_macros($upcall_opts{$opt}));
 		} elsif ($opt eq 'expire') {
 			push @upcall_args, ('-e', $upcall_opts{$opt});
 		} elsif ($opt eq 'use_proxy') {
