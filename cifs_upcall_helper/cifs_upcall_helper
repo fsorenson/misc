@@ -24,6 +24,7 @@ my $helper_conf = '/etc/cifs-upcall-helper.conf';
 my %upcall_opts = ();
 my @upcall_args = ( '/usr/sbin/cifs.upcall' );
 my $keyid;
+my %vars;
 
 my $split_char = '[,;]'; # separator for match and options fields
 
@@ -292,7 +293,6 @@ if ($key_description_str !~ $key_description_re) {
 	log_msg 1, "executing upcall with default parameters";
 	exec_upcall;
 }
-my %vars;
 ($vars{'uid'}, $vars{'gid'}, $vars{'perms'}, $vars{'hostname'}, $vars{'ipv'}, $vars{'ip'},
 	$vars{'sec'}, $vars{'uid2'}, $vars{'creduid'}, $vars{'username'}) = $key_description_str =~ $key_description_re;
 
