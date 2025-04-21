@@ -29,6 +29,7 @@
 # <line> :=
 #     <selection_criteria><whitespace><options>
 #     default<whitespace><options>
+#     verbosity|log_level|logging|debug<whitespace><log_level>
 #
 # <selection_criteria> := <criterion>[<delimiter><criterion>]*
 #
@@ -101,11 +102,26 @@
 #       new options set
 #     NOTE: default must be the only criteria
 
+# <log_level> := (errors|quiet|info|debug)
+#
+# when 'verbosity', 'log_level', 'logging', or 'debug' is specified as the selection criteria,
+#     the logging level is set to the specified level.  Options are:
+#     errors|quiet
+#         only errors are logged to syslog, at level LOG_ERR
+#     info
+#         more verbose information is logged to syslog, at level LOG_INFO
+#     debug
+#         verbose debugging messages are output to syslog, at level LOG_INFO
+#     any other values
+#         verbosity is unchanged
 
 # example lines:
 
 # set a default option to be applied
 default                    use_proxy
+
+# set the log level to 1/info:
+verbosity                  info
 
 # match usernames; add the keytab option
 user=cifsclientvm23        keytab=/etc/cifsclientvm23.keytab
