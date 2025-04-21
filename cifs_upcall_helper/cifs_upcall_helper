@@ -354,6 +354,19 @@ while (<CONF>) {
 	}
 	my ($criteria_str, $opts_str) = $line =~ $conf_split_re;
 
+	if ($criteria_str eq 'verbosity' or $criteria_str eq 'log_level' or
+		$criteria_str eq 'logging' or $criteria_str eq 'debug') {
+		if ($opts_str eq 'errors' or $opts_str eq 'quiet' or $opts_str eq '0') {
+			$debug_level = 0;
+		} elsif ($opts_str eq 'info' or $opts_str eq '1') {
+			$debug_level = 1;
+		} elsif ($opts_str eq 'debug' or $opts_str eq '2') {
+			$debug_level = 2;
+		} else { # don't change log level
+			log_msg 0, "unrecognized log level: $opts_str";
+		}
+		next;
+	}
 	if ($criteria_str eq 'default' or $criteria_str eq 'defaults') {
 		%upcall_opts = ();
 		set_upcall_opts $opts_str;
