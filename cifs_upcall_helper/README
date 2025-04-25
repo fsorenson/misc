@@ -133,15 +133,24 @@ default                    use_proxy
 # set the log level to 1/info:
 verbosity                  info
 
-# match usernames; add the keytab option
+# match usernames; add the keytab option (to already configured default of 'use_proxy')
 user=cifsclientvm23        keytab=/etc/cifsclientvm23.keytab
 user=user2                 keytab=/etc/cifsuser2.keytab
+
+# clear current default options; don't set any default options
+default                    -
+
+# match usernames with regex; add the keytab options using % macro for username
+user~cifsuser[1-5]         keytab=/etc/cifs_keytabs/%u.keytab
 
 # match a cifs server hostname; no additional options applied
 host=server1               -
 
-# clear current default options; don't set any default options
-default                    -
+# match cifs server hostnames using regex; add keytab option
+host~svr(chicago|london)[0-9]+  keytab=/etc/cifs_keytabs/chi_ldn.keytab
+
+# match cifs server hostnames using regex to select some, then exclude a specific hostname; add keytab
+host~svrchicago[1-5],host!=svrchicago3  keytab=/etc/cifs_keytabs/chi_not3.keytab
 
 # several ip4 formats; no additional options
 ip4=192.168.122.73         -
@@ -149,16 +158,16 @@ ip4=192.168.122.70-192.168.122.80  -
 ip4=192.168.123.0/255.255.255.0  -
 ip4=192.168.123.0/24       -
 
-# any IP except this one
+# any IP except this one; no additional options
 ip4!=192.168.122.73        -
 
-# match both an ip AND a user (all criteria must be met to match)
+# match both an ip AND a user (all criteria must be met to match); add keytab
 ip4=10.2.3.4,user=user1    keytab=/etc/cifsuser1.keytab
 
-# match specified uid
+# match specified uid; add keytab
 uid=501                    keytab=/etc/cifsuser5.keytab
 
-# match uid greater than 500
+# match uid greater than 500; add keytab
 uid>500                    keytab=/etc/cifsusers.keytab
 
 # always match, don't add any more options; equivalent to reaching
