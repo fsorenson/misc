@@ -93,6 +93,15 @@
 
 # <timeout> := [0-9]+
 
+# in the <option> field, the <path> values for <keytab> and <krb5conf>
+#     will also accept the following macros:
+#     %h   server hostname
+#     %i   server IP address
+#     %s   sec type
+#     %U   uid
+#     %c   creduid
+#     %u   username
+
 
 # when 'default' is specified as the selection criteria, all currently-specified
 #     default options are cleared, and the <options> specified (if any) are
