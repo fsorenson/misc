@@ -121,13 +121,13 @@ printf "replacing macros\n";
 		} elsif ($chars eq '%s') {
 			$result .= $vars{'sec'};
 			$i += 1;
-		} elsif ($chars eq '%u') {
+		} elsif ($chars eq '%U') {
 			$result .= $vars{'uid2'};
 			$i += 1;
 		} elsif ($chars eq '%c') {
 			$result .= $vars{'creduid'};
 			$i += 1;
-		} elsif ($chars eq '%U') {
+		} elsif ($chars eq '%u') {
 			$result .= $vars{'username'};;
 			$i += 1;
 		} else {
