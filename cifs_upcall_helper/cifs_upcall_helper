@@ -106,7 +106,6 @@ sub replace_macros {
 	my $result = '';
 	my $len = length $str;
 
-printf "replacing macros\n";
 	for (my $i = 0 ; $i < $len ; $i++) {
 		my $chars = substr $str, $i, 2;
 		if ($chars eq '%%') {
@@ -263,50 +262,6 @@ sub check_ip4_match {
 
 	return 0;
 }
-
-# testing the ip4 matching
-my $ip = '192.168.122.73';
-my @ip4_tests = (
-	'ip4=*',
-	'ip4!=*',
-
-	'ip4=192.168.122.73',
-	'ip4==192.168.122.73',
-	'ip4!=192.168.122.73',
-	'ip4!=192.168.122.75',
-
-	'ip4=192.168.122.70-192.168.122.80',
-	'ip4=192.168.122.0-192.168.122.58',
-	'ip4!=192.168.122.70-192.168.122.80',
-	'ip4!=192.168.122.0-192.168.122.58',
-
-	'ip4=192.168.122.0/255.255.255.0',
-	'ip4=192.168.12.0/255.255.0.0',
-	'ip4=192.168.123.0/255.255.255.0',
-	'ip4!=192.168.123.0/255.255.255.0',
-
-	#invalid netmask?
-	'ip4=192.168.122.0/255.255.0.255',
-
-	'ip4=192.168.122.0/24',
-	'ip4!=192.168.122.0/24',
-	'ip4=192.168.122.0/32',
-	'ip4=192.168.122.0/33' # invalid prefix
-);
-sub test_ip4_cases {
-	foreach my $test_str (@ip4_tests) {
-		if ((my $comparator, my $match_pattern) = $test_str =~ $ip4_comparison_re) {
-			my $ret = check_ip4_match($ip, $comparator, $match_pattern);
-			printf "%s  ->  %s\n", $test_str, $ret ? 'match' : 'no match';
-		} else {
-			printf "did not match regex!  %s\n", $test_str;
-		}
-	}
-	exit;
-}
-# test_ip4_cases; # TODO: when satisfied with ip4 matching logic, remove this code
-
-
 
 openlog($log_ident, 'ndelay,pid', 'daemon'); # or die "Could not open syslog: $!"; #?
 log_msg 1, "$log_ident vers $helper_version";
