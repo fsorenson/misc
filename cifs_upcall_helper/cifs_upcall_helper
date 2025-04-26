@@ -29,14 +29,17 @@ my %vars;
 my $split_char = '[,;]'; # separator for match and options fields
 
 
-my $key_description_re = qr/cifs.spnego;([0-9]+);([0-9]+);([0-9a-f]+);ver=0x2;host=([^;]+);(ip4|ip6)=([^;]+);sec=(krb5|mskrb5);uid=(0x[0-9a-f]+);creduid=(0x[0-9a-f]+);user=([^;]+);pid=(0x[0-9a-f]+)/;
+my $key_description_re = qr/^cifs.spnego;([0-9]+);([0-9]+);([0-9a-f]+);ver=0x2;host=([^;]+);(ip4|ip6)=([^;]+);sec=(krb5|mskrb5|iakerb);uid=(0x[0-9a-f]+);creduid=(0x[0-9a-f]+)(?:;user=([^;]+))?;pid=(0x[0-9a-f]+)(?:;upcall_target=(mount|app))?$/;
 # describe format:
 #  897516324: als--v-----v------------     0     0 cifs.spnego: ver=0x2;host=vm1;ip4=192.168.122.73;sec=krb5;uid=0x0;creduid=0x0;user=user1;pid=0xb302c
 # rdescribe format:
-#  cifs.spnego;0;0;39010000;ver=0x2;host=vm1;ip4=192.168.122.73;sec=krb5;uid=0x0;creduid=0x0;user=user1;pid=0xbaf7d
+#  cifs.spnego;0;0;39010000;ver=0x2;host=vm1;ip4=192.168.122.73;sec=krb5;uid=0x0;creduid=0x0;user=user1;pid=0xbaf7d;upcall_target=mount
+#
+#  user=<username> is optional
+#  upcall_target=(mount|app) is optional
 
 my $conf_split_re = qr/^([^\s]+)\s+(.+)/;
-my $string_comparison_re = qr/(host|user|sec)(=|==|!=|~|!~)(.+)/;
+my $string_comparison_re = qr/^(host|user|sec|upcall_target)(=|==|!=|~|!~)(.+)/;
 my $uid_comparison_re = qr/^(uid|creduid)(<|<=|=|==|>=|>|!=)(0x[0-9a-f]+|[0-9]+)$/;
 
 my $octet_re = qr/\d{1,2}|[01]\d{2}|2[0-4]\d|25[0-5]/;
@@ -284,15 +287,17 @@ if ($key_description_str !~ $key_description_re) {
 	exec_upcall;
 }
 ($vars{'uid'}, $vars{'gid'}, $vars{'perms'}, $vars{'hostname'}, $vars{'ipv'}, $vars{'ip'},
-	$vars{'sec'}, $vars{'uid2'}, $vars{'creduid'}, $vars{'username'}) = $key_description_str =~ $key_description_re;
-
+	$vars{'sec'}, $vars{'uid2'}, $vars{'creduid'}, $vars{'username'}, $vars{'upcall_target'}) =
+	$key_description_str =~ $key_description_re;
 
 $vars{'uid2'} = scalar POSIX::strtol($vars{'uid2'}, 16);
 $vars{'creduid'} = scalar POSIX::strtol($vars{'creduid'}, 16);
-log_msg 1, sprintf("description for key %d  uid: %d, gid: %d, perms: %d, hostname: %s, ipv: %s, ip: %s, sec: %s, uid2: %d, creduid: %d, username: %s",
+$vars{'username'} = '' if !defined $vars{'username'};
+$vars{'upcall_target'} = '' if !defined $vars{'upcall_target'};
+log_msg 1, sprintf("description for key %d  uid: %d, gid: %d, perms: %d, hostname: %s, ipv: %s, ip: %s, sec: %s, uid2: %d, creduid: %d, username: %s, upcall_target: %s",
 	$keyid, $vars{'uid'}, $vars{'gid'}, $vars{'perms'},
 	$vars{'hostname'}, $vars{'ipv'}, $vars{'ip'},
-	$vars{'sec'}, $vars{'uid2'}, $vars{'creduid'}, $vars{'username'});
+	$vars{'sec'}, $vars{'uid2'}, $vars{'creduid'}, $vars{'username'}, $vars{'upcall_target'});
 
 
 ## open and read criteria file /etc/cifs-upcall-helper.conf
@@ -342,8 +347,10 @@ while (<CONF>) {
 				$match = 0 if (! check_string_match($vars{'hostname'}, $comparator, $match_pattern));
 			} elsif ($field eq 'user') {
 				$match = 0 if (! check_string_match($vars{'username'}, $comparator, $match_pattern));
-			} else { # ($field eq 'sec')
+			} elsif ($field eq 'sec') {
 				$match = 0 if (! check_string_match($vars{'sec'}, $comparator, $match_pattern));
+			} else { # if ($field eq 'upcall_target')
+				$match = 0 if (! check_string_match($vars{'upcall_target'}, $comparator, $match_pattern));
 			}
 		} elsif (($field, $comparator, $match_pattern) = $criterion =~ $uid_comparison_re) {
 			if ($field eq 'uid') {
