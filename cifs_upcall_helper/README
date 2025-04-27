@@ -93,6 +93,13 @@
 
 # <timeout> := [0-9]+
 
+# with the exception of use_proxy, options are passed to 'cifs.upcall'
+#     with the relevant command-line argument; see the OPTIONS section of the manpage
+#     for cifs.upcall(8) for further details
+#
+# use_proxy sets the GSS_USE_PROXY environment variable prior to calling 'cifs.upcall',
+#     enabling the use of gssproxy; see the ENVIRONMENT VARIABLES section of the manpage
+#     for cifs.upcall(8) for further details
 # in the <option> field, the <path> values for <keytab> and <krb5conf>
 #     will also accept the following macros:
 #     %h   server hostname
