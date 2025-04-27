@@ -59,7 +59,7 @@
 
 # <host_string> := <character_string>
 # <user_string> := <character_string>
-# <sec_string> := krb5 | mskrb5
+# <sec_string> := krb5 | mskrb5 | iakerb
 
 # <character_string> := [-a-zA-Z0-9_.]
 
