@@ -6,11 +6,11 @@
 
 # see README file for further details
 
-# to use this helper script, put this script at
+# to use this helper script, install this script at
 #   /usr/sbin/cifs_upcall_helper, and enter the following line in
 #   /etc/request-key.d/cifs.spnego:
 #
-#     create  cifs.spnego    * * /usr/sbin/cifs-upcall-helper %k
+#     create  cifs.spnego    * * /usr/sbin/cifs_upcall_helper %k
 #
 # this script will read each line of /etc/cifs-upcall-helper.conf,
 #   applying match criteria in the first field to the key
