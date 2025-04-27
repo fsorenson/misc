@@ -85,6 +85,8 @@ sub set_upcall_opts {
 				$upcall_opts{'keytab'} = $val;
 			} elsif ($field eq 'krb5conf') {
 				$upcall_opts{'krb5conf'} = $val;
+			} elsif ($field eq 'krb5_trace') {
+				$upcall_opts{'krb5_trace'} = $val;
 			} elsif ($field eq 'expire') {
 				$upcall_opts{'expire'} = $val;
 			} else {
@@ -144,6 +146,8 @@ sub set_upcall_args {
 			push @upcall_args, ('-K', replace_macros($upcall_opts{$opt}));
 		} elsif ($opt eq 'krb5conf') {
 			push @upcall_args, ('-k', replace_macros($upcall_opts{$opt}));
+		} elsif ($opt eq 'krb5_trace') {
+			$ENV{'KRB5_TRACE'} = replace_macros($upcall_opts{$opt});
 		} elsif ($opt eq 'expire') {
 			push @upcall_args, ('-e', $upcall_opts{$opt});
 		} elsif ($opt eq 'use_proxy') {
