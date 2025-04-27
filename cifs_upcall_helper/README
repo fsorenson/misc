@@ -85,6 +85,7 @@
 #     * | -
 #     keytab=<path>
 #     krb5conf=<path>
+#     krb5_trace=<path>
 #     expire=<timeout>
 #     use-proxy|use_proxy
 #     no-env-probe|no_env_probe
@@ -93,14 +94,21 @@
 
 # <timeout> := [0-9]+
 
-# with the exception of use_proxy, options are passed to 'cifs.upcall'
+# with the exception of use_proxy and krb5_trace, options are passed to 'cifs.upcall'
 #     with the relevant command-line argument; see the OPTIONS section of the manpage
 #     for cifs.upcall(8) for further details
 #
 # use_proxy sets the GSS_USE_PROXY environment variable prior to calling 'cifs.upcall',
 #     enabling the use of gssproxy; see the ENVIRONMENT VARIABLES section of the manpage
 #     for cifs.upcall(8) for further details
-# in the <option> field, the <path> values for <keytab> and <krb5conf>
+#
+# specifying 'krb5_trace' with path will set the KRB5_TRACE environment variable to the
+#     path, prior to calling 'cifs.upcall'; setting this environment variable causes
+#     kerberos-related tracing to be written to the file; see the ENVIRONMENT VARIABLES
+#     section of the manpage for kerberos(7) for further details
+
+
+# in the <option> field, the <path> values for <keytab>, <krb5conf>, and <krb5_trace>
 #     will also accept the following macros:
 #     %h   server hostname
 #     %i   server IP address
@@ -165,8 +173,8 @@ ip4=192.168.122.70-192.168.122.80  -
 ip4=192.168.123.0/255.255.255.0  -
 ip4=192.168.123.0/24       -
 
-# any IP except this one; no additional options
-ip4!=192.168.122.73        -
+# any IP except this one; create/append to kerberos trace log
+ip4!=192.168.122.73        krb5_trace=/tmp/krb5_trace.out
 
 # match both an ip AND a user (all criteria must be met to match); add keytab
 ip4=10.2.3.4,user=user1    keytab=/etc/cifsuser1.keytab
