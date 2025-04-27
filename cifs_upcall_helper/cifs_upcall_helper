@@ -87,8 +87,6 @@ sub set_upcall_opts {
 				$upcall_opts{'krb5conf'} = $val;
 			} elsif ($field eq 'krb5_trace') {
 				$upcall_opts{'krb5_trace'} = $val;
-			} elsif ($field eq 'expire') {
-				$upcall_opts{'expire'} = $val;
 			} else {
 				log_msg 0, "unrecognized upcall option: $opt";
 			}
@@ -148,8 +146,6 @@ sub set_upcall_args {
 			push @upcall_args, ('-k', replace_macros($upcall_opts{$opt}));
 		} elsif ($opt eq 'krb5_trace') {
 			$ENV{'KRB5_TRACE'} = replace_macros($upcall_opts{$opt});
-		} elsif ($opt eq 'expire') {
-			push @upcall_args, ('-e', $upcall_opts{$opt});
 		} elsif ($opt eq 'use_proxy') {
 			$ENV{'GSS_USE_PROXY'} = 'yes';
 		} elsif ($opt eq 'legacy_uid') {

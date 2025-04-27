@@ -86,7 +86,6 @@
 #     keytab=<path>
 #     krb5conf=<path>
 #     krb5_trace=<path>
-#     expire=<timeout>
 #     use-proxy|use_proxy
 #     no-env-probe|no_env_probe
 #     trust-dns|trust_dns
