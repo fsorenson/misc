@@ -1,0 +1,42 @@
+#!/bin/bash
+
+TCP_PORTS="2049" # whitespace-separated port list
+FREQUENCY=5 # seconds between iterations; if an iteration takes longer than this, don't sleep
+
+#####
+
+check_exe() {
+	local exe=$1
+	local rpm=$2
+
+	[[ -x $exe ]] || {
+		echo "unable to locate '$(basename $exe)'; please install '$rpm' rpm"
+		exit
+	}
+}
+check_exe /usr/sbin/arping iputils
+check_exe /usr/sbin/ip iproute
+check_exe /usr/sbin/ss iproute
+
+TCP_PORTS=( $TCP_PORTS )
+for ((i = 0 ; i <= $(( ${#TCP_PORTS[*]} - 1 )) ; i++)) ; do
+	[[ $i -eq 0 ]] && filter="dport ${TCP_PORTS[$i]} " || filter+="or dport ${TCP_PORTS[$i]} "
+done
+
+while [[ 42 ]] ; do
+	start_time=$SECONDS
+	server_ips=$(ss -HOn -t "$filter" | awk '{print $NF}' | sort -u | cut -f1 -d:)
+	for server_ip in $server_ips ; do
+		ip_out=( $(ip -o route get to $server_ip 2>&1) )
+		# ip -o route get to 192.168.122.55
+		#local 192.168.122.55 dev lo src 192.168.122.50 uid 0 \    cache <local> 
+		[[ ${ip_out[1]} == local ]] && continue # don't bother arping local
+
+		# 192.168.122.5 dev bond0 src 192.168.122.50 uid 0 \    cache
+		netif=
+		[[ ${ip_out[2]} == dev ]] && netif="-I ${ip_out[3]}"
+		out=$(arping -w1 $netif -b -c1 $server_ip 2>&1)
+	done
+	elapsed=$(( $SECONDS - $start_time ))
+	[[ $FREQUENCY -gt $elapsed ]] && sleep $(( $FREQUENCY - $elapsed ))
+done
