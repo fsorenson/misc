@@ -62,8 +62,7 @@ expected:     AAAAAAAAAAAAAAAA AABBBBBBBBBBBBBB BBBBBBBB
 #define KiB (1024ULL)
 #define MiB (KiB * KiB)
 
-#define OUTBUF_SIZE 8192
-#define WRITE_SIZE (OUTBUF_SIZE - 32)
+#define DEFAULT_WRITEBUF_SIZE 8192
 #define CHECKER_BUF_SIZE (MiB)
 
 #define FILE_SIZE (50ULL * MiB)
@@ -77,8 +76,9 @@ struct test_state {
 	char write_char;
 	char *filename;
 
+	long writebuf_size;
 	/* writer */
-	char *outbuf;
+	char *writebuf;
 
 	/* checker */
 	char *checkbuf;
@@ -107,12 +107,12 @@ void write_one_file(void) {
 	}
 
 	while (current_size < FILE_SIZE) {
-		memset(test_state->outbuf, test_state->write_char++, OUTBUF_SIZE);
+		memset(test_state->writebuf, test_state->write_char++, test_state->writebuf_size);
 		if (test_state->write_char > 'Z')
 			test_state->write_char = 'A';
 
-		write(fd, test_state->outbuf, WRITE_SIZE);
-		current_size += WRITE_SIZE;
+		write(fd, test_state->writebuf, test_state->writebuf_size);
+		current_size += test_state->writebuf_size;
 
 		if (test_state->exit) /* child found nulls? */
 			break;
@@ -190,8 +190,8 @@ retry_open:
 }
 
 int main(int argc, char *argv[]) {
-	if (argc != 2) {
-		output("usage: %s <testfile>\n", argv[0]);
+	if (argc < 2 || argc > 3) {
+		output("usage: %s <testfile> [write_size]\n", argv[0]);
 		return EXIT_FAILURE;
 	}
 
@@ -200,9 +200,17 @@ int main(int argc, char *argv[]) {
 	memset(test_state, 0, sizeof(struct test_state));
 
 	test_state->filename = argv[1];
+	if (argc == 3) {
+		test_state->writebuf_size = strtol(argv[2], NULL, 10);
+		if (test_state->writebuf_size < 1 || test_state->writebuf_size > FILE_SIZE) {
+			output("write size out of range(1 - %llu)\n", FILE_SIZE);
+			return EXIT_FAILURE;
+		}
+	} else
+		test_state->writebuf_size = DEFAULT_WRITEBUF_SIZE;
 
 	if ((test_state->cpid = fork()) > 0) { /* parent process */
-		test_state->outbuf = malloc(OUTBUF_SIZE);
+		test_state->writebuf = malloc(test_state->writebuf_size);
 		test_state->write_char = 'A';
 
 		while (! test_state->exit)
