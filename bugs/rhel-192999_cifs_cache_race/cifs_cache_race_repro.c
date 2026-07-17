@@ -10,7 +10,10 @@
 #include <errno.h>
 #include <pthread.h>
 #include <string.h>
+#include <dirent.h>
+
 #define DEFAULT_NUM_THREADS 6
+#define DIRENT_BUF 65536
 
 #define output(args...) do { \
 	printf(args); \
@@ -27,6 +30,40 @@
 		close(x); \
 	x = -1; \
 } while (0)
+
+int read_dir(const char *path) {
+	struct dirent *de;
+	char *dirent_buf = NULL, *bpos;
+	int dfd = -1, ret = EXIT_SUCCESS, nread;
+
+	dirent_buf = malloc(DIRENT_BUF);
+	if ((dfd = open(path, O_DIRECTORY)) < 0) {
+		output("error opening directory '%s': %m\n", path);
+		goto out;
+	}
+	while (42) {
+		if ((nread = syscall(SYS_getdents64, dfd, dirent_buf, DIRENT_BUF)) < 0) {
+			output("getdents call failed: %m\n");
+			goto out;
+		}
+		if (nread == 0)
+			break;
+
+		bpos = dirent_buf;
+		while (bpos < dirent_buf + nread) {
+			de = (struct dirent *)bpos;
+			bpos += de->d_reclen;
+
+			// don't really do anything with the files
+		}
+	}
+	ret = EXIT_SUCCESS;
+out:
+	close_fd(dfd);
+	free_buf(dirent_buf);
+
+	return ret;
+}
 
 int process_one(int threadnum, int filenum) {
 	int fd0 = -1, fd1 = -1, fd2 = -1, fd3 = -1;
@@ -114,11 +151,8 @@ int process_one(int threadnum, int filenum) {
 	}
 	close_fd(fd0); // work/file_1_1.xml_stringreplace.zip
 
-//	dfd0 = open("work", O_DIRECTORY);
-//	getdents(dfd0, buf, 65536);
-//	close_fd(dfd0);
-//	dfd0 = open("work", O_DIRECTORY);
-//	getdents(dfd0, buf, 65536);
+	read_dir("work");
+	read_dir("work");
 
 	if ((fd0 = open(filename4, O_CREAT|O_TRUNC|O_RDWR, 0644)) < 0) { // work/file_1_1.xml_checkxsltmerge.zip
 		output("error opening %s: %m\n", filename4);
