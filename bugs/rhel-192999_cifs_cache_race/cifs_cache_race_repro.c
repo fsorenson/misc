@@ -100,7 +100,14 @@ retry_write:
 	}
 	close_fd(fd); // work/file_1_1.xml__temp
 
-	stat(filename1, &st1); // work/file_1_1.xml__temp
+	if (stat(filename1, &st1) < 0) { // work/file_1_1.xml__temp
+		output("error calling stat on %s: %m\n", filename1);
+		goto out;
+	}
+	if (st1.st_size != WRITE_SIZE) {
+		output("BUG: wrote %d bytes to file %s, but stat returned %ld\n", WRITE_SIZE, filename1, st1.st_size);
+		goto out;
+	}
 	if (rename(filename1, filename2) < 0) { // work/file_1_1.xml__temp, work/file_1_1.xml
 		output("error renaming %s -> %s: %m\n", filename1, filename2);
 		goto out;
