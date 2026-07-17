@@ -69,50 +69,48 @@ int process_one(int threadnum, int filenum) {
 	count = read(fd1, buf, sizeof(buf));
 //	Data (1290 bytes)
 
-	write(fd0, buf, 816);
+	write(fd0, buf, 816); // work/file_1_1.xml_stringreplace.zip
 //	Data (816 bytes)
 
-	if ((fd2 = open(filename2, O_CREAT|O_TRUNC|O_RDWR, 0644)) < 0) { // "work/file_1_1.xml__temp"
+	if ((fd2 = open(filename2, O_CREAT|O_TRUNC|O_RDWR, 0644)) < 0) { // work/file_1_1.xml__temp
 		output("error opening %s: %m\n", filename2);
 		goto out;
 	}
 	write(fd2, buf, 1290);
 
-	if (stat(filename3, &st1) == 0 || errno != ENOENT) {
+	if (stat(filename3, &st1) == 0 || errno != ENOENT) { // work/file_1_1.xml
 		if (errno != ENOENT)
 			output("file '%s' should not have existed: %m\n", filename3);
 		else
 			output("file '%s' should not have existed\n", filename3);
 		goto out;
 	}
-				; // "work/file_1_1.xml"
-	if (stat(filename3, &st1) == 0 || errno != ENOENT) { // "work/file_1_1.xml"
+	if (stat(filename3, &st1) == 0 || errno != ENOENT) { // work/file_1_1.xml
 		if (errno != ENOENT)
 			output("file '%s' should not have existed: %m\n", filename3);
 		else
 			output("file '%s' should not have existed\n", filename3);
 		goto out;
 	}
+	close_fd(fd2); // work/file_1_1.xml__temp
 
-	close_fd(fd2);
-
-	stat(filename2, &st1);
-	if (rename(filename2, filename3) < 0) { // "work/file_1_1.xml__temp", "work/file_1_1.xml"
+	stat(filename2, &st1); // work/file_1_1.xml__temp
+	if (rename(filename2, filename3) < 0) { // work/file_1_1.xml__temp, work/file_1_1.xml
 		output("error renaming %s -> %s: %m\n", filename2, filename3);
 		goto out;
 	}
-	stat(filename3, &st2);
+	stat(filename3, &st2); // work/file_1_1.xml
 	if ((intmax_t)st1.st_size != (intmax_t)st2.st_size) {
 		output("file size of '%s' prior to rename: %ld, file size of '%s' after rename: %ld\n", filename2, (intmax_t)st1.st_size, filename3, (intmax_t)st2.st_size);
 		goto out;
 	}
-	close_fd(fd1);
+	close_fd(fd1); // file_1_1.xml
 
 	if (unlink(filename1) < 0) { // file_1_1.xml
 		output("error removing %s: %m\n", filename1);
 		goto out;
 	}
-	close_fd(fd0);
+	close_fd(fd0); // work/file_1_1.xml_stringreplace.zip
 
 //	dfd0 = open("work", O_DIRECTORY);
 //	getdents(dfd0, buf, 65536);
@@ -120,23 +118,23 @@ int process_one(int threadnum, int filenum) {
 //	dfd0 = open("work", O_DIRECTORY);
 //	getdents(dfd0, buf, 65536);
 
-	if ((fd0 = open(filename4, O_CREAT|O_TRUNC|O_RDWR, 0644)) < 0) { // "work/file_1_1.xml_checkxsltmerge.zip"
+	if ((fd0 = open(filename4, O_CREAT|O_TRUNC|O_RDWR, 0644)) < 0) { // work/file_1_1.xml_checkxsltmerge.zip
 		output("error opening %s: %m\n", filename4);
 		goto out;
 	}
+	if ((fd1 = open(filename3, O_RDONLY)) < 0) { // work/file_1_1.xml
 		output("error opening %s: %m\n", filename3);
 		goto out;
 	}
-	if ((fd1 = open(filename3, O_RDONLY)) < 0) { // "work/file_1_1.xml"
 		output("read of %d bytes from %s returned %d\n", 1290, filename3, count);
 		goto out;
 	}
 	read(fd1, buf, sizeof(buf));
 //	Data (1290 bytes)
-	write(fd0, buf, 816);
+	write(fd0, buf, 816); // work/file_1_1.xml_checkxsltmerge.zip
 //	Data (816 bytes)
 
-	if (stat(filename5, &st1) == 0 || errno != ENOENT) { // "work/file_1_1.xml.tmp"
+	if (stat(filename5, &st1) == 0 || errno != ENOENT) { // work/file_1_1.xml.tmp
 		if (errno != ENOENT)
 			output("file '%s' should not have existed: %m\n", filename5);
 		else
@@ -144,43 +142,43 @@ int process_one(int threadnum, int filenum) {
 		goto out;
 	}
 
-	if ((fd2 = open(filename5, O_CREAT|O_EXCL|O_RDWR, 0644)) < 0) { // "work/file_1_1.xml.tmp"
+	if ((fd2 = open(filename5, O_CREAT|O_EXCL|O_RDWR, 0644)) < 0) { // work/file_1_1.xml.tmp
 		output("error opening %s: %m\n", filename5);
 		goto out;
 	}
-	fsync(fd2);
-	ftruncate(fd2, 0);
+	fsync(fd2); // work/file_1_1.xml.tmp
+	ftruncate(fd2, 0); // work/file_1_1.xml.tmp
 
-	if ((fd3 = open(filename5, O_CREAT|O_TRUNC|O_RDWR, 0644)) < 0) { // "work/file_1_1.xml.tmp"
+	if ((fd3 = open(filename5, O_CREAT|O_TRUNC|O_RDWR, 0644)) < 0) { // work/file_1_1.xml.tmp
 		output("error opening %s: %m\n", filename5);
 		goto out;
 	}
-	write(fd2, buf, 1256);
+	write(fd2, buf, 1256); // work/file_1_1.xml.tmp
 
 
-	close_fd(fd3);
-	close_fd(fd2);
-	close_fd(fd1);
+	close_fd(fd3); // work/file_1_1.xml.tmp
+	close_fd(fd2); // work/file_1_1.xml.tmp
+	close_fd(fd1); // work/file_1_1.xml
 
-	stat(filename5, &st1);
-	if (rename(filename5, filename3) < 0) { // "work/file_1_1.xml.tmp", "work/file_1_1.xml"
+	stat(filename5, &st1); // work/file_1_1.xml.tmp
+	if (rename(filename5, filename3) < 0) { // work/file_1_1.xml.tmp, work/file_1_1.xml
 		output("error renaming %s -> %s: %m\n", filename5, filename3);
 		goto out;
 	}
-	stat(filename3, &st2);
+	stat(filename3, &st2); // work/file_1_1.xml
 
 	if ((intmax_t)st1.st_size != (intmax_t)st2.st_size) {
 		output("file size of '%s' prior to rename: %ld, file size of '%s' after rename: %ld\n", filename5, (intmax_t)st1.st_size, filename3, (intmax_t)st2.st_size);
 		goto out;
 	}
-	if ((fd1 = open(filename3, O_RDONLY)) < 0) { //"work/file_1_1.xml"
+	if ((fd1 = open(filename3, O_RDONLY)) < 0) { // work/file_1_1.xml
 		output("error opening %s: %m\n", filename3);
 		goto out;
 	}
 	read(fd1, buf, sizeof(buf)); // 1256
 
-	close_fd(fd0);
-	close_fd(fd1);
+	close_fd(fd0); // work/file_1_1.xml_checkxsltmerge.zip
+	close_fd(fd1); // work/file_1_1.xml
 
 	if (unlink(filename3) < 0) {// "work/file_1_1.xml"
 		output("error removing %s: %m\n", filename3);
