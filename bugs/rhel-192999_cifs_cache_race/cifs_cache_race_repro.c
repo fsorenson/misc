@@ -66,8 +66,10 @@ int process_one(int threadnum, int filenum) {
 		goto out;
 	}
 
-	count = read(fd1, buf, sizeof(buf));
-//	Data (1290 bytes)
+	if ((count = read(fd1, buf, sizeof(buf))) != 1290) { // file_1_1.xml
+		output("read of %d bytes from %s returned %d\n", 1290, filename1, count);
+		goto out;
+	}
 
 	write(fd0, buf, 816); // work/file_1_1.xml_stringreplace.zip
 //	Data (816 bytes)
@@ -126,11 +128,10 @@ int process_one(int threadnum, int filenum) {
 		output("error opening %s: %m\n", filename3);
 		goto out;
 	}
+	if ((count = read(fd1, buf, sizeof(buf))) != 1290) { // work/file_1_1.xml
 		output("read of %d bytes from %s returned %d\n", 1290, filename3, count);
 		goto out;
 	}
-	read(fd1, buf, sizeof(buf));
-//	Data (1290 bytes)
 	write(fd0, buf, 816); // work/file_1_1.xml_checkxsltmerge.zip
 //	Data (816 bytes)
 
@@ -175,7 +176,10 @@ int process_one(int threadnum, int filenum) {
 		output("error opening %s: %m\n", filename3);
 		goto out;
 	}
-	read(fd1, buf, sizeof(buf)); // 1256
+	if ((read(fd1, buf, sizeof(buf))) != 1256) { // work/file_1_1.xml
+		output("read of %d bytes from %s returned %d\n", 1256, filename3, count);
+		goto out;
+	}
 
 	close_fd(fd0); // work/file_1_1.xml_checkxsltmerge.zip
 	close_fd(fd1); // work/file_1_1.xml
