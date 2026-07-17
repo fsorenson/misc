@@ -275,6 +275,10 @@ int main(int argc, char *argv[]) {
 		output("error changing to test path %s: %m\n", test_path);
 		return EXIT_FAILURE;
 	}
+	if (mkdir("work", 0755) < 0 && errno != EEXIST) {
+		output("error creating 'work' subdir: %m\n");
+		return EXIT_FAILURE;
+	}
 
 	threads = malloc(num_threads * sizeof(pthread_t));
 	thread_data = malloc(num_threads * sizeof(thread_data_t));
