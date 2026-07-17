@@ -257,7 +257,7 @@ int main(int argc, char *argv[]) {
 	pthread_t *threads;
 	char *test_path = argv[1];
 	int failed_count = 0;
-	int filenum;
+	int filenum, i;
 
 	if (argc == 4) {
 		filenum = strtol(argv[2], NULL, 10);
@@ -282,7 +282,7 @@ int main(int argc, char *argv[]) {
 
 	threads = malloc(num_threads * sizeof(pthread_t));
 	thread_data = malloc(num_threads * sizeof(thread_data_t));
-	for (int i = 0; i < num_threads ; i++) {
+	for (i = 0; i < num_threads ; i++) {
 		thread_data[i].threadnum = i;
 		thread_data[i].filenum = filenum;
 		thread_data[i].result = EXIT_FAILURE;
@@ -294,7 +294,7 @@ int main(int argc, char *argv[]) {
 	}
 
 	// Reap all threads
-	for (int i = 0; i < num_threads ; i++) {
+	for (i = 0; i < num_threads ; i++) {
 		pthread_join(threads[i], NULL);
 		if (thread_data[i].result != EXIT_SUCCESS) {
 			failed_count++;
