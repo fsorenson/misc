@@ -271,6 +271,11 @@ int main(int argc, char *argv[]) {
 		return EXIT_FAILURE;
 	}
 
+	if (chdir(test_path) < 0) {
+		output("error changing to test path %s: %m\n", test_path);
+		return EXIT_FAILURE;
+	}
+
 	threads = malloc(num_threads * sizeof(pthread_t));
 	thread_data = malloc(num_threads * sizeof(thread_data_t));
 	for (int i = 0; i < num_threads ; i++) {
