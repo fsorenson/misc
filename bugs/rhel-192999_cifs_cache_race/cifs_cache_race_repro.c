@@ -13,7 +13,8 @@
 #include <dirent.h>
 
 #define DEFAULT_NUM_THREADS 6
-#define DIRENT_BUF 65536
+#define DIRENT_BUF_SIZE 65536
+#define BUF_SIZE 4096
 #define WRITE_SIZE 1290
 
 #define output(args...) do { \
@@ -37,13 +38,13 @@ int read_dir(const char *path) {
 	char *dirent_buf = NULL, *bpos;
 	int dfd = -1, ret = EXIT_SUCCESS, nread;
 
-	dirent_buf = malloc(DIRENT_BUF);
+	dirent_buf = malloc(DIRENT_BUF_SIZE);
 	if ((dfd = open(path, O_DIRECTORY)) < 0) {
 		output("error opening directory '%s': %m\n", path);
 		goto out;
 	}
 	while (42) {
-		if ((nread = syscall(SYS_getdents64, dfd, dirent_buf, DIRENT_BUF)) < 0) {
+		if ((nread = syscall(SYS_getdents64, dfd, dirent_buf, DIRENT_BUF_SIZE)) < 0) {
 			output("getdents call failed: %m\n");
 			goto out;
 		}
@@ -68,7 +69,7 @@ out:
 
 int process_one(int threadnum, int filenum) {
 	int fd = -1;
-	char *filename1 = NULL, *filename2 = NULL, buf[4096];
+	char *filename1 = NULL, *filename2 = NULL, buf[BUF_SIZE];
 	struct stat st1, st2;
 	int ret = EXIT_FAILURE, written, write_offset;
 
