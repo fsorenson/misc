@@ -10,8 +10,8 @@
 #include <errno.h>
 #include <pthread.h>
 #include <string.h>
+#define DEFAULT_NUM_THREADS 6
 
-#define NUM_THREADS 6
 #define output(args...) do { \
 	printf(args); \
 	fflush(stdout); \
@@ -198,10 +198,67 @@ out:
 	free_buf(filename5); // work/file_1_1.xml.tmp
 
 	return ret;
+}
 
+typedef struct {
+	int threadnum;
+	int filenum;
+	int result;
+} thread_data_t;
+
+void* thread_wrapper(void *arg) {
+	thread_data_t *data = (thread_data_t *)arg;
+	data->result = process_one(data->threadnum, data->filenum);
+	return NULL;
 }
 
 int main(int argc, char *argv[]) {
-	// create NUM_THREADS threads to simultaneously process their files
-	process_one(1, 1);
+	int num_threads = DEFAULT_NUM_THREADS;
+	thread_data_t *thread_data;
+	pthread_t *threads;
+	char *test_path = argv[1];
+	int failed_count = 0;
+	int filenum;
+
+	if (argc == 4) {
+		filenum = strtol(argv[2], NULL, 10);
+		num_threads = strtol(argv[3], NULL, 10);
+	} else if (argc == 3) {
+		filenum = strtol(argv[2], NULL, 10);
+	} else if (argc == 2) {
+		filenum = strtol(argv[1], NULL, 10);
+	} else {
+		output("Usage: %s <test_path> [<filenum> [<num_threads>]]\n", argv[0]);
+		return EXIT_FAILURE;
+	}
+
+	threads = malloc(num_threads * sizeof(pthread_t));
+	thread_data = malloc(num_threads * sizeof(thread_data_t));
+	for (int i = 0; i < num_threads ; i++) {
+		thread_data[i].threadnum = i;
+		thread_data[i].filenum = filenum;
+		thread_data[i].result = EXIT_FAILURE;
+
+		if (pthread_create(&threads[i], NULL, thread_wrapper, &thread_data[i]) != 0) {
+			output("Error creating thread %d\n", i);
+			return EXIT_FAILURE;
+		}
+	}
+
+	// Reap all threads
+	for (int i = 0; i < num_threads ; i++) {
+		pthread_join(threads[i], NULL);
+		if (thread_data[i].result != EXIT_SUCCESS) {
+			failed_count++;
+		}
+	}
+
+	// Report results
+	if (failed_count > 0) {
+		output("FAILED: %d out of %d threads failed\n", failed_count, num_threads);
+		return EXIT_FAILURE;
+	} else {
+		output("SUCCESS: All %d threads completed successfully\n", num_threads);
+		return EXIT_SUCCESS;
+	}
 }
