@@ -14,6 +14,7 @@
 
 #define DEFAULT_NUM_THREADS 6
 #define DIRENT_BUF 65536
+#define WRITE_SIZE 1290
 
 #define output(args...) do { \
 	printf(args); \
@@ -69,7 +70,7 @@ int process_one(int threadnum, int filenum) {
 	int fd = -1;
 	char *filename1 = NULL, *filename2 = NULL, buf[4096];
 	struct stat st1, st2;
-	int ret = EXIT_FAILURE;
+	int ret = EXIT_FAILURE, written, write_offset;
 
 	memset(buf, 'X', sizeof(buf));
 
@@ -84,7 +85,18 @@ int process_one(int threadnum, int filenum) {
 		output("error opening %s: %m\n", filename1);
 		goto out;
 	}
-	write(fd, buf, 1290);
+	write_offset = 0;
+retry_write:
+	if ((written = write(fd, buf + write_offset, WRITE_SIZE - write_offset)) != WRITE_SIZE - write_offset) {
+		if (written < 0) {
+			output("write of %d bytes to %s failed with %m\n", WRITE_SIZE, filename1);
+			goto out;
+		}
+		output("write of %d bytes to %s succeeded, but only wrote %d ; retrying write of %d bytes\n",
+			WRITE_SIZE - write_offset, filename1, written, WRITE_SIZE - write_offset - written);
+		write_offset += written;
+		goto retry_write;
+	}
 	close_fd(fd); // work/file_1_1.xml__temp
 
 	stat(filename1, &st1); // work/file_1_1.xml__temp
