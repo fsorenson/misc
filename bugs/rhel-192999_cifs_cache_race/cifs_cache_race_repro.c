@@ -265,7 +265,7 @@ int main(int argc, char *argv[]) {
 	} else if (argc == 3) {
 		filenum = strtol(argv[2], NULL, 10);
 	} else if (argc == 2) {
-		filenum = strtol(argv[1], NULL, 10);
+		filenum = 0;
 	} else {
 		output("Usage: %s <test_path> [<filenum> [<num_threads>]]\n", argv[0]);
 		return EXIT_FAILURE;
