@@ -8,10 +8,16 @@
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <errno.h>
+#include <pthread.h>
+#include <string.h>
 
 #define NUM_THREADS 6
+#define output(args...) do { \
+	printf(args); \
+	fflush(stdout); \
+} while (0)
 
-#define free_str(x) do { \
+#define free_buf(x) do { \
 	if (x) \
 		free(x); \
 	x = NULL; \
@@ -23,18 +29,38 @@
 } while (0)
 
 int process_one(int threadnum, int filenum) {
-	int fd0 = -1, fd1 = -1, fd2 = -1, fd3 = -1, dfd0 = -1;
+	int fd0 = -1, fd1 = -1, fd2 = -1, fd3 = -1;
 	char *filename0 = NULL, *filename1 = NULL, *filename2 = NULL, *filename3 = NULL, *filename4 = NULL, *filename5 = NULL, buf[4096];
 	struct stat st1, st2;
 	int ret = EXIT_FAILURE;
 	int count;
 
-	asprintf(&filename0, "work/file_%d_%d.xml.stringreplace.zip", threadnum, filenum);
-	if ((fd0 = open(filename0, O_CREAT|O_TRUNC|O_RDWR, 0644)) < 0) { // "work/file_1_1.xml_stringreplace.zip"
-		printf("error opening %s: %m\n", filename0);
+	memset(buf, 'X', sizeof(buf));
+
+	asprintf(&filename0, "work/file_%d_%d.xml.stringreplace.zip", threadnum, filenum); // work/file_1_1.xml_stringreplace.zip
+	asprintf(&filename1, "file_%d_%d.xml", threadnum, filenum); // file_1_1.xml
+	asprintf(&filename2, "work/file_%d_%d.xml__temp", threadnum, filenum); // work/file_1_1.xml__temp
+	asprintf(&filename3, "work/file_%d_%d.xml", threadnum, filenum); // work/file_1_1.xml
+	asprintf(&filename4, "work/file_%d_%d.xml_checkxsltmerge.zip", threadnum, filenum); // work/file_1_1.xml_checkxsltmerge.zip
+	asprintf(&filename5, "work/file_%d_%d.xml.tmp", threadnum, filenum); // work/file_1_1.xml.tmp
+
+	// cleanup/setup
+	unlink(filename0);
+	if ((fd0 = open(filename1, O_CREAT|O_TRUNC|O_WRONLY, 0644)) < 0) { // file_1_1.xml
+		output("failed creating test file %s: %m\n", filename1);
 		goto out;
 	}
-	asprintf(&filename1, "file_%d_%d.xml", threadnum, filenum);
+	write(fd0, buf, 1290);
+	close_fd(fd0);
+	unlink(filename2);
+	unlink(filename3);
+	unlink(filename4);
+	unlink(filename5);
+
+	if ((fd0 = open(filename0, O_CREAT|O_TRUNC|O_WRONLY, 0644)) < 0) { // work/file_1_1.xml_stringreplace.zip
+		output("error opening %s: %m\n", filename0);
+		goto out;
+	}
 	if ((fd1 = open(filename1, O_RDONLY)) < 0) { // file_1_1.xml
 		printf("error opening %s: %m\n", filename1);
 		goto out;
@@ -46,14 +72,12 @@ int process_one(int threadnum, int filenum) {
 	write(fd0, buf, 816);
 //	Data (816 bytes)
 
-	asprintf(&filename2, "work/file_%d_%d.xml__temp", threadnum, filenum);
 	if ((fd2 = open(filename2, O_CREAT|O_TRUNC|O_RDWR, 0644)) < 0) { // "work/file_1_1.xml__temp"
 		printf("error opening %s: %m\n", filename2);
 		goto out;
 	}
 	write(fd2, buf, 1290);
 
-	asprintf(&filename3, "work/file_%d_%d.xml", threadnum, filenum);
 	if (stat(filename3, &st1) == 0 || errno != ENOENT) {
 		if (errno != ENOENT)
 			printf("file '%s' should not have existed: %m\n", filename3);
@@ -96,7 +120,6 @@ int process_one(int threadnum, int filenum) {
 //	dfd0 = open("work", O_DIRECTORY);
 //	getdents(dfd0, buf, 65536);
 
-	asprintf(&filename4, "work/file_%d_%d.xml_checkxsltmerge.zip", threadnum, filenum);
 	if ((fd0 = open(filename4, O_CREAT|O_TRUNC|O_RDWR, 0644)) < 0) { // "work/file_1_1.xml_checkxsltmerge.zip"
 		printf("error opening %s: %m\n", filename4);
 		goto out;
@@ -110,7 +133,6 @@ int process_one(int threadnum, int filenum) {
 	write(fd0, buf, 816);
 //	Data (816 bytes)
 
-	asprintf(&filename5, "work/file_%d_%d.xml.tmp", threadnum, filenum);
 	if (stat(filename5, &st1) == 0 || errno != ENOENT) { // "work/file_1_1.xml.tmp"
 		if (errno != ENOENT)
 			printf("file '%s' should not have existed: %m\n", filename5);
@@ -168,14 +190,15 @@ out:
 	close_fd(fd1);
 	close_fd(fd2);
 	close_fd(fd3);
-	free_str(filename0);
-	free_str(filename1);
-	free_str(filename2);
-	free_str(filename3);
-	free_str(filename4);
-	free_str(filename5);
+	free_buf(filename0); // work/file_1_1.xml_stringreplace.zip
+	free_buf(filename1); // file_1_1.xml
+	free_buf(filename2); // work/file_1_1.xml__temp
+	free_buf(filename3); // work/file_1_1.xml
+	free_buf(filename4); // work/file_1_1.xml_checkxsltmerge.zip
+	free_buf(filename5); // work/file_1_1.xml.tmp
 
-	exit(ret);
+	return ret;
+
 }
 
 int main(int argc, char *argv[]) {
