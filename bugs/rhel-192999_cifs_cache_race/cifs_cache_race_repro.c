@@ -1,3 +1,47 @@
+/*
+	Frank Sorenson <frank.sorenson@gmail.com>, 2026
+
+	cifs_cache_race_repro - reproduces two race bugs that affect the directory cache
+	  on a cifs filesystem where directory leases are in-use.
+
+
+	(numbered in the order these were identified)
+	BUG 1:
+		When SMB2 directory lease breaks occur concurrently with readdir
+		(getdents) operations, the lease break handler can invalidate the
+		directory cache while readdir is still traversing it, corrupting the
+		dcache and causing subsequent stat() calls to return wrong file sizes
+		or EIO errors.
+
+	Bug 2:
+		Windows Server's directory-level view of a file's size lags behind
+		the actual file size, so immediately after a write+close,
+		simultaneous directory enumeration (readdir/getdents) will overwrite
+		the directory cache with a stale file size, leading to an incorrect
+		size in stat().
+
+
+	the sequence of operations is identical for both bugs:
+		fd = open(“work/a_#.temp”)
+		write(fd, buf, 1290)
+		close(fd)
+		stat(“work/a_#.temp”, &st1) // <<<< bug 2
+		rename("work/a_#.temp", "work/a_#")
+		stat("work/a_#", &st2) // <<<< bug 1
+		dfd = open(“work”)
+		while (getdents(dfd) > 0) {}
+		close(dfd)
+
+	Usage: cifs_cache_race_repro <test_path> [<filenum> [<num_threads>]]
+	  <filenum> exists to allow distinguishing test files from
+	    multiple clients executing simultaneously; defaults to 0
+	  <num_threads> allows for adjusting the number of simultaneous
+	    threads; defaults to 10
+
+	Reproduction requires about 8+ simultaneous executions of this reproducer
+	  sequence.
+*/
+
 #define _GNU_SOURCE
 
 #include <stdio.h>
@@ -105,7 +149,7 @@ retry_write:
 		goto out;
 	}
 	if (st1.st_size != WRITE_SIZE) {
-		output("BUG: wrote %d bytes to file %s, but stat returned %ld\n", WRITE_SIZE, filename1, st1.st_size);
+		output("BUG 2: wrote %d bytes to file %s, but stat returned %ld\n", WRITE_SIZE, filename1, st1.st_size);
 		goto out;
 	}
 	if (rename(filename1, filename2) < 0) { // work/file_1_1.xml__temp, work/file_1_1.xml
@@ -114,7 +158,7 @@ retry_write:
 	}
 	stat(filename2, &st2); // work/file_1_1.xml
 	if ((intmax_t)st1.st_size != (intmax_t)st2.st_size) {
-		output("file size of '%s' prior to rename: %ld, file size of '%s' after rename: %ld\n", filename1, (intmax_t)st1.st_size, filename2, (intmax_t)st2.st_size);
+		output("BUG 1: file size of '%s' prior to rename: %ld, file size of '%s' after rename: %ld\n", filename1, (intmax_t)st1.st_size, filename2, (intmax_t)st2.st_size);
 		goto out;
 	}
 
