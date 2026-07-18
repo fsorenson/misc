@@ -107,6 +107,26 @@ out:
 	return ret;
 }
 
+int write_bytes(const char *path, int fd, const char *buf, int count) {
+	int written, write_offset = 0;
+
+retry_write:
+	if ((written = write(fd, buf + write_offset, count - write_offset)) != count - write_offset) {
+		if (written < 0) {
+			output("write of %d bytes to %s failed with %m\n", count, path);
+			goto out;
+		}
+		output("write of %d bytes to %s succeeded, but only wrote %d ; retrying write of %d bytes\n",
+			count - write_offset, path, written, count - write_offset - written);
+		write_offset += written;
+		goto retry_write;
+	}
+	written += write_offset;
+
+out:
+	return written;
+}
+
 int process_one(int threadnum, int filenum) {
 	int fd = -1;
 	char *filename1 = NULL, *filename2 = NULL, buf[BUF_SIZE];
