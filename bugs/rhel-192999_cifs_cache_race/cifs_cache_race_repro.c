@@ -20,15 +20,20 @@
 		the directory cache with a stale file size, leading to an incorrect
 		size in stat().
 
-
 	the sequence of operations is identical for both bugs:
-		fd = open(“work/a_#.temp”)
+		fd = open(“work/a_#.temp”, O_CREAT|O_TRUNC)
+		write(fd, buf, 1400)
+		close(fd)
+		stat("work/a_#.temp", &st1) // <<<< bug 2 if size != 1400
+
+		fd = open("work/a_#.temp", O_CREAT|O_TRUNC)
 		write(fd, buf, 1290)
 		close(fd)
-		stat(“work/a_#.temp”, &st1) // <<<< bug 2
+		stat("work/a_#.temp", &st2) // <<<< bug 2 if size != 1290
+
 		rename("work/a_#.temp", "work/a_#")
-		stat("work/a_#", &st2) // <<<< bug 1
-		dfd = open(“work”)
+		stat("work/a_#", &st3) // <<<< bug 1 if size != 1290
+		dfd = open(“work”, O_DIRECTORY)
 		while (getdents(dfd) > 0) {}
 		close(dfd)
 
