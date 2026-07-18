@@ -78,8 +78,7 @@
 } while (0)
 
 int read_dir(const char *path) {
-	struct dirent *de;
-	char *dirent_buf = NULL, *bpos;
+	char *dirent_buf = NULL;
 	int dfd = -1, ret = EXIT_SUCCESS, nread;
 
 	dirent_buf = malloc(DIRENT_BUF_SIZE);
@@ -94,14 +93,6 @@ int read_dir(const char *path) {
 		}
 		if (nread == 0)
 			break;
-
-		bpos = dirent_buf;
-		while (bpos < dirent_buf + nread) {
-			de = (struct dirent *)bpos;
-			bpos += de->d_reclen;
-
-			// don't really do anything with the files
-		}
 	}
 	ret = EXIT_SUCCESS;
 out:
@@ -162,8 +153,6 @@ retry_write:
 		goto out;
 	}
 
-
-//	read_dir("work");
 	read_dir("work");
 
 	ret = EXIT_SUCCESS;
