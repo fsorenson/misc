@@ -64,7 +64,7 @@
 #define DEFAULT_NUM_THREADS 6
 #define DIRENT_BUF_SIZE 65536
 #define BUF_SIZE 4096
-#define WRITE_SIZE 1290
+#define WRITE_SIZE2 1290
 
 #define output(args...) do { \
 	printf(args); \
@@ -130,8 +130,8 @@ out:
 int process_one(int threadnum, int filenum) {
 	int fd = -1;
 	char *filename1 = NULL, *filename2 = NULL, buf[BUF_SIZE];
-	struct stat st1, st2;
-	int ret = EXIT_FAILURE, written, write_offset;
+	struct stat st1, st2, st3;
+	int ret = EXIT_FAILURE;
 
 	memset(buf, 'X', sizeof(buf));
 
@@ -146,28 +146,19 @@ int process_one(int threadnum, int filenum) {
 		output("error opening %s: %m\n", filename1);
 		goto out;
 	}
-	write_offset = 0;
-retry_write:
-	if ((written = write(fd, buf + write_offset, WRITE_SIZE - write_offset)) != WRITE_SIZE - write_offset) {
-		if (written < 0) {
-			output("write of %d bytes to %s failed with %m\n", WRITE_SIZE, filename1);
-			goto out;
-		}
-		output("write of %d bytes to %s succeeded, but only wrote %d ; retrying write of %d bytes\n",
-			WRITE_SIZE - write_offset, filename1, written, WRITE_SIZE - write_offset - written);
-		write_offset += written;
-		goto retry_write;
-	}
+	if (write_bytes(filename1, fd, buf, WRITE_SIZE2) < 0)
+		goto out;
 	close_fd(fd); // work/file_1_1.xml__temp
 
-	if (stat(filename1, &st1) < 0) { // work/file_1_1.xml__temp
+	if (stat(filename1, &st2) < 0) { // work/file_1_1.xml__temp
 		output("error calling stat on %s: %m\n", filename1);
 		goto out;
 	}
-	if (st1.st_size != WRITE_SIZE) {
-		output("BUG 2: wrote %d bytes to file %s, but stat returned %ld\n", WRITE_SIZE, filename1, st1.st_size);
+	if (st2.st_size != WRITE_SIZE2) {
+		output("BUG 3: wrote %d bytes to file %s, but stat returned %ld\n", WRITE_SIZE2, filename1, st2.st_size);
 		goto out;
 	}
+
 	if (rename(filename1, filename2) < 0) { // work/file_1_1.xml__temp, work/file_1_1.xml
 		output("error renaming %s -> %s: %m\n", filename1, filename2);
 		goto out;
