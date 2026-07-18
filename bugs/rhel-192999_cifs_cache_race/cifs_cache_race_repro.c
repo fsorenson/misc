@@ -64,6 +64,7 @@
 #define DEFAULT_NUM_THREADS 6
 #define DIRENT_BUF_SIZE 65536
 #define BUF_SIZE 4096
+#define WRITE_SIZE1 1400
 #define WRITE_SIZE2 1290
 
 #define output(args...) do { \
@@ -146,6 +147,23 @@ int process_one(int threadnum, int filenum) {
 		output("error opening %s: %m\n", filename1);
 		goto out;
 	}
+	if (write_bytes(filename1, fd, buf, WRITE_SIZE1) < 0)
+		goto out;
+	close_fd(fd); // work/file_1_1.xml__temp
+
+	if (stat(filename1, &st1) < 0) { // work/file_1_1.xml__temp
+		output("error calling stat on %s: %m\n", filename1);
+		goto out;
+	}
+	if (st1.st_size != WRITE_SIZE1) {
+		output("BUG 2: wrote %d bytes to file %s, but stat returned %ld\n", WRITE_SIZE1, filename1, st1.st_size);
+		goto out;
+	}
+
+	if ((fd = open(filename1, O_CREAT|O_TRUNC|O_RDWR, 0644)) < 0) { // work/file_1_1.xml__temp
+		output("error opening %s: %m\n", filename1);
+		goto out;
+	}
 	if (write_bytes(filename1, fd, buf, WRITE_SIZE2) < 0)
 		goto out;
 	close_fd(fd); // work/file_1_1.xml__temp
@@ -163,9 +181,10 @@ int process_one(int threadnum, int filenum) {
 		output("error renaming %s -> %s: %m\n", filename1, filename2);
 		goto out;
 	}
-	stat(filename2, &st2); // work/file_1_1.xml
-	if ((intmax_t)st1.st_size != (intmax_t)st2.st_size) {
-		output("BUG 1: file size of '%s' prior to rename: %ld, file size of '%s' after rename: %ld\n", filename1, (intmax_t)st1.st_size, filename2, (intmax_t)st2.st_size);
+	stat(filename2, &st3); // work/file_1_1.xml
+	if ((intmax_t)st2.st_size != (intmax_t)st3.st_size) {
+		output("BUG 1: file size of '%s' prior to rename: %ld, file size of '%s' after rename: %ld\n",
+			filename1, (intmax_t)st2.st_size, filename2, (intmax_t)st3.st_size);
 		goto out;
 	}
 
