@@ -197,9 +197,9 @@ int find_zeros_in_file(const char *filename, const struct config *cfg) {
 	return (bytes_read >= 0) ? EXIT_SUCCESS : EXIT_FAILURE;
 }
 
-static int process_path(const char *path, const struct config *cfg);
+static int process_path(const char *path, const struct config *cfg, dev_t xdev);
 
-static int process_directory(const char *path, const struct config *cfg) {
+static int process_directory(const char *path, const struct config *cfg, dev_t xdev) {
 	DIR *dir = opendir(path);
 	if (!dir) {
 		output("error opening directory '%s': %m\n", path);
@@ -215,25 +215,28 @@ static int process_directory(const char *path, const struct config *cfg) {
 		char child_path[PATH_MAX];
 		snprintf(child_path, sizeof(child_path), "%s/%s", path, ent->d_name);
 
-		if (process_path(child_path, cfg) != EXIT_SUCCESS)
+		if (process_path(child_path, cfg, xdev) != EXIT_SUCCESS)
 			ret = EXIT_FAILURE;
 	}
 	closedir(dir);
 	return ret;
 }
 
-static int process_path(const char *path, const struct config *cfg) {
+static int process_path(const char *path, const struct config *cfg, dev_t xdev) {
 	struct stat st;
 	if (lstat(path, &st) < 0) {
 		output("error stating '%s': %m\n", path);
 		return EXIT_FAILURE;
 	}
 
+	if (xdev && st.st_dev != xdev)
+		return EXIT_SUCCESS;
+
 	if (S_ISREG(st.st_mode) || S_ISBLK(st.st_mode))
 		return find_zeros_in_file(path, cfg);
 	else if (S_ISDIR(st.st_mode)) {
 		if (cfg->recurse)
-			return process_directory(path, cfg);
+			return process_directory(path, cfg, st.st_dev);
 		output("'%s': skipping directory\n", path);
 	} else if (S_ISLNK(st.st_mode))
 		output("'%s': skipping symlink\n", path);
@@ -290,7 +293,7 @@ int main(int argc, char *argv[]) {
 
 	int ret = EXIT_SUCCESS;
 	for (int i = optind; i < argc; i++) {
-		if (process_path(argv[i], &cfg) != EXIT_SUCCESS)
+		if (process_path(argv[i], &cfg, 0) != EXIT_SUCCESS)
 			ret = EXIT_FAILURE;
 	}
 	return ret;
