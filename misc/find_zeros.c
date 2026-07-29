@@ -106,32 +106,11 @@ static struct option long_options[] = {
 	{ NULL, 0, 0, 0 }
 };
 
-
-int main(int argc, char *argv[]) {
+int find_zeros_in_file(const char *filename, uint64_t threshold) {
 	unsigned char buf[BUF_SIZE], *p, *q;
 	uint64_t read_offset = 0, null_byte_start_offset = 0;
 	segment_type current_segment_type = in_data;
-	int fd, opt, bytes_read, long_optind;
-	int threshold = MIN_NULL_THRESH;
-	char *filename = argv[1];
-
-	while ((opt = getopt_long(argc, argv, "t:",
-			long_options, &long_optind)) != -1) {
-		switch (opt) {
-			case 't':
-				threshold = parse_size(optarg);
-				break;
-			default:
-				output("error: unrecognized flag '%c'\n", opt);
-				return EXIT_FAILURE;
-				break;
-		}
-	}
-	if (optind >= argc) {
-		output("usage: %s [ -t <threshold> ] <filename>\n", argv[0]);
-		return EXIT_FAILURE;
-	}
-	filename = argv[optind];
+	int fd, bytes_read;
 
 	if ((fd = open(filename, O_RDONLY)) < 0) {
 		output("error opening '%s': %m\n", filename);
@@ -178,5 +157,32 @@ int main(int argc, char *argv[]) {
 	}
 	if (bytes_read < 0)
 		output("error reading: %m\n");
+	close(fd);
 	return (bytes_read >= 0) ? EXIT_SUCCESS : EXIT_FAILURE;
+}
+
+int main(int argc, char *argv[]) {
+	uint64_t threshold = MIN_NULL_THRESH;
+	int opt, long_optind;
+	char *filename;
+
+	while ((opt = getopt_long(argc, argv, "t:",
+			long_options, &long_optind)) != -1) {
+		switch (opt) {
+			case 't':
+				threshold = parse_size(optarg);
+				break;
+			default:
+				output("error: unrecognized flag '%c'\n", opt);
+				return EXIT_FAILURE;
+				break;
+		}
+	}
+	if (optind >= argc) {
+		output("usage: %s [ -t <threshold> ] <filename>\n", argv[0]);
+		return EXIT_FAILURE;
+	}
+	filename = argv[optind];
+
+	return find_zeros_in_file(filename, threshold);
 }
