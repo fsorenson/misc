@@ -56,6 +56,8 @@ struct config {
 	bool quiet;
 	bool show_filename;
 	bool recurse;
+	uint64_t agsize;	/* AG size in fs blocks; 0 = no XFS annotation */
+	uint64_t blocksize;	/* fs block size in bytes */
 };
 
 #define output(args...) do { \
@@ -113,6 +115,32 @@ out_badsize:
 	return 0;
 }
 
+static const char *xfs_ag_block_name(uint64_t block) {
+	switch (block) {
+		case 0: return "SB";
+		case 1: return "AGF";
+		case 2: return "AGI";
+		case 3: return "AGFL";
+		default: return NULL;
+	}
+}
+
+static void report_xfs_annotation(uint64_t offset, const struct config *cfg) {
+	uint64_t ag_size_bytes = cfg->agsize * cfg->blocksize;
+	uint64_t ag_num = offset / ag_size_bytes;
+	uint64_t ag_offset_bytes = offset % ag_size_bytes;
+	uint64_t ag_block = ag_offset_bytes / cfg->blocksize;
+	uint64_t ag_block_offset = ag_offset_bytes % cfg->blocksize;
+	const char *name = ag_block_offset == 0 ? xfs_ag_block_name(ag_block) : NULL;
+
+	if (name)
+		output("  [AG %" PRIu64 ", block %" PRIu64 ": %s]", ag_num, ag_block, name);
+	else if (ag_block_offset == 0)
+		output("  [AG %" PRIu64 ", block %" PRIu64 "]", ag_num, ag_block);
+	else
+		output("  [AG %" PRIu64 ", offset 0x%" PRIx64 "]", ag_num, ag_offset_bytes);
+}
+
 /* returns true if the caller should stop scanning */
 static bool report_region(const char *filename, uint64_t start, uint64_t len,
 		const struct config *cfg) {
@@ -123,9 +151,12 @@ static bool report_region(const char *filename, uint64_t start, uint64_t len,
 	if (cfg->show_filename)
 		output("%s: ", filename);
 	if (cfg->fmt == fmt_hex)
-		output("null bytes from offset 0x%" PRIx64 " for length 0x%" PRIx64 "\n", start, len);
+		output("null bytes from offset 0x%" PRIx64 " for length 0x%" PRIx64, start, len);
 	else
-		output("null bytes from offset %" PRIu64 " for length %" PRIu64 "\n", start, len);
+		output("null bytes from offset %" PRIu64 " for length %" PRIu64, start, len);
+	if (cfg->agsize)
+		report_xfs_annotation(start, cfg);
+	output("\n");
 	return false;
 }
 
@@ -135,6 +166,8 @@ static struct option long_options[] = {
 	{ "hex",       no_argument,       0, 'x' },
 	{ "quiet",     no_argument,       0, 'q' },
 	{ "recurse",   no_argument,       0, 'r' },
+	{ "agsize",    required_argument, 0, 'a' },
+	{ "blocksize", required_argument, 0, 'B' },
 	{ NULL, 0, 0, 0 }
 };
 
@@ -257,10 +290,12 @@ int main(int argc, char *argv[]) {
 		.fmt       = fmt_hex,
 		.quiet     = false,
 		.recurse   = false,
+		.agsize    = 0,
+		.blocksize = 4096,
 	};
 	int opt, long_optind;
 
-	while ((opt = getopt_long(argc, argv, "t:dxqr",
+	while ((opt = getopt_long(argc, argv, "t:dxqra:B:",
 			long_options, &long_optind)) != -1) {
 		switch (opt) {
 			case 't':
@@ -278,6 +313,12 @@ int main(int argc, char *argv[]) {
 			case 'r':
 				cfg.recurse = true;
 				break;
+			case 'a':
+				cfg.agsize = strtoull(optarg, NULL, 0);
+				break;
+			case 'B':
+				cfg.blocksize = parse_size(optarg);
+				break;
 			default:
 				output("error: unrecognized flag '%c'\n", opt);
 				return EXIT_FAILURE;
@@ -285,7 +326,7 @@ int main(int argc, char *argv[]) {
 		}
 	}
 	if (optind >= argc) {
-		output("usage: %s [ -t <threshold> ] [ -d | -x ] [ -q ] [ -r ] <file> [<file> ...]\n", argv[0]);
+		output("usage: %s [ -t <threshold> ] [ -d | -x ] [ -q ] [ -r ] [ -a <agsize_blocks> [ -B <blocksize> ] ] <file> [<file> ...]\n", argv[0]);
 		return EXIT_FAILURE;
 	}
 
