@@ -45,6 +45,7 @@
 #define MIN_NULL_THRESH	100
 
 typedef enum { in_data, in_nulls } segment_type;
+typedef enum { fmt_hex, fmt_decimal } offset_fmt;
 
 #define output(args...) do { \
 	printf(args); \
@@ -101,12 +102,21 @@ out_badsize:
 	return 0;
 }
 
+static void report_region(uint64_t start, uint64_t len, offset_fmt fmt) {
+	if (fmt == fmt_hex)
+		output("null bytes from offset 0x%" PRIx64 " for length 0x%" PRIx64 "\n", start, len);
+	else
+		output("null bytes from offset %" PRIu64 " for length %" PRIu64 "\n", start, len);
+}
+
 static struct option long_options[] = {
 	{ "threshold", required_argument, 0, 't' },
+	{ "decimal",   no_argument,       0, 'd' },
+	{ "hex",       no_argument,       0, 'x' },
 	{ NULL, 0, 0, 0 }
 };
 
-int find_zeros_in_file(const char *filename, uint64_t threshold) {
+int find_zeros_in_file(const char *filename, uint64_t threshold, offset_fmt fmt) {
 	unsigned char buf[BUF_SIZE], *p, *q;
 	uint64_t read_offset = 0, null_byte_start_offset = 0;
 	segment_type current_segment_type = in_data;
@@ -140,8 +150,8 @@ int find_zeros_in_file(const char *filename, uint64_t threshold) {
 						output("non-null bytes starting at offset %" PRIu64 "\n", null_byte_end_offset);
 
 					if (null_byte_end_offset - null_byte_start_offset >= threshold)
-						output("null bytes from offset %" PRIu64 " for length %" PRIu64 "\n",
-							null_byte_start_offset, null_byte_end_offset - null_byte_start_offset);
+						report_region(null_byte_start_offset,
+							null_byte_end_offset - null_byte_start_offset, fmt);
 
 					current_segment_type = in_data;
 					null_byte_start_offset = 0;
@@ -152,8 +162,7 @@ int find_zeros_in_file(const char *filename, uint64_t threshold) {
 	}
 	if (bytes_read >= 0 && current_segment_type == in_nulls) { /* ended on nulls */
 		if (read_offset - null_byte_start_offset >= threshold)
-			output("null bytes from offset %" PRIu64 " for length %" PRIu64 "\n",
-				null_byte_start_offset, read_offset - null_byte_start_offset);
+			report_region(null_byte_start_offset, read_offset - null_byte_start_offset, fmt);
 	}
 	if (bytes_read < 0)
 		output("error reading: %m\n");
@@ -163,14 +172,21 @@ int find_zeros_in_file(const char *filename, uint64_t threshold) {
 
 int main(int argc, char *argv[]) {
 	uint64_t threshold = MIN_NULL_THRESH;
+	offset_fmt fmt = fmt_hex;
 	int opt, long_optind;
 	char *filename;
 
-	while ((opt = getopt_long(argc, argv, "t:",
+	while ((opt = getopt_long(argc, argv, "t:dx",
 			long_options, &long_optind)) != -1) {
 		switch (opt) {
 			case 't':
 				threshold = parse_size(optarg);
+				break;
+			case 'd':
+				fmt = fmt_decimal;
+				break;
+			case 'x':
+				fmt = fmt_hex;
 				break;
 			default:
 				output("error: unrecognized flag '%c'\n", opt);
@@ -179,10 +195,10 @@ int main(int argc, char *argv[]) {
 		}
 	}
 	if (optind >= argc) {
-		output("usage: %s [ -t <threshold> ] <filename>\n", argv[0]);
+		output("usage: %s [ -t <threshold> ] [ -d | -x ] <filename>\n", argv[0]);
 		return EXIT_FAILURE;
 	}
 	filename = argv[optind];
 
-	return find_zeros_in_file(filename, threshold);
+	return find_zeros_in_file(filename, threshold, fmt);
 }
