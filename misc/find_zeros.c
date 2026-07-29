@@ -52,6 +52,7 @@ struct config {
 	uint64_t threshold;
 	offset_fmt fmt;
 	bool quiet;
+	bool show_filename;
 };
 
 #define output(args...) do { \
@@ -116,6 +117,8 @@ static bool report_region(const char *filename, uint64_t start, uint64_t len,
 		output("%s\n", filename);
 		return true;
 	}
+	if (cfg->show_filename)
+		output("%s: ", filename);
 	if (cfg->fmt == fmt_hex)
 		output("null bytes from offset 0x%" PRIx64 " for length 0x%" PRIx64 "\n", start, len);
 	else
@@ -221,10 +224,39 @@ int main(int argc, char *argv[]) {
 		}
 	}
 	if (optind >= argc) {
-		output("usage: %s [ -t <threshold> ] [ -d | -x ] [ -q ] <filename>\n", argv[0]);
+		output("usage: %s [ -t <threshold> ] [ -d | -x ] [ -q ] <file> [<file> ...]\n", argv[0]);
 		return EXIT_FAILURE;
 	}
-	filename = argv[optind];
 
-	return find_zeros_in_file(filename, &cfg);
+	cfg.show_filename = (argc - optind > 1);
+
+	int ret = EXIT_SUCCESS;
+	for (int i = optind; i < argc; i++) {
+		filename = argv[i];
+
+		struct stat st;
+		if (lstat(filename, &st) < 0) {
+			output("error stating '%s': %m\n", filename);
+			ret = EXIT_FAILURE;
+			continue;
+		}
+
+		if (S_ISREG(st.st_mode) || S_ISBLK(st.st_mode)) {
+			if (find_zeros_in_file(filename, &cfg) != EXIT_SUCCESS)
+				ret = EXIT_FAILURE;
+		} else if (S_ISDIR(st.st_mode)) {
+			output("'%s': skipping directory\n", filename);
+		} else if (S_ISLNK(st.st_mode)) {
+			output("'%s': skipping symlink\n", filename);
+		} else if (S_ISCHR(st.st_mode)) {
+			output("'%s': skipping character device\n", filename);
+		} else if (S_ISSOCK(st.st_mode)) {
+			output("'%s': skipping socket\n", filename);
+		} else if (S_ISFIFO(st.st_mode)) {
+			output("'%s': skipping FIFO\n", filename);
+		} else {
+			output("'%s': skipping unknown file type\n", filename);
+		}
+	}
+	return ret;
 }
