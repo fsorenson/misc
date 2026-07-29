@@ -56,6 +56,7 @@ struct config {
 	bool quiet;
 	bool show_filename;
 	bool recurse;
+	bool human;		/* show sizes in human-readable form */
 	uint64_t agsize;	/* AG size in fs blocks; 0 = no XFS annotation */
 	uint64_t blocksize;	/* fs block size in bytes */
 };
@@ -115,6 +116,23 @@ out_badsize:
 	return 0;
 }
 
+static const char *format_size(uint64_t size) {
+	static char buf[32];
+	static const char * const units[] = { "B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB" };
+	int u = 0;
+	double s = size;
+
+	while (s >= 1024.0 && u < 6) {
+		s /= 1024.0;
+		u++;
+	}
+	if (u == 0)
+		snprintf(buf, sizeof(buf), "%" PRIu64 " B", size);
+	else
+		snprintf(buf, sizeof(buf), "%.2f %s", s, units[u]);
+	return buf;
+}
+
 static const char *xfs_ag_block_name(uint64_t block) {
 	switch (block) {
 		case 0: return "SB";
@@ -163,9 +181,15 @@ static bool report_region(const char *filename, uint64_t start, uint64_t len,
 	if (cfg->show_filename)
 		output("%s: ", filename);
 	if (cfg->fmt == fmt_hex)
-		output("null bytes from offset 0x%" PRIx64 " for length 0x%" PRIx64, start, len);
+		output("null bytes from offset 0x%" PRIx64, start);
 	else
-		output("null bytes from offset %" PRIu64 " for length %" PRIu64, start, len);
+		output("null bytes from offset %" PRIu64, start);
+	if (cfg->human)
+		output(" for length %s", format_size(len));
+	else if (cfg->fmt == fmt_hex)
+		output(" for length 0x%" PRIx64, len);
+	else
+		output(" for length %" PRIu64, len);
 	if (cfg->agsize)
 		report_xfs_annotation(start, len, cfg);
 	output("\n");
@@ -173,13 +197,14 @@ static bool report_region(const char *filename, uint64_t start, uint64_t len,
 }
 
 static struct option long_options[] = {
-	{ "threshold", required_argument, 0, 't' },
-	{ "decimal",   no_argument,       0, 'd' },
-	{ "hex",       no_argument,       0, 'x' },
-	{ "quiet",     no_argument,       0, 'q' },
-	{ "recurse",   no_argument,       0, 'r' },
-	{ "agsize",    required_argument, 0, 'a' },
-	{ "blocksize", required_argument, 0, 'B' },
+	{ "threshold",      required_argument, 0, 't' },
+	{ "decimal",        no_argument,       0, 'd' },
+	{ "hex",            no_argument,       0, 'x' },
+	{ "quiet",          no_argument,       0, 'q' },
+	{ "recurse",        no_argument,       0, 'r' },
+	{ "human-readable", no_argument,       0, 'h' },
+	{ "agsize",         required_argument, 0, 'a' },
+	{ "blocksize",      required_argument, 0, 'B' },
 	{ NULL, 0, 0, 0 }
 };
 
@@ -302,12 +327,13 @@ int main(int argc, char *argv[]) {
 		.fmt       = fmt_hex,
 		.quiet     = false,
 		.recurse   = false,
+		.human     = false,
 		.agsize    = 0,
 		.blocksize = 4096,
 	};
 	int opt, long_optind;
 
-	while ((opt = getopt_long(argc, argv, "t:dxqra:B:",
+	while ((opt = getopt_long(argc, argv, "t:dxqrha:B:",
 			long_options, &long_optind)) != -1) {
 		switch (opt) {
 			case 't':
@@ -325,6 +351,9 @@ int main(int argc, char *argv[]) {
 			case 'r':
 				cfg.recurse = true;
 				break;
+			case 'h':
+				cfg.human = true;
+				break;
 			case 'a':
 				cfg.agsize = strtoull(optarg, NULL, 0);
 				break;
@@ -338,7 +367,7 @@ int main(int argc, char *argv[]) {
 		}
 	}
 	if (optind >= argc) {
-		output("usage: %s [ -t <threshold> ] [ -d | -x ] [ -q ] [ -r ] [ -a <agsize_blocks> [ -B <blocksize> ] ] <file> [<file> ...]\n", argv[0]);
+		output("usage: %s [ -t <threshold> ] [ -d | -x ] [ -h ] [ -q ] [ -r ] [ -a <agsize_blocks> [ -B <blocksize> ] ] <file> [<file> ...]\n", argv[0]);
 		return EXIT_FAILURE;
 	}
 
