@@ -221,7 +221,7 @@ int find_zeros_in_file(const char *filename, const struct config *cfg) {
 	while ((bytes_read = read(fd, buf, BUF_SIZE)) > 0) {
 
 		p = buf;
-		while (p < buf + BUF_SIZE) {
+		while (p < buf + bytes_read) {
 			if (current_segment_type == in_data) {
 				if ((q = memchr(p, '\0', bytes_read - (p - buf))) != NULL) { /* found null byte */
 					null_byte_start_offset = read_offset + q - buf;
@@ -233,9 +233,9 @@ int find_zeros_in_file(const char *filename, const struct config *cfg) {
 				} else
 					break;
 			} else {
-				while (p < buf + BUF_SIZE && *p == '\0')
+				while (p < buf + bytes_read && *p == '\0')
 					p++;
-				if (p < buf + BUF_SIZE && *p != '\0') { /* found a non-null */
+				if (p < buf + bytes_read && *p != '\0') { /* found a non-null */
 					uint64_t null_byte_end_offset = read_offset + p - buf;
 
 					if (DEBUG)
