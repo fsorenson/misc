@@ -125,8 +125,9 @@ static const char *xfs_ag_block_name(uint64_t block) {
 	}
 }
 
-static void report_xfs_annotation(uint64_t offset, const struct config *cfg) {
+static void report_xfs_annotation(uint64_t offset, uint64_t len, const struct config *cfg) {
 	uint64_t ag_size_bytes = cfg->agsize * cfg->blocksize;
+	uint64_t end = offset + len;
 	uint64_t ag_num = offset / ag_size_bytes;
 	uint64_t ag_offset_bytes = offset % ag_size_bytes;
 	uint64_t ag_block = ag_offset_bytes / cfg->blocksize;
@@ -139,6 +140,17 @@ static void report_xfs_annotation(uint64_t offset, const struct config *cfg) {
 		output("  [AG %" PRIu64 ", block %" PRIu64 "]", ag_num, ag_block);
 	else
 		output("  [AG %" PRIu64 ", offset 0x%" PRIx64 "]", ag_num, ag_offset_bytes);
+
+	/* report any AG starts whose block 0 falls within this zero region */
+	for (uint64_t n = ag_num + 1; n * ag_size_bytes < end; n++) {
+		uint64_t ag_start = n * ag_size_bytes;
+		const char *sep = "";
+		output("\n  includes AG %" PRIu64 ":", n);
+		for (int b = 0; b <= 3 && ag_start + (uint64_t)b * cfg->blocksize < end; b++) {
+			output("%s %s", sep, xfs_ag_block_name(b));
+			sep = ",";
+		}
+	}
 }
 
 /* returns true if the caller should stop scanning */
@@ -155,7 +167,7 @@ static bool report_region(const char *filename, uint64_t start, uint64_t len,
 	else
 		output("null bytes from offset %" PRIu64 " for length %" PRIu64, start, len);
 	if (cfg->agsize)
-		report_xfs_annotation(start, cfg);
+		report_xfs_annotation(start, len, cfg);
 	output("\n");
 	return false;
 }
