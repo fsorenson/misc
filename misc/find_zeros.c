@@ -31,6 +31,8 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <dirent.h>
+#include <limits.h>
 #include <string.h>
 #include <getopt.h>
 #include <ctype.h>
@@ -53,6 +55,7 @@ struct config {
 	offset_fmt fmt;
 	bool quiet;
 	bool show_filename;
+	bool recurse;
 };
 
 #define output(args...) do { \
@@ -131,6 +134,7 @@ static struct option long_options[] = {
 	{ "decimal",   no_argument,       0, 'd' },
 	{ "hex",       no_argument,       0, 'x' },
 	{ "quiet",     no_argument,       0, 'q' },
+	{ "recurse",   no_argument,       0, 'r' },
 	{ NULL, 0, 0, 0 }
 };
 
@@ -193,16 +197,67 @@ int find_zeros_in_file(const char *filename, const struct config *cfg) {
 	return (bytes_read >= 0) ? EXIT_SUCCESS : EXIT_FAILURE;
 }
 
+static int process_path(const char *path, const struct config *cfg);
+
+static int process_directory(const char *path, const struct config *cfg) {
+	DIR *dir = opendir(path);
+	if (!dir) {
+		output("error opening directory '%s': %m\n", path);
+		return EXIT_FAILURE;
+	}
+
+	int ret = EXIT_SUCCESS;
+	struct dirent *ent;
+	while ((ent = readdir(dir)) != NULL) {
+		if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0)
+			continue;
+
+		char child_path[PATH_MAX];
+		snprintf(child_path, sizeof(child_path), "%s/%s", path, ent->d_name);
+
+		if (process_path(child_path, cfg) != EXIT_SUCCESS)
+			ret = EXIT_FAILURE;
+	}
+	closedir(dir);
+	return ret;
+}
+
+static int process_path(const char *path, const struct config *cfg) {
+	struct stat st;
+	if (lstat(path, &st) < 0) {
+		output("error stating '%s': %m\n", path);
+		return EXIT_FAILURE;
+	}
+
+	if (S_ISREG(st.st_mode) || S_ISBLK(st.st_mode))
+		return find_zeros_in_file(path, cfg);
+	else if (S_ISDIR(st.st_mode)) {
+		if (cfg->recurse)
+			return process_directory(path, cfg);
+		output("'%s': skipping directory\n", path);
+	} else if (S_ISLNK(st.st_mode))
+		output("'%s': skipping symlink\n", path);
+	else if (S_ISCHR(st.st_mode))
+		output("'%s': skipping character device\n", path);
+	else if (S_ISSOCK(st.st_mode))
+		output("'%s': skipping socket\n", path);
+	else if (S_ISFIFO(st.st_mode))
+		output("'%s': skipping FIFO\n", path);
+	else
+		output("'%s': skipping unknown file type\n", path);
+	return EXIT_SUCCESS;
+}
+
 int main(int argc, char *argv[]) {
 	struct config cfg = {
 		.threshold = MIN_NULL_THRESH,
 		.fmt       = fmt_hex,
 		.quiet     = false,
+		.recurse   = false,
 	};
 	int opt, long_optind;
-	char *filename;
 
-	while ((opt = getopt_long(argc, argv, "t:dxq",
+	while ((opt = getopt_long(argc, argv, "t:dxqr",
 			long_options, &long_optind)) != -1) {
 		switch (opt) {
 			case 't':
@@ -217,6 +272,9 @@ int main(int argc, char *argv[]) {
 			case 'q':
 				cfg.quiet = true;
 				break;
+			case 'r':
+				cfg.recurse = true;
+				break;
 			default:
 				output("error: unrecognized flag '%c'\n", opt);
 				return EXIT_FAILURE;
@@ -224,39 +282,16 @@ int main(int argc, char *argv[]) {
 		}
 	}
 	if (optind >= argc) {
-		output("usage: %s [ -t <threshold> ] [ -d | -x ] [ -q ] <file> [<file> ...]\n", argv[0]);
+		output("usage: %s [ -t <threshold> ] [ -d | -x ] [ -q ] [ -r ] <file> [<file> ...]\n", argv[0]);
 		return EXIT_FAILURE;
 	}
 
-	cfg.show_filename = (argc - optind > 1);
+	cfg.show_filename = cfg.recurse || (argc - optind > 1);
 
 	int ret = EXIT_SUCCESS;
 	for (int i = optind; i < argc; i++) {
-		filename = argv[i];
-
-		struct stat st;
-		if (lstat(filename, &st) < 0) {
-			output("error stating '%s': %m\n", filename);
+		if (process_path(argv[i], &cfg) != EXIT_SUCCESS)
 			ret = EXIT_FAILURE;
-			continue;
-		}
-
-		if (S_ISREG(st.st_mode) || S_ISBLK(st.st_mode)) {
-			if (find_zeros_in_file(filename, &cfg) != EXIT_SUCCESS)
-				ret = EXIT_FAILURE;
-		} else if (S_ISDIR(st.st_mode)) {
-			output("'%s': skipping directory\n", filename);
-		} else if (S_ISLNK(st.st_mode)) {
-			output("'%s': skipping symlink\n", filename);
-		} else if (S_ISCHR(st.st_mode)) {
-			output("'%s': skipping character device\n", filename);
-		} else if (S_ISSOCK(st.st_mode)) {
-			output("'%s': skipping socket\n", filename);
-		} else if (S_ISFIFO(st.st_mode)) {
-			output("'%s': skipping FIFO\n", filename);
-		} else {
-			output("'%s': skipping unknown file type\n", filename);
-		}
 	}
 	return ret;
 }
