@@ -321,6 +321,20 @@ static int process_path(const char *path, const struct config *cfg, dev_t xdev) 
 	return EXIT_SUCCESS;
 }
 
+static void print_usage(const char *prog) {
+	output("usage: %s [options] <file> [<file> ...]\n", prog);
+	output("\n");
+	output("options:\n");
+	output("  -t <n>, --threshold <n>     minimum zero-run length to report (default: %d)\n", MIN_NULL_THRESH);
+	output("  -d, --decimal               display offsets in decimal\n");
+	output("  -x, --hex                   display offsets in hexadecimal (default)\n");
+	output("  -h, --human-readable        display lengths in human-readable form (e.g. 4.00 MiB)\n");
+	output("  -q, --quiet                 print filename and stop on first qualifying run\n");
+	output("  -r, --recurse               recurse into subdirectories; does not cross filesystem boundaries\n");
+	output("  -a <n>, --agsize <n>        XFS AG size in filesystem blocks; enables XFS structure annotations\n");
+	output("  -B <n>, --blocksize <n>     filesystem block size in bytes (default: 4096; used with -a)\n");
+}
+
 int main(int argc, char *argv[]) {
 	struct config cfg = {
 		.threshold = MIN_NULL_THRESH,
@@ -361,13 +375,14 @@ int main(int argc, char *argv[]) {
 				cfg.blocksize = parse_size(optarg);
 				break;
 			default:
-				output("error: unrecognized flag '%c'\n", opt);
+				output("\n");
+				print_usage(argv[0]);
 				return EXIT_FAILURE;
 				break;
 		}
 	}
 	if (optind >= argc) {
-		output("usage: %s [ -t <threshold> ] [ -d | -x ] [ -h ] [ -q ] [ -r ] [ -a <agsize_blocks> [ -B <blocksize> ] ] <file> [<file> ...]\n", argv[0]);
+		print_usage(argv[0]);
 		return EXIT_FAILURE;
 	}
 
