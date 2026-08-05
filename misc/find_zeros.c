@@ -36,6 +36,7 @@
 #include <string.h>
 #include <getopt.h>
 #include <ctype.h>
+#include <endian.h>
 
 #define KiB	(1024ULL)
 #define MiB	(KiB * KiB)
@@ -43,6 +44,8 @@
 #define DEBUG 0
 
 #define BUF_SIZE MiB
+
+#define XFS_SB_MAGIC	0x58465342U	/* "XFSB" */
 
 /* a file could legit have a sequence of NULL bytes -- don't care unless we have this many in a row */
 #define MIN_NULL_THRESH	100
@@ -57,6 +60,7 @@ struct config {
 	bool show_filename;
 	bool recurse;
 	bool human;		/* show sizes in human-readable form */
+	bool xfs_detect;	/* try to auto-detect XFS ag/block size from superblock */
 	uint64_t agsize;	/* AG size in fs blocks; 0 = no XFS annotation */
 	uint64_t blocksize;	/* fs block size in bytes */
 };
@@ -199,14 +203,38 @@ static bool report_region(const char *filename, uint64_t start, uint64_t len,
 static struct option long_options[] = {
 	{ "threshold",      required_argument, 0, 't' },
 	{ "decimal",        no_argument,       0, 'd' },
-	{ "hex",            no_argument,       0, 'x' },
 	{ "quiet",          no_argument,       0, 'q' },
 	{ "recurse",        no_argument,       0, 'r' },
 	{ "human-readable", no_argument,       0, 'h' },
+	{ "xfs",            no_argument,       0, 'x' },
 	{ "agsize",         required_argument, 0, 'a' },
 	{ "blocksize",      required_argument, 0, 'B' },
 	{ NULL, 0, 0, 0 }
 };
+
+/* XFS superblock offsets (on-disk, big-endian) */
+#define XFS_SB_OFF_MAGIC      0
+#define XFS_SB_OFF_BLOCKSIZE  4
+#define XFS_SB_OFF_AGBLOCKS  84
+
+static bool detect_xfs_superblock(int fd, uint64_t *agsize_out, uint64_t *blocksize_out) {
+	unsigned char sb[XFS_SB_OFF_AGBLOCKS + 4];
+	uint32_t magic, blocksize, agblocks;
+
+	if (pread(fd, sb, sizeof(sb), 0) < (ssize_t)sizeof(sb))
+		return false;
+
+	memcpy(&magic, sb + XFS_SB_OFF_MAGIC, 4);
+	if (be32toh(magic) != XFS_SB_MAGIC)
+		return false;
+
+	memcpy(&blocksize, sb + XFS_SB_OFF_BLOCKSIZE, 4);
+	memcpy(&agblocks, sb + XFS_SB_OFF_AGBLOCKS, 4);
+
+	*blocksize_out = be32toh(blocksize);
+	*agsize_out    = be32toh(agblocks);
+	return true;
+}
 
 int find_zeros_in_file(const char *filename, const struct config *cfg) {
 	unsigned char buf[BUF_SIZE], *p, *q;
@@ -218,6 +246,22 @@ int find_zeros_in_file(const char *filename, const struct config *cfg) {
 		output("error opening '%s': %m\n", filename);
 		return EXIT_FAILURE;
 	}
+
+	struct config local_cfg = *cfg;
+	if (local_cfg.xfs_detect) {
+		uint64_t detected_agsize, detected_blocksize;
+		if (detect_xfs_superblock(fd, &detected_agsize, &detected_blocksize)) {
+			local_cfg.agsize     = detected_agsize;
+			local_cfg.blocksize  = detected_blocksize;
+			if (!local_cfg.quiet)
+				output("%s: XFS detected: blocksize=%" PRIu64
+					", agblocks=%" PRIu64 "\n",
+					filename, detected_blocksize, detected_agsize);
+		} else if (!local_cfg.quiet) {
+			output("%s: no XFS superblock found\n", filename);
+		}
+	}
+	cfg = &local_cfg;
 	while ((bytes_read = read(fd, buf, BUF_SIZE)) > 0) {
 
 		p = buf;
@@ -327,27 +371,28 @@ static void print_usage(const char *prog) {
 	output("options:\n");
 	output("  -t <n>, --threshold <n>     minimum zero-run length to report (default: %d)\n", MIN_NULL_THRESH);
 	output("  -d, --decimal               display offsets in decimal\n");
-	output("  -x, --hex                   display offsets in hexadecimal (default)\n");
 	output("  -h, --human-readable        display lengths in human-readable form (e.g. 4.00 MiB)\n");
 	output("  -q, --quiet                 print filename and stop on first qualifying run\n");
 	output("  -r, --recurse               recurse into subdirectories; does not cross filesystem boundaries\n");
+	output("  -x, --xfs                   auto-detect XFS ag/block size from the superblock\n");
 	output("  -a <n>, --agsize <n>        XFS AG size in filesystem blocks; enables XFS structure annotations\n");
-	output("  -B <n>, --blocksize <n>     filesystem block size in bytes (default: 4096; used with -a)\n");
+	output("  -B <n>, --blocksize <n>     filesystem block size in bytes (default: 4096; used with -a or -x)\n");
 }
 
 int main(int argc, char *argv[]) {
 	struct config cfg = {
 		.threshold = MIN_NULL_THRESH,
 		.fmt       = fmt_hex,
-		.quiet     = false,
-		.recurse   = false,
-		.human     = false,
-		.agsize    = 0,
-		.blocksize = 4096,
+		.quiet      = false,
+		.recurse    = false,
+		.human      = false,
+		.xfs_detect = false,
+		.agsize     = 0,
+		.blocksize  = 4096,
 	};
 	int opt, long_optind;
 
-	while ((opt = getopt_long(argc, argv, "t:dxqrha:B:",
+	while ((opt = getopt_long(argc, argv, "t:dqrhxa:B:",
 			long_options, &long_optind)) != -1) {
 		switch (opt) {
 			case 't':
@@ -357,7 +402,7 @@ int main(int argc, char *argv[]) {
 				cfg.fmt = fmt_decimal;
 				break;
 			case 'x':
-				cfg.fmt = fmt_hex;
+				cfg.xfs_detect = true;
 				break;
 			case 'q':
 				cfg.quiet = true;
