@@ -1,0 +1,653 @@
+#!/bin/bash
+///bin/true && stp=$(readlink -f $0) 
+///bin/true && module_name=$(basename -s .stp $stp)
+///bin/true && MAXSTRINGLEN=4096
+
+#tail -n +10 $stp | /usr/bin/stap -vvv -g -m $module_name -DMAXSTRINGLEN=${MAXSTRINGLEN} --all-modules --suppress-time-limits --suppress-handler-errors -c "/bin/sleep $sleep_time" -
+#tail -n +10 $stp | /usr/bin/stap -v -g -m $module_name -DMAXSTRINGLEN=${MAXSTRINGLEN} --all-modules --suppress-time-limits -c "/bin/sleep $sleep_time" -
+#///bin/true && tail -n +12 $stp | /usr/bin/stap -F -g -m $module_name -DMAXSTRINGLEN=${MAXSTRINGLEN} --all-modules -
+///bin/true && tail -n +12 $stp | /usr/bin/stap -vg -m $module_name -DMAXSTRINGLEN=${MAXSTRINGLEN} --all-modules --suppress-time-limits -
+
+///bin/true && exit
+
+#############################################################
+# autofs_watch.stp
+# Author: Frank Sorenson <sorenson@redhat.com>
+#
+# Systemtap to monitor automount activity.
+#
+# This systemtap is either highly functional,
+#   or terribly bloated, depending on how you
+#   choose to look at it.
+#
+# run the systemtap from the command line--no command line arguments are required (change the MAXSTRINGLEN and/or sleep_timer above, if necessary)
+#
+# The systemtap will load into the background
+# Output will go to the system message log
+#   so usually only /var/log/messages needs to be collected
+#   afterwards.
+# Increase debug level on the userspace automount for additional
+#   info. (optional)
+#
+# some example output follows (5-minute timeout)
+# accessing a mount:
+# Sep 23 09:08:07 server kernel: Tue Sep 23 16:08:07 2014: (probe autofs4_wait) su(3822909) -> bash(3822912 ' "" "" "" "" ""'): mount of '/home/user1/' succeeded, (timeout 300.000)
+# Sep 23 09:08:07 server kernel: Tue Sep 23 16:08:07 2014: (probe autofs_d_manage) su(3822909) -> bash(3822912 ' "" "" "" "" ""') accessing '/home/user1/' (dentry 0xffff8802c7a58840), timeout=0.000/300.000
+#
+# automounter checking whether any automounted filesystems can be expired.  time-since-last-use increasing to 23, 28, 98, and 103 seconds:
+# Sep 23 09:08:30 server kernel: Tue Sep 23 16:08:30 2014: (probe autofs_d_manage) automount checking '/home/user1/' (dentry 0xffff8802c7a58840), timeout=23.084/300.000
+# Sep 23 09:08:35 server kernel: Tue Sep 23 16:08:35 2014: (probe autofs_d_manage) automount checking '/home/user1/' (dentry 0xffff8802c7a58840), timeout=28.086/300.000
+# Sep 23 09:09:45 server kernel: Tue Sep 23 16:09:45 2014: (probe autofs_d_manage) automount checking '/home/user1/' (dentry 0xffff8802c7a58840), timeout=98.086/300.000
+# Sep 23 09:09:50 server kernel: Tue Sep 23 16:09:50 2014: (probe autofs_d_manage) automount checking '/home/user1/' (dentry 0xffff8802c7a58840), timeout=103.086/300.000
+#
+# a script does a 'stat' on the filesystem, resetting the last-used timestamp:
+# Sep 23 09:10:16 server kernel: Tue Sep 23 16:10:16 2014: (probe autofs_d_manage) cron_script(3823390) -> stat(3823402 ' "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" ""') accessing '/home/user1/' (dentry 0xffff8802c7a58840), timeout=129.392/300.000
+#
+# checking for expiration again:
+# Sep 23 09:11:00 server kernel: Tue Sep 23 16:11:00 2014: (probe autofs_d_manage) automount checking '/home/user1/' (dentry 0xffff8802c7a58840), timeout=43.697/300.000
+#
+
+
+global flood_jiffies = 10
+
+global autofs_d_manage_last%[1000]
+global autofs_expire_direct_last%[1000]
+#global autofs_lookup_last%[1000]
+global autofs_mount_busy_last%[1000]
+global dentry_paths%[1000]
+
+function output(msg) {
+#	printk(1, msg)
+	printf("%s\n", msg)
+	ftrace(msg)
+}
+
+probe begin {
+	output("autofs monitoring probe started")
+}
+probe end {
+	output("autofs monitoring probe exiting")
+}
+
+function tstamp:string(epochns:long) %{ /* pure */
+	u64 nsec = STAP_ARG_epochns;
+	const time64_t epochsecs = nsec / 1000000000;
+	struct tm gmt;
+
+	nsec = nsec % 1000000000;
+
+	time64_to_tm(epochsecs, -tz_gmtoff, &gmt);
+	snprintf(STAP_RETVALUE, MAXSTRINGLEN, "%04ld-%02d-%02d %02d:%02d:%02d.%09llu",
+		gmt.tm_year + 1900, gmt.tm_mon + 1, gmt.tm_mday,
+		gmt.tm_hour, gmt.tm_min, gmt.tm_sec, nsec);
+%}
+function tstamp_now:string() {
+	return tstamp(gettimeofday_ns())
+}
+function timestamp:string() {
+	return tstamp_now()
+}
+
+function ps_tree:string() { /* pure */ /* unprivileged */
+#	current = task_current()
+#	pstrace = pstrace(pid2task(tid()))
+
+	pstrace = pstrace(task_current())
+
+	ret = ""
+	while (strlen(proc = tokenize(pstrace, " ")) != 0) {
+		pstrace = ""
+
+		if (ret == "") ret = proc
+		else ret = proc . " => " . ret
+	}
+	return ret
+}
+
+@define offset_of(type, member) %(
+	(@type_defined(@type) && @type_member_defined(@type, @member)) ?
+		(&@cast(0, @type) -> @member) :
+		0
+%)
+
+/* container_of(address, structure, member) -- returns (addr - offset_of(structure, member)) */
+@define container_of(inside, type, member) %(
+	(@inside - @offset_of(@type, @member))
+%)
+
+@define autofs_type_member(addr, type, member) %(
+	(@module_type_defined("autofs", @type)) ?
+		(@cast(@addr, @type, "autofs")->@member) :
+		(@cast(@addr, @type)->@member)
+%)
+
+@define vfsmount_member(addr, field) %(
+	(@type_defined("mount")) ?
+		@cast(@container_of(@addr, "mount", mnt), "mount") -> @field :
+		@cast(@addr, "vfsmount") -> @field
+%)
+
+@define autofs_sbi(sb) %( &@cast(@sb -> s_fs_info, "autofs_sb_info") %)
+#static inline struct autofs_sb_info *autofs_sbi(struct super_block *sb) { return (struct autofs_sb_info *)(sb->s_fs_info); }
+
+@define autofs_dentry_ino(dentry) %( @cast(@dentry->d_fsdata, "autofs_info") %)
+#static inline struct autofs_info *autofs_dentry_ino(struct dentry *dentry) { return (struct autofs_info *)(dentry->d_fsdata); }
+
+
+
+
+%{
+#include <linux/nsproxy.h>
+%}
+
+function get_current_nsmount:long() {
+	return &@cast(&@cast(task_current(), "task_struct")->nsproxy, "struct nsproxy")->mnt_ns
+}
+
+
+
+/* this was made private in recent versions of systemtap */
+function __inode_vfsmount:long(inode:long)
+{
+        /* s_mounts was added in kernel 3.6, commit b3d9b7a3c.  */
+        if (@type_member_defined("struct super_block", s_mounts)) {
+#                mnt_ns = @cast(task_current(), "struct task_struct", "kernel<linux/sched.h>")->nsproxy->mnt_ns
+		mnt_ns = get_current_nsmount()
+                sb = &@cast(@cast(inode, "struct inode", "kernel")->i_sb, "struct super_block", "kernel")
+
+
+                /* Look for the mount which matches the current namespace */
+//                head = &@cast(sb->s_mounts, "struct list_head", "kernel")
+                head = &@cast(&@cast(sb, "struct super_block", "kernel")->s_mounts, "struct list_head", "kernel")
+                for (pos = head->next ; pos != head ; pos = pos->next) {
+                        mount = &@cast(@container_of(pos, "struct mount", mnt_instance), "struct mount")
+//output(sprintf("mount: %p\n", mount))
+                        if (mount && mount != 0x70 && mount->mnt_ns == mnt_ns)
+                                return &mount->mnt
+                }
+
+        }
+        return 0
+}
+
+function dentry_get_path:string(dentry:long) { /* pure */ /* unprivileged */
+
+        if (dentry) {
+		if ([dentry] in dentry_paths)
+			return dentry_paths[dentry]
+
+		d_inode = @cast(dentry, "dentry")->d_inode
+		if (d_inode) {
+			vfsmount = __inode_vfsmount(d_inode)
+			if (vfsmount) {
+				dentry_paths[dentry] = task_dentry_path(task_current(), dentry, vfsmount)
+				return dentry_paths[dentry]
+			}
+		}
+		return reverse_path_walk(dentry)
+        } else
+		return ""
+}
+function dentry_get_path2:string(dentry:long, mnt:long) { /* pure */ /* unprivileged */
+	if (! mnt)
+		return dentry_get_path(dentry)
+
+        if (dentry) {
+		if ([dentry] in dentry_paths)
+			return dentry_paths[dentry]
+
+		dentry_paths[dentry] = task_dentry_path(task_current(), dentry, mnt)
+		return dentry_paths[dentry]
+        } else
+		return ""
+}
+
+global autofs_type[4]
+probe init {
+	autofs_type["any"] = 0
+	autofs_type["indirect"] = 1
+	autofs_type["direct"] = 2
+	autofs_type["offset"] = 4
+}
+
+function autofs_type_indirect(type) { return (type == autofs_type["indirect"]) }
+function autofs_type_direct(type) { return (type == autofs_type["direct"]) }
+function autofs_type_offset(type) { return (type == autofs_type["offset"]) }
+
+function autofs_get_type:string(type:long) {
+	if (autofs_type_indirect(type))
+		return "indirect"
+	else if (autofs_type_direct(type))
+		return "direct"
+	else if (autofs_type_offset(type))
+		return "offset"
+	return ""
+}
+
+#% ( systemtap_v < "2.6" %?
+/*  d_mountpoint - is dentry a mountpoint?
+	commit 5f57cbcc02cf18f6b22ef4066bb10afeb8f930ff on 2011-01-07
+	removed dentry.d_mounted, and replaced with dentry.d_flags:
+		DCACHE_MOUNTED is 0x0400  0x10000
+*/
+function d_mountpoint(dentry:long) {
+	return (@type_member_defined("dentry", d_mounted)) ? @cast(dentry, "dentry")->d_mounted : (@cast(dentry, "dentry")->d_flags & 0x10000)
+}
+#%) /* systemtap_v < "2.6" */
+
+@define file_get_dentry(file) %( (@type_member_defined(file, f_path)) ?
+	@cast(file, "file")->f_path->dentry :
+	@cast(file, "file")->f_dentry
+%)
+
+
+# RHEL8 - # kernel.function("autofs_lookup@fs/autofs/root.c:500") $dir:struct inode* $dentry:struct dentry* $flags:unsigned int
+probe
+	kernel.function("autofs_lookup") ? {
+
+#	now = jiffies()
+#	autofs_lookup_last_ago = now - autofs_lookup_last[$dentry]
+#	autofs_lookup_last[$dentry] = now
+//	if (autofs_lookup_last_ago <= flood_jiffies)
+//		next
+
+	sbi = $dentry->d_sb->s_fs_info
+
+	type = @autofs_type_member(sbi, "autofs_sb_info", type)
+
+	type_string = autofs_get_type(type)
+	path_string = dentry_get_path($dentry)
+
+	if (!isinstr(execname(), "automount"))
+		output(sprintf("%s(probe autofs_lookup) %s '%s': looking up %s '%s', (inode = %p, dentry = %p)",
+		       timestamp(),
+		       ps_tree(), cmdline_str(),
+		       type_string,
+		       path_string,
+		       $dir, $dentry
+		       ))
+	else
+		output(sprintf("%s(probe autofs_lookup) %s '%s': checking %s '%s', (inode = %p, dentry = %p)",
+		       timestamp(),
+		       ps_tree(), cmdline_str(),
+		       type_string,
+		       path_string,
+		       $dir, $dentry
+		       ))
+}
+
+# does not exist in RHEL 8
+probe
+	module("autofs4").function("autofs4_follow_link") ?,
+	kernel.function("autofs4_follow_link") ? {
+	if (!isinstr(execname(), "automount")) {
+		output(sprintf("%s(probe autofs4_follow_link) %s '%s': following mount trigger %s",
+			timestamp(),
+			ps_tree(), cmdline_str(),
+			d_path($nd)))
+	}
+}
+
+# RHEL 7: struct dentry *autofs4_expire_indirect(struct super_block *sb, struct vfsmount *mnt, struct autofs_sb_info *sbi, int how)
+# RHEL 8: kernel.function("autofs_expire_indirect@fs/autofs/expire.c:462") $mnt:struct vfsmount* $sbi:struct autofs_sb_info* $how:unsigned int
+probe
+	kernel.function("autofs_expire_indirect").return ? {
+
+	mnt = @entry($mnt)
+
+	if ($return != 0) {
+		path = dentry_get_path2($return, mnt)
+
+		output(sprintf("%s(probe autofs_expire_indirect) %s '%s': expiring indirect mount '%s'",
+		       timestamp(),
+		       ps_tree(), cmdline_str(),
+		       path))
+	}
+}
+
+# RHEL 7: struct dentry *autofs4_expire_direct(struct super_block *sb, struct vfsmount *mnt, struct autofs_sb_info *sbi, int how)
+# RHEL 8: kernel.function("autofs_expire_direct@fs/autofs/expire.c:316") $sb:struct super_block* $how:unsigned int $sbi:struct autofs_sb_info* $mnt:struct vfsmount*
+/*
+probe
+	kernel.function("autofs_expire_direct").return ? {
+
+	if ($return != 0) {
+		path = dentry_get_path($return);
+
+		output(sprintf("%s(probe autofs_expire_direct) %s '%s': expiring direct mount %s",
+			timestamp(),
+			ps_tree(), cmdline_str(),
+			path));
+	}
+}
+*/
+
+# kernel.function("autofs_expire_direct@fs/autofs/expire.c:316") $sb:struct super_block* $how:unsigned int $sbi:struct autofs_sb_info* $mnt:struct vfsmount*
+probe kernel.function("autofs_expire_direct") ? {
+	dentry = $mnt->mnt_root
+	path = dentry_get_path2(dentry, $mnt)
+
+	now = jiffies()
+	if ([dentry] in autofs_expire_direct_last)
+		autofs_expire_direct_last_ago = now - autofs_expire_direct_last[dentry]
+	else {
+		autofs_expire_direct_last_ago = now; /* i.e. never*/
+		autofs_expire_direct_last[dentry] = now
+	}
+
+	if (autofs_expire_direct_last_ago <= flood_jiffies)
+		next
+
+	autofs_expire_direct_last[dentry] = now
+
+	s_fs = $mnt->mnt_root->d_sb->s_fs_info
+	autofs_info = $mnt->mnt_root->d_fsdata
+
+	timeout = @autofs_type_member(s_fs, "autofs_sb_info", exp_timeout)
+
+	last_used = @autofs_type_member(autofs_info, "autofs_info", last_used)
+	last_used_ago = now - last_used
+
+	output(sprintf("%s(probe autofs_expire_direct) %s '%s': checking direct mount %s, timeout=%d.%.01d/%d.%.01d seconds",
+		timestamp(), ps_tree(), cmdline_str(), path,
+		last_used_ago / HZ(), ((last_used_ago % HZ()) * 10) / HZ(),
+		timeout / HZ(), ((timeout % HZ()) * 10) / HZ() ))
+
+}
+
+# kernel.function("autofs_wait@fs/autofs/waitq.c:350") $sbi:struct autofs_sb_info* $path:struct path const* $notify:enum autofs_notify $qstr:struct qstr $__func__:char const[] const
+probe
+	kernel.function("autofs_wait").return ? {
+	notify = @entry($notify)
+	if (notify > 0) {
+		p = &@cast(@entry($path), "struct path", "kernel")
+		sbi = &@cast(@entry($sbi), "struct autofs_sb_info", "kernel")
+
+		dentry = p->dentry
+
+		path = dentry_get_path(dentry)
+
+		if (notify == 1) { /* mount */
+			if ($return == 0) { /* mount succeeded */
+				dentry_paths[dentry] = path
+				exp_timeout = sbi->exp_timeout
+				output(sprintf("%s%s '%s': mount of '%s' succeeded, timeout %d.%.01d seconds",
+					timestamp(), ps_tree(), cmdline_str(), path,
+					exp_timeout / HZ(), (((exp_timeout % HZ()) * 10)/HZ()) ))
+			} else {
+				output(sprintf("%s%s '%s': mount of '%s' failed",
+					timestamp(), ps_tree(), cmdline_str(), path))
+			}
+		} else { /* unmount */
+			if ($return == 0) { /* unmount succeeded */
+
+				output(sprintf("%s%s '%s': unmount of '%s' succeeded",
+					timestamp(), ps_tree(), cmdline_str(), path))
+				delete(dentry_paths[dentry])
+				delete(autofs_d_manage_last[dentry])
+				delete(autofs_mount_busy_last[dentry])
+				delete(autofs_expire_direct_last[dentry])
+
+			} else {
+				output(sprintf("%s%s '%s': unmount of '%s' failed",
+					timestamp(), ps_tree(), cmdline_str(), path))
+			}
+		}
+	}
+}
+
+# RHEL8: kernel.function("autofs_d_manage@fs/autofs/root.c:423") $path:struct path const* $rcu_walk:bool $__func__:char const[] const
+probe
+	kernel.function("autofs_d_manage") ? {
+
+	dentry = $path->dentry
+	path = dentry_get_path2(dentry, $path->mnt)
+
+
+	now = jiffies()
+	if ([dentry] in autofs_d_manage_last)
+		autofs_d_manage_last_ago = now - autofs_d_manage_last[dentry]
+	else {
+		autofs_d_manage_last_ago = now; /* i.e. never*/
+		autofs_d_manage_last[dentry] = now
+	}
+
+	if (autofs_d_manage_last_ago <= flood_jiffies)
+		next
+
+	autofs_d_manage_last[dentry] = now
+
+	s_fs = dentry->d_sb->s_fs_info
+	autofs_info = dentry->d_fsdata
+
+	timeout = @autofs_type_member(s_fs, "autofs_sb_info", exp_timeout)
+
+	last_used = @autofs_type_member(autofs_info, "autofs_info", last_used)
+	last_used_ago = now - last_used
+
+
+	/* // some verbose debugging
+	d_count = dentry->d_count->counter
+	active_count = @autofs_type_member(autofs_info, "autofs_info", active_count)
+	output(sprintf("autofs_d_manage: dentry 0x%016lx, autofs_sb_info 0x%016lx, autofs_info 0x%016lx, path %s, d_count %d, active_count %d",
+		dentry, s_fs, autofs_info, path, d_count, active_count))
+	*/
+
+	if (execname() == "automount")
+		calling_program = sprintf("automount checking '%s'", path)
+# I changed this line, removed the apostrophe and moved the opening brace in front of the comment. My editor was parsing it wierd, so I took a shot. It was:
+#	else if (pexecname() == "automount")   /* maybe it's an unmount? */ {
+	else if (pexecname() == "automount")  { /* maybe its an unmount? */ 
+
+		output(sprintf("%s(probe autofs_d_manage) %s '%s', path = '%s'",
+			timestamp(), ps_tree(), cmdline_str(), path))
+		next
+	} else {
+		calling_program = sprintf("%s '%s': accessing '%s'",
+			ps_tree(), cmdline_str(),
+			path)
+		if (pid_syscalls[pid()] != "")
+			calling_program .= sprintf(" from syscall %s()",
+				pid_syscalls[pid()])
+	}
+
+	output(sprintf("%s(probe autofs_d_manage) %s (dentry 0x%016lx), timeout=%d.%.01d/%d.%.01d seconds",
+		timestamp(),
+		calling_program, dentry,
+		last_used_ago / HZ(), ((last_used_ago % HZ()) * 10) / HZ(),
+		timeout / HZ(), ((timeout % HZ()) * 10) / HZ() ))
+}
+
+
+# RHEL8 - kernel.function("autofs_d_automount@fs/autofs/root.c:335") $path:struct path* $__func__:char const[] const
+probe
+	kernel.function("autofs_d_automount") ? {
+	dentry = $path->dentry
+
+	if (!dentry)
+		next
+
+	this_path = pid_paths[tid()]
+
+	output(sprintf("%s %s(%d) %s: uid:%d euid:%d gid:%d egid:%d %s (%s() - attempting mount - full path '%s' -> %s) - cmdline: %s\n", tstamp_now(), execname(), tid(),
+		ppfunc(), uid(), euid(), gid(), egid(), fullpath_struct_path($path), pid_syscalls[tid()], this_path, task_ancestry(task_current(), 0), cmdline_args(0,-1, " ")))
+
+#	output(sprintf("%s(probe autofs_d_automount) %s '%s': attempting mount of %s",
+#		timestamp(),
+#		ps_tree(), cmdline_str(),
+#		path_string))
+#	if (this_path == "") {
+#		output(sprint_backtrace())
+#		output(sprint_ubacktrace())
+#	}
+}
+
+# RHEL8 - kernel.function("autofs_mount_busy@fs/autofs/expire.c:32") $mnt:struct vfsmount* $dentry:struct dentry* $how:unsigned int $path:struct path $__func__:char const[] const
+probe kernel.function("autofs_mount_busy") {
+	ino = $dentry->d_fsdata
+
+	if (ino) {
+		now = jiffies()
+		if ([$dentry] in autofs_mount_busy_last)
+			autofs_mount_busy_last_ago = now = autofs_mount_busy_last[$dentry]
+		else {
+			autofs_mount_busy_last_ago = now
+			autofs_mount_busy_last[$dentry] = now
+		}
+
+		if (autofs_mount_busy_last_ago <= flood_jiffies)
+			next
+
+		autofs_mount_busy_last[$dentry] = now
+
+		s_fs = $mnt->mnt_sb->s_fs_info
+		last_used = @autofs_dentry_ino($dentry)->last_used
+		last_used_ago = now - last_used
+
+		exp_timeout = @autofs_type_member(s_fs, "autofs_sb_info", exp_timeout)
+
+		path_string = dentry_get_path2($dentry, $mnt)
+
+		output(sprintf("%s(probe autofs_mount_busy) automount checking '%s' (dentry = %p, mnt = %p), timeout=%d.%01d/%d.%.01d seconds",
+			timestamp(),
+			path_string,
+			$dentry, $mnt,
+			last_used_ago / HZ(), ((last_used_ago % HZ()) * 10) / HZ(),
+			exp_timeout / HZ(), ((exp_timeout % HZ()) * 10) / HZ()
+		       ))
+	}
+}
+
+%{
+#if 0
+probe kernel.function("autofs_show_options") if (0) { /* function too chatty, with no real benefit */
+
+	sb = $root->d_sb;
+
+	if (!sb)
+		next;
+
+	sbi = @autofs4_sbi(sb);
+	if (!sbi)
+		next;
+
+	sbi_magic = @cast(sbi, "autofs_sb_info")->magic;
+
+	if (sbi_magic != 0x6d4a556d)
+		next;
+
+	root_inode = $root->d_sb->s_root->d_inode;
+	last_used = @autofs_dentry_ino($root)->last_used;
+
+	exp_timeout = @cast(sbi, "autofs_sb_info")->exp_timeout;
+
+	now = jiffies();
+	remaining = ((last_used + exp_timeout) > now) ? ((last_used + exp_timeout) - now) : 0;
+
+	path = dentry_get_path($root);
+
+	output(sprintf("in %s(%s), dentry=%p, autofs_sb_info = %p, root_inode = %p, last_used = %d, timeout = %d, now = %d, remaining %d (path is %s ?), magic = %x",
+		probefunc(), $$parms, $root, $root->d_sb->s_fs_info, root_inode, last_used, exp_timeout, now, remaining, path, sbi_magic));
+}
+#endif
+%}
+
+global pid_paths%[1000]
+global pid_syscalls%[1000]
+
+function set_pid_path(syscall, dfd_str, filename) {
+	if (dfd_str == "AT_FDCWD")
+		dfd_str = "AT_FDCWD (" . fullpath_struct_path(task_cwd_path(task_current())) . ")"
+
+	if (substr(filename, 0, 1) == "/")
+		fullpath = filename
+	else
+		fullpath = "dfd_str" . "/" . filename
+
+	pid_paths[tid()] = fullpath
+	pid_syscalls[tid()] = syscall
+}
+function delete_pid_paths() {
+	delete pid_paths[tid()]
+	delete pid_syscalls[tid()]
+}
+
+# syscall.statx name:string dfd:long dfd_str:string filename_uaddr:long filename:string filename_unquoted:string flags:long flags_str:string mask:long mask_str:string buf_uaddr:long argstr:string
+probe syscall.statx { set_pid_path("statx", dfd_str, filename_unquoted) }
+probe syscall.statx.return { delete_pid_paths() }
+
+# syscall.stat name:string filename_uaddr:long filename:string filename_unquoted:string buf_uaddr:long argstr:string
+probe syscall.stat { set_pid_path("stat", "AT_FDCWD", filename_unquoted) }
+probe syscall.stat.return { delete_pid_paths() }
+
+probe syscall.lstat { set_pid_path("lstat", "AT_FDCWD", path_unquoted) }
+probe syscall.lstat.return { delete_pid_paths() }
+
+# syscall.fstatat name:string dirfd:long dirfd_str:string path:string path_unquoted:string buf_uaddr:long flags:long flags_str:string argstr:string
+probe syscall.fstatat { set_pid_path("fstatat", dirfd_str, path_unquoted) }
+probe syscall.fstatat.return { delete_pid_paths() }
+
+# syscall.open name:string filename:string filename_unquoted:string flags:long flags_str:string mode:long argstr:string
+probe syscall.open { set_pid_path("open", "AT_FDCWD", filename_unquoted) }
+probe syscall.open.return { delete_pid_paths() }
+
+# syscall.openat name:string dfd:long dfd_str:string filename:string filename_unquoted:string flags:long flags_str:string mode:long argstr:string
+probe syscall.openat { set_pid_path("openat", dfd_str, filename_unquoted) }
+probe syscall.openat.return { delete_pid_paths() }
+
+# syscall.chdir name:string path:string path_unquoted:string argstr:string
+probe syscall.chdir { set_pid_path("chdir", "AT_FDCWD", path) }
+probe syscall.chdir.return { delete_pid_paths() }
+
+# syscall.fchdir name:string fd:long argstr:string
+probe syscall.fchdir { set_pid_path("fchdir", _dfd_str(fd), "")  }
+probe syscall.fchdir.return { delete_pid_paths() }
+
+#syscall.access name:string pathname:string pathname_unquoted:string mode:long mode_str:string argstr:string
+probe syscall.access { set_pid_path("access", "AT_FDCWD", pathname_unquoted) }
+probe syscall.access.return { delete_pid_paths() }
+
+# syscall.faccessat name:string dirfd:long dirfd_str:string pathname:string pathname_unquoted:string mode:long mode_str:string argstr:string
+probe syscall.faccessat { set_pid_path("faccessat", dirfd_str, pathname_unquoted) }
+probe syscall.faccessat.return { delete_pid_paths() }
+
+# syscall.faccessat2 name:string dirfd:long dirfd_str:string pathname:string pathname_unquoted:string mode:long mode_str:string flags:long flags_str:string argstr:string
+probe syscall.faccessat2 { set_pid_path("faccessat2", dirfd_str, pathname_unquoted) }
+probe syscall.faccessat2.return { delete_pid_paths() }
+
+# syscall.mkdir name:string pathname_uaddr:long pathname:string pathname_unquoted:string mode:long argstr:string
+probe syscall.mkdir { set_pid_path("mkdir", "AT_FDCWD", pathname_unquoted) }
+probe syscall.mkdir.return { delete_pid_paths() }
+
+# syscall.mkdirat name:string dirfd:long dirfd_str:string pathname:string pahtname_unquoted:string mode:long argstr:string
+probe syscall.mkdirat { set_pid_path("mkdirat", dirfd_str, pahtname_unquoted) }
+probe syscall.mkdirat.return { delete_pid_paths() }
+
+# syscall.unlink name:string pathname_uaddr:long pathname:string pathname_unquoted:string argstr:string
+probe syscall.unlink { set_pid_path("unlink", "AT_FDCWD", pathname_unquoted) }
+probe syscall.unlink.return { delete_pid_paths() }
+
+# syscall.unlinkat name:string dfd:long dfd_str:string pathname:long pathname_str:string pathname_str_unquoted:string flag:long flag_str:string argstr:string
+probe syscall.unlinkat { set_pid_path("unlinkat", dfd_str, pathname_unquoted) }
+probe syscall.unlinkat.return { delete_pid_paths() }
+
+# syscall.symlink name:string oldpath:string oldpath_unquoted:string newpath:string argstr:string
+probe syscall.symlink { set_pid_path("symlink", "AT_FDCWD", newpath) }
+probe syscall.symlink.return { delete_pid_paths() }
+
+# syscall.symlinkat name:string oldname:long oldname_str:string oldname_str_unquoted:string newdfd:long newdfd_str:string newname:long newname_str:string newname_str_unquoted:string argstr:string
+probe syscall.symlinkat { set_pid_path("symlinkat", newdfd_str, newname_str_unquoted) }
+probe syscall.symlinkat.return { delete_pid_paths() }
+
+
+# execveat
+# faccessat
+# fchmodat
+# fchownat
+# futimensat
+# linkat
+# mknodat
+# readlinkat
+# renameat
+# utimensat
+# name_to_handle_at, open_by_handle_at
