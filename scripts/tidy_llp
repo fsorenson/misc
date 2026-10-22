@@ -1,0 +1,13 @@
+tidy_llp() {
+	local llp=""
+	local new_path
+
+        for new_path in $(echo "$LD_LIBRARY_PATH" | sed 's/:/ /g') ; do
+                if [[ -n $new_path && -d $new_path && -r $new_path ]] ; then
+			if [[ ! $llp =~ (^|:)$new_path($|:) ]] ; then
+				[[ -z $llp ]] && llp="$new_path" || llp="$llp:$new_path"
+                        fi
+                fi
+        done
+	[[ -n $llp ]] && export LD_LIBRARY_PATH="$llp" || unset LD_LIBRARY_PATH
+}
